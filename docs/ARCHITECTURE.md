@@ -111,6 +111,13 @@ downloads a stealth Chromium binary; without it ~93 of 99 hiring systems work an
 
 ApplyPilot (AI 1–10 score for every job) is the most expensive approach — we only use AI at L2, for jobs that already passed L0+L1.
 
+**Implemented (MVP):** `matching/rules.py` (L1, runs first: country / remote / visa from ISO codes, job type,
+years required, exclusions, JobRadar scam check), `matching/prefilter.py` (L0, OpenApply port; seniority inferred
+from years when unset), `matching/funnel.py` (AI only for jobs that pass both; `AiScorer` slot for L2),
+`matching/decide.py`, `matching/handler.py` (`match` task → `job_match` row → `alert` task). Checked on 1,705 real
+jobs for an Indian backend profile: 1,651 hidden (mostly outside the user's countries), 38 alerts, 16 digest.
+The L3 evidence card (StillOpen matchcard) is not ported yet: L0 + rule notes supply the "why" lines for now.
+
 **+1:** learns from your taps. Every Apply/Skip adjusts your alert threshold (JobRadar has the idea as a suggestion; we make it automatic).
 
 ### 2.8 Decide [MVP]

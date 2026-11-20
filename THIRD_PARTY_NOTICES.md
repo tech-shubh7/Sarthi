@@ -28,5 +28,6 @@ copied into [`licenses/`](licenses/) and listed below. Every adapted file also c
 
 | Project | Licence file | Sarthi files |
 |---|---|---|
-| JobRadar | [licenses/JobRadar-MIT.txt](licenses/JobRadar-MIT.txt) | `src/sarthi/jobs/dedupe.py`, `src/sarthi/db/tasks.py`, `src/sarthi/queue/tasks.py`, `src/sarthi/queue/worker.py` |
-| StillOpen | [licenses/StillOpen-Apache-2.0.txt](licenses/StillOpen-Apache-2.0.txt), NOTICE: [licenses/StillOpen-NOTICE.txt](licenses/StillOpen-NOTICE.txt) | `src/sarthi/jobs/geo.py`, `src/sarthi/jobs/countries.py` |
+| JobRadar | [licenses/JobRadar-MIT.txt](licenses/JobRadar-MIT.txt) | `src/sarthi/jobs/dedupe.py`, `src/sarthi/jobs/scam.py`, `src/sarthi/db/tasks.py`, `src/sarthi/queue/tasks.py`, `src/sarthi/queue/worker.py`, `src/sarthi/matching/decide.py` |
+| OpenApply | [licenses/OpenApply-MIT.txt](licenses/OpenApply-MIT.txt) | `src/sarthi/matching/prefilter.py` (ported from TypeScript) |
+| StillOpen | [licenses/StillOpen-Apache-2.0.txt](licenses/StillOpen-Apache-2.0.txt), NOTICE: [licenses/StillOpen-NOTICE.txt](licenses/StillOpen-NOTICE.txt) | `src/sarthi/jobs/geo.py`, `src/sarthi/jobs/countries.py`, `src/sarthi/jobs/requirements.py` (pattern) |

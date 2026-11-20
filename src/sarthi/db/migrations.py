@@ -64,6 +64,22 @@ MIGRATIONS: tuple[str, ...] = (
         last_error           TEXT
     ) STRICT;
     """,
+    # 3: match results, one per job, re-run when the profile changes
+    """
+    CREATE TABLE job_match (
+        job_id               TEXT PRIMARY KEY REFERENCES job (id) ON DELETE CASCADE,
+        profile_version      TEXT NOT NULL,
+        score                INTEGER NOT NULL CHECK (score BETWEEN 0 AND 100),
+        decision             TEXT NOT NULL CHECK (decision IN ('hide', 'digest', 'alert')),
+        rule                 TEXT NOT NULL,
+        hidden_because       TEXT,
+        reasons              TEXT NOT NULL DEFAULT '[]',  -- JSON list of short lines
+        notes                TEXT NOT NULL DEFAULT '[]',
+        ai_used              INTEGER NOT NULL DEFAULT 0,
+        matched_at           TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX job_match_decision ON job_match (decision, matched_at);
+    """,
 )
 
 
