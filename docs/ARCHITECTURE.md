@@ -132,6 +132,13 @@ not eligible / scam → hide · strong + sure → **instant Telegram alert** · 
 - **Commands:** `/status`, `/pause`, `/today`, `/prefs`, `/limit`.
 - One `Channel` interface → **WhatsApp** plugs into the same code [Final].
 
+**Implemented (MVP, 2026-11-20):** Bot API over plain `httpx` (`chat/telegram/api.py`, no bot library); one-time
+pairing code from `sarthi pair` (hash stored, 15-minute expiry, cancelled after 5 wrong guesses; strangers get no
+reply); job cards with Apply / Skip / Later / Details (job-site text HTML-escaped; first answer wins; Apply queues
+an `apply` task); `/today`, `/status`, `/pause`, `/resume`, `/help`; daily digest at `SARTHI_DIGEST_HOUR` local
+time; `sarthi bot` runs polling + the worker (`app.py` is the composition root). Still to come: the setup
+conversation (resume upload + preferences) and `sarthi run` with source scheduling.
+
 ### 2.10 Documents [MVP]
 | Need | Best code | Copy |
 |---|---|---|

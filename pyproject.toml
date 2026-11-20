@@ -67,9 +67,11 @@ select = [
 ignore = ["D203", "D213", "TRY003"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S311", "D", "PLR2004", "A005", "RUF001"]
+"tests/**" = ["S101", "S311", "D", "PLR2004", "A005", "RUF001", "PLR0913", "PLR0917"]
 # Upstream data tables and regexes kept verbatim (long lines) so future syncs with StillOpen stay easy.
 "src/sarthi/jobs/{geo,countries}.py" = ["E501", "RUF001"]
+# Messages to people use typographic dashes and emoji on purpose.
+"src/sarthi/chat/**" = ["RUF001"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -111,6 +113,7 @@ name = "Layers only import downwards"
 type = "layers"
 layers = [
     "sarthi.cli",
+    "sarthi.app",
     "sarthi.sources | sarthi.matching | sarthi.documents | sarthi.answers | sarthi.apply | sarthi.tracking | sarthi.chat",
     "sarthi.queue | sarthi.ai",
     "sarthi.profile",

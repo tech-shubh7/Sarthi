@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     telegram_bot_token: SecretStr | None = None
+    digest_hour: int = Field(default=19, ge=0, le=23, description="Local hour for the daily digest.")
 
     # AI models, tried in order until one answers: "<provider>/<model>", e.g. "gemini/gemini-2.5-flash".
     # Providers: ollama, gemini, openai, anthropic, groq, openrouter, deepseek (see sarthi.ai.providers).

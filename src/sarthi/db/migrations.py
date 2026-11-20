@@ -103,6 +103,23 @@ MIGRATIONS: tuple[str, ...] = (
     ) STRICT;
     CREATE INDEX llm_usage_at ON llm_usage (at);
     """,
+    # 5: small app state (paired chat, pause switch) and what the user did with each job
+    """
+    CREATE TABLE app_state (
+        key                  TEXT PRIMARY KEY,
+        value                TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE job_user (
+        job_id               TEXT PRIMARY KEY REFERENCES job (id) ON DELETE CASCADE,
+        status               TEXT NOT NULL
+                             CHECK (status IN
+                                 ('alerted', 'digested', 'apply', 'skipped', 'later', 'applied')),
+        message_id           INTEGER,                   -- the chat message showing this job
+        updated_at           TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX job_user_status ON job_user (status, updated_at);
+    """,
 )
 
 
