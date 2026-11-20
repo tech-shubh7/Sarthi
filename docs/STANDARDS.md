@@ -31,7 +31,7 @@ Principles:
    # Adapted from <repo> (<licence>), <upstream path> @ <commit>
    # Copyright (c) <original authors>. Modifications (c) Sarthi contributors.
    ```
-3. Add or update the entry in `THIRD_PARTY_NOTICES.md` (Apache-2.0 sources: keep their NOTICE text too).
+3. Copy the source's LICENSE (and NOTICE, for Apache-2.0) into `licenses/` and list it in `THIRD_PARTY_NOTICES.md`.
 4. Copied code must meet these standards before merge (types, tests, lint), and its tests come with it where they exist.
 5. Prefer depending on a maintained library (ATS-Scrapers, JobSpy) over copying its code.
 

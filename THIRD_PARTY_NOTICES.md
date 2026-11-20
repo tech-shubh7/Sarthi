@@ -21,10 +21,12 @@ adapted code where the licence requires it.
 
 This table lists planned sources; an entry is final once code from that project is merged.
 
-When code from a project is merged, its full copyright and licence text is reproduced below (MIT and
-Apache-2.0 both require this), and for Apache-2.0 projects their NOTICE text is carried over as well.
-Whole folders copied in keep the upstream LICENSE file beside them.
+When code from a project is merged, its original licence file (and NOTICE file, for Apache-2.0 projects) is
+copied into [`licenses/`](licenses/) and listed below. Every adapted file also carries a header naming its source.
 
-## Licence texts
+## Merged so far
 
-_None yet: no third-party code has been merged._
+| Project | Licence file | Sarthi files |
+|---|---|---|
+| JobRadar | [licenses/JobRadar-MIT.txt](licenses/JobRadar-MIT.txt) | `src/sarthi/jobs/dedupe.py` |
+| StillOpen | [licenses/StillOpen-Apache-2.0.txt](licenses/StillOpen-Apache-2.0.txt), NOTICE: [licenses/StillOpen-NOTICE.txt](licenses/StillOpen-NOTICE.txt) | `src/sarthi/jobs/geo.py`, `src/sarthi/jobs/countries.py` |
