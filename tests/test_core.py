@@ -26,14 +26,21 @@ def test_settings_read_prefixed_env(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert settings.telegram_bot_token.get_secret_value() == "123456:secret-value"
 
 
+# Fake secrets are assembled at runtime so no secret-shaped literal sits in the repository
+# (secret scanners and readers would otherwise flag them as leaks).
+_TELEGRAM = "123456789:" + "AA" + "x" * 33
+_OPENAI = "sk-" + "t" * 24
+_GOOGLE = "AIza" + "y" * 35
+
+
 @pytest.mark.parametrize(
     ("raw", "leaked"),
     [
-        ("token 123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawQ", "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawQ"),
-        ("key=sk-abcdefghijklmnopqrstuv", "sk-abcdefghijklmnopqrstuv"),
+        (f"token {_TELEGRAM}", _TELEGRAM.split(":")[1]),
+        (f"key={_OPENAI}", _OPENAI),
         ("Authorization: Bearer abc.def.ghijklmnop", "abc.def.ghijklmnop"),
         ("password: hunter2!", "hunter2!"),
-        ("AIzaSyA1234567890abcdefghijklmnopqrstu", "AIzaSyA1234567890abcdefghijklmnopqrstu"),
+        (_GOOGLE, _GOOGLE),
     ],
 )
 def test_redact_masks_secrets(raw: str, leaked: str) -> None:

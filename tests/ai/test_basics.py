@@ -30,7 +30,7 @@ def test_resolve_keeps_order_and_skips_what_cannot_work(caplog: pytest.LogCaptur
 
 def test_scrub_removes_contact_details_only() -> None:
     resume = (
-        "Shubham P\nshubham.p+jobs@example.co.in | +91 98765 43210 | (555) 123-4567\n"
+        "Asha Rao\nasha.rao+jobs@example.co.in | +91 98765 43210 | (555) 123-4567\n"
         "https://linkedin.com/in/someone github.com/someone\n"
         "Built APIs serving 10,000 requests per second since 2021 with Python 3.12."
     )

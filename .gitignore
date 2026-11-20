@@ -2,9 +2,31 @@
 data/*
 !data/.gitkeep
 .env
+.env.*
+!.env.example
 *.session
+*.session-journal
 *.key
 *.pem
+*.p12
+*.pfx
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+profile.json
+resume*.*
+*.pdf
+*.docx
+*.bundle
+*.log
+exports/
+
+# Local tool and assistant folders
+.claude/
+CLAUDE.md
+.serena/
+.cache/
 
 # Python
 __pycache__/
