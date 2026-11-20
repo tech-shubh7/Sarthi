@@ -22,10 +22,7 @@ resume*.*
 *.log
 exports/
 
-# Local tool and assistant folders
-.claude/
-CLAUDE.md
-.serena/
+# Local caches
 .cache/
 
 # Python
