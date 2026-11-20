@@ -280,6 +280,10 @@ class TelegramBot:
                 return
         else:
             decided = await route(setup.ai, text, setup.asking, setup.question_text())
+            if decided.kind is Kind.CORRECTION and setup.fits_current_question(text):
+                decided = Route(
+                    Kind.ANSWER, setup.asking
+                )  # it answers what was asked; not a change elsewhere
         if decided.kind is Kind.ANSWER and in_setup:
             await setup.on_text(chat_id, text)
         elif decided.kind is Kind.CORRECTION and decided.field is not None:

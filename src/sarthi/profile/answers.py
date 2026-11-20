@@ -5,21 +5,50 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from sarthi.jobs.geo import resolve_place
+from sarthi.jobs.countries import ALL as _ISO_NAMES
+from sarthi.jobs.geo import first_country, location_codes, resolve_place
 from sarthi.jobs.models import Salary, SalaryPeriod
 from sarthi.profile.models import RemotePreference
 
 NONE_WORDS = frozenset({"none", "no", "nothing", "skip", "-", "na", "n/a", "nil"})
-MAX_ITEMS = 20
+MAX_ITEMS = 40  # long enough for a resume's skills plus additions; never silently drop more
 MAX_YEARS = 60
-_SPLIT = re.compile(r"\s*(?:,|;|\n|/|\band\b|&)\s*", re.IGNORECASE)
+_NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
+    "seven": "7", "eight": "8", "nine": "9", "ten": "10", "eleven": "11", "twelve": "12",
+    "half": "0.5", "a": "1", "an": "1",
+}  # fmt: skip
+_NUMBER_WORD = re.compile(
+    r"\b(?:" + "|".join(_NUMBER_WORDS) + r")\b(?=\s*(?:years?|yrs?|months?|mos?))", re.I
+)
+_AND_A_HALF = re.compile(r"\b(\d+|" + "|".join(_NUMBER_WORDS) + r")\s+and\s+(?:a\s+)?half\b\s*", re.I)
+
+
+def _number(word: str) -> float:
+    return float(_NUMBER_WORDS.get(word.lower(), word))
+
+
+_HALF_YEAR = re.compile(r"\bhalf\s+(?:a\s+)?year\b", re.IGNORECASE)
+_FRESHER = frozenset({"fresher", "fresh", "0", "none", "new grad", "student", "no experience", "nil", "zero"})
+# "/" and "&" separate items only with spaces around them: "UI/UX Designer", "R&D Engineer" stay whole.
+_SPLIT = re.compile(r"\s*(?:,|;|\n|\s/\s|\band\b|\s&\s)\s*", re.IGNORECASE)
 _LAKH = 100_000
 _THOUSAND = 1_000
+_CURRENCY_CODES = "INR|USD|GBP|EUR|AED|CAD|AUD|SGD|JPY|CHF|SEK|NOK|DKK|PLN|NZD|HKD|SAR|QAR"
 _SALARY = re.compile(
-    r"^(?P<cur1>[a-z]{3}|[₹$£€])?\s*(?P<amount>\d+(?:[.,]\d+)*)\s*(?P<unit>lakhs|lakh|lacs|lac|lpa|k|l)?\b\s*"
-    r"(?P<cur2>[a-z]{3}|[₹$£€])?\s*(?:/?\s*(?P<period>year|yr|annum|pa|month|mo))?$",
+    rf"^(?P<cur1>{_CURRENCY_CODES}|[₹$£€]|rs\.?)?\s*(?P<amount>\d+(?:[.,]\d+)*)\s*"
+    r"(?P<unit>crores?|cr|lakhs?|lacs?|lpa|k|l)?\b\.?\s*"
+    rf"(?:(?P<cur2>{_CURRENCY_CODES})\b|(?P<sym2>[₹$£€]))?\s*"
+    r"(?:/|per|a|an|p\.?)?\s*(?P<period>years?|yr|annum|pa|month|months|mo|monthly|yearly|annually|m)?\.?$",
     re.IGNORECASE,
 )
+_SKIP_SALARY = re.compile(
+    r"^(?:skip|none|no|nil|na|n/a|-|negotiable|not\s+sure|don'?t\s+know|no\s+idea|any|anything|"
+    r"no\s+minimum|doesn'?t\s+matter|flexible|open)[\s.!]*$",
+    re.IGNORECASE,
+)
+_CRORE = 10_000_000
+_SMALL_INR_IS_LAKHS = 1_000  # "12" from someone in India means 12 lakh a year
 _SYMBOLS = {"₹": "INR", "$": "USD", "£": "GBP", "€": "EUR"}
 _HOME_CURRENCY = {
     "IN": "INR", "US": "USD", "GB": "GBP", "CA": "CAD", "AU": "AUD", "SG": "SGD", "AE": "AED",
@@ -38,7 +67,7 @@ def split_list(text: str) -> tuple[str, ...]:
         return ()
     seen: dict[str, str] = {}
     for item in _SPLIT.split(text):
-        cleaned = item.strip(" .-").strip()
+        cleaned = item.strip(" -").rstrip(".").strip()  # keep a leading dot: ".NET"
         if cleaned and cleaned.lower() not in seen:
             seen[cleaned.lower()] = cleaned[:120]
     return tuple(seen.values())[:MAX_ITEMS]
@@ -50,17 +79,63 @@ class Countries:
 
     codes: frozenset[str]
     unknown: tuple[str, ...]
+    anywhere: bool = False
+    nothing: bool = False  # the user said "none" / "only India": an answer, not a blank
+
+
+ALL_COUNTRIES: frozenset[str] = frozenset(_ISO_NAMES)
+_ANYWHERE = re.compile(
+    r"\b(?:anywhere|any\s*where|worldwide|world\s*wide|globally|global|all\s+(?:the\s+)?countries|"
+    r"any\s+country|every\s+country|everywhere|open\s+to\s+all|whole\s+world)\b",
+    re.IGNORECASE,
+)
+_HOME_ONLY = re.compile(
+    r"^(?:(?:only|just)\s+(?:in\s+)?(?:my\s+)?(?:home(?:\s+country)?|here|india|my\s+country)|"
+    r"(?:my\s+)?home(?:\s+country)?\s+only|no(?:ne)?\s+(?:other|else|more)|nowhere(?:\s+else)?|"
+    r"same(?:\s+country)?|not\s+(?:abroad|outside))[\s.!]*$",
+    re.IGNORECASE,
+)
+_ABBREVIATIONS = {
+    "UK": "UK", "U.K.": "UK", "USA": "USA", "US": "US", "U.S.": "US", "U.S.A.": "USA",
+    "UAE": "UAE", "KSA": "KSA", "EU": "EU",
+}  # fmt: skip
+_FILLER_WORDS = re.compile(
+    r"\b(?:i'?d|i\s+would|i\s+can|i\s+could|i\s+have|i\s+hold|have|has|hold|also|maybe|and|or|work|working|"
+    r"in|to|the|countries|country|like|prefer|preferably|ok|okay|fine|with|please|would|be|open|happy|go|move|"
+    r"relocate|an?|my|passport|citizen|citizenship|green\s+card|permit|work\s+permit|pr|visa|holder|resident)\b",
+    re.IGNORECASE,
+)
+_LETTERS = re.compile(r"[a-z]", re.IGNORECASE)
 
 
 def parse_countries(text: str) -> Countries:
-    """Country and region names to ISO codes ("Europe" expands; "anywhere" is ignored)."""
+    """Country and region names to ISO codes.
+
+    "Europe" expands to its countries; "anywhere" / "worldwide" / "all countries" gives every country
+    (``Countries.anywhere``); "none" / "only India" / "just home" gives none. Names inside a phrase are found
+    ("I'd also work in UK and UAE"); only items with no recognisable place are reported as unknown.
+    """
+    if is_none(text) or _HOME_ONLY.match(text.strip()):
+        return Countries(frozenset(), (), nothing=True)
+    if _ANYWHERE.search(text):
+        return Countries(ALL_COUNTRIES, (), anywhere=True)
     codes: set[str] = set()
     unknown: list[str] = []
     for item in split_list(text):
-        resolved = resolve_place(item)
+        if re.fullmatch(r"[A-Z]{2}", item.strip()) and item.strip() in ALL_COUNTRIES:
+            codes.add(item.strip())  # an ISO code typed as such: "IN", "GB" (before "in" is read as filler)
+            continue
+        bare = _FILLER_WORDS.sub(" ", item).strip()
+        if bare.upper() in _ABBREVIATIONS:
+            bare = _ABBREVIATIONS[bare.upper()]
+        resolved = resolve_place(item) or resolve_place(bare)
         if resolved and "*" not in resolved:
             codes |= resolved
-        elif resolved is None:
+            continue
+        found = location_codes(item) or ({c} if (c := first_country(item)) else set())
+        if found:
+            codes |= found
+        elif _LETTERS.search(_FILLER_WORDS.sub(" ", item)):
             unknown.append(item)
     return Countries(frozenset(codes), tuple(unknown))
 
@@ -75,39 +150,70 @@ def parse_remote(text: str) -> RemotePreference | None:
 
 
 def parse_years(text: str) -> float | None:
-    """Years of experience from "4", "3.5 years" or "fresher" (0)."""
-    answer = text.strip().lower()
-    if answer in {"fresher", "fresh", "0", "none", "new grad", "student"}:
+    """Years of experience: "4", "3.5 years", "two years", "1 year 6 months", "6 months", "fresher" (0).
+
+    Ranges take the lower end ("2-3" -> 2). Returns None for anything unclear, negative or over 60 years.
+    """
+    answer = _HALF_YEAR.sub("0.5 years", text.strip().lower())
+    answer = _AND_A_HALF.sub(lambda m: f"{_number(m.group(1)) + 0.5:g} ", answer)
+    answer = _NUMBER_WORD.sub(lambda m: _NUMBER_WORDS[m.group().lower()], answer)
+    if answer in _FRESHER or re.fullmatch(
+        r"(?:i\s+am\s+(?:a\s+)?)?(?:fresher|fresh\s+graduate|student)", answer
+    ):
         return 0.0
-    match = re.search(r"\d+(?:\.\d+)?", answer)
-    if match is None:
-        return None
-    years = float(match.group())
-    return years if 0 <= years <= MAX_YEARS else None
+    if re.search(r"-\s*\d", answer) and not re.search(r"\d\s*-\s*\d", answer):
+        return None  # negative
+    years = re.search(r"(\d+(?:\.\d+)?)\s*\+?\s*(?:-\s*\d+(?:\.\d+)?\s*)?(?:years?|yrs?|y\b)", answer)
+    months = re.search(r"(\d+)\s*(?:months?|mos?|mths?)\b", answer)
+    if years is None and months is None:
+        bare = re.fullmatch(r"(?:around|about|approx\.?|~)?\s*(\d+(?:\.\d+)?)\s*\+?(?:\s*-\s*\d+)?", answer)
+        if bare is None:
+            return None
+        total = float(bare.group(1))
+    else:
+        total = (float(years.group(1)) if years else 0.0) + (int(months.group(1)) / 12 if months else 0.0)
+    total = round(total, 1)
+    return total if 0 <= total <= MAX_YEARS else None
+
+
+def is_salary_skip(text: str) -> bool:
+    """True for answers meaning "no minimum": skip, negotiable, not sure, any..."""
+    return bool(_SKIP_SALARY.match(text.strip()))
 
 
 def parse_salary(text: str, home_country: str) -> Salary | None:
-    """A yearly (or monthly) minimum: "12 LPA", "15 lakh", "80k GBP", "USD 120000", "50000 / month".
+    """A minimum salary: "12 LPA", "15 lakh", "1.2 crore", "80k GBP", "USD 120000", "50000 per month".
 
-    The currency defaults to the home country's. Returns None when the text is not understood.
+    The currency defaults to the home country's. A bare small number follows local habit ("12" in India is
+    12 lakh a year, "120" in USD is 120k). Returns None when the text is not understood.
     """
-    match = _SALARY.match(text.strip().replace("\u00a0", " "))  # no-break spaces from phones
+    match = _SALARY.match(
+        text.strip().replace("\u00a0", " ").replace("₹ ", "₹")
+    )  # no-break spaces from phones
     if match is None:
         return None
     amount = float(match["amount"].replace(",", ""))
-    unit = (match["unit"] or "").lower()
-    if unit == "k":
+    unit = (match["unit"] or "").lower().rstrip("s")
+    raw_currency = (match["cur1"] or match["cur2"] or match["sym2"] or "").lower().rstrip(".")
+    if raw_currency == "rs":
+        raw_currency = "inr"
+    if unit in {"crore", "cr"}:
+        amount *= _CRORE
+    elif unit == "k":
         amount *= _THOUSAND
     elif unit:
         amount *= _LAKH
-    raw_currency = match["cur1"] or match["cur2"] or ("INR" if unit and unit != "k" else None)
-    currency = _SYMBOLS.get(
-        raw_currency or "", (raw_currency or _HOME_CURRENCY.get(home_country, "")).upper()
-    )
+    in_inr = unit not in {"", "k"} or raw_currency in {"inr", "₹"}
+    currency = _SYMBOLS.get(raw_currency, raw_currency.upper()) if raw_currency else ""
+    currency = currency or ("INR" if in_inr else _HOME_CURRENCY.get(home_country, ""))
+    if not unit and amount < _SMALL_INR_IS_LAKHS:
+        amount *= _LAKH if currency == "INR" else _THOUSAND
     if len(currency) != 3 or amount <= 0:  # noqa: PLR2004  (ISO 4217 codes have three letters)
         return None
-    period = SalaryPeriod.MONTH if (match["period"] or "").lower() in {"month", "mo"} else SalaryPeriod.YEAR
-    return Salary(currency=currency, period=period, minimum=amount)
+    monthly = (match["period"] or "").lower() in {"month", "months", "mo", "monthly", "m"}
+    return Salary(
+        currency=currency, period=SalaryPeriod.MONTH if monthly else SalaryPeriod.YEAR, minimum=amount
+    )
 
 
 # Verbs include common typos seen in real answers ("expect Fintech" meant "except Fintech").
@@ -148,6 +254,30 @@ class ListEdit:
     removed: tuple[str, ...] = ()  # suggested items the answer explicitly removed ("except fintech")
 
 
+_TAGS = re.compile(r"<[^>]*>")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028-\u202e\ufeff]")  # not \t \n \r
+MAX_ITEM_CHARS = 80
+NOT_A_LIST_ITEM = "That doesn't look like a list. Please type names, e.g. Backend Engineer, Data Analyst."
+
+
+def normalize_answer(text: str) -> str:
+    """A typed answer with markup tags, invisible characters and extra spaces removed (do this first)."""
+    text = _CONTROL.sub("", _TAGS.sub(" ", text))
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def clean_item(item: str) -> str | None:
+    """A list item fit to save, or None when it has no letters or is too long to be a name.
+
+    Tags and invisible characters are removed and spaces tidied.
+    """
+    text = _CONTROL.sub("", _TAGS.sub("", item))
+    text = re.sub(r"\s+", " ", text).strip(" ,;:-*•").rstrip(".")  # keep a leading dot: ".NET"
+    if not re.search(r"[^\W\d_]", text) or len(text) > MAX_ITEM_CHARS:
+        return None
+    return text
+
+
 def _clean(item: str) -> str:
     """Drop filler around an item: "the microservices one" -> "microservices", "backend AI engineer also"."""
     previous = None
@@ -160,7 +290,9 @@ def _clean(item: str) -> str:
 def _matches(needle: str, item: str) -> bool:
     """True when every word of ``needle`` is in ``item`` ("fintech" matches "Fintech App Developer")."""
     words = set(_WORD.findall(needle.lower()))
-    return bool(words) and words <= set(_WORD.findall(item.lower()))
+    item_words = set(_WORD.findall(item.lower()))
+    item_words |= {part for word in item_words for part in word.split(".") if part}  # "node.js" -> "node"
+    return bool(words) and words <= item_words
 
 
 def edit_list(text: str, suggestion: tuple[str, ...] | list[str]) -> ListEdit:
@@ -172,6 +304,7 @@ def edit_list(text: str, suggestion: tuple[str, ...] | list[str]) -> ListEdit:
     until another verb. Removal matches by words, ignoring case. Instruction words are never returned as
     items.
     """
+    text = normalize_answer(text)
     base = list(suggestion)
     keep_base = False
     removals: list[str] = []
@@ -199,18 +332,19 @@ def edit_list(text: str, suggestion: tuple[str, ...] | list[str]) -> ListEdit:
     if any(r.lower() in _EVERYTHING for r in removals):
         base, removals = [], [r for r in removals if r.lower() not in _EVERYTHING]
     edited = keep_base or removals or additions or len(base) != len(suggestion)
-    items = (base + additions + plain) if edited else plain
-    items = [
-        i for i in items if i and i.lower() not in _PURE_FILLER and not any(_matches(r, i) for r in removals)
-    ]
+    typed = [clean_item(i) for i in additions + plain if i.lower() not in _PURE_FILLER]
+    if any(item is None for item in typed) and not any(typed):
+        return ListEdit((), NOT_A_LIST_ITEM)
+    new = [item for item in typed if item]
+    if any(looks_like_instruction(item) for item in new):  # only what the user typed: suggestions are trusted
+        return ListEdit((), UNCLEAR_LIST)
+    items = (base + new) if edited else new
+    items = [i for i in items if not any(_matches(r, i) for r in removals)]
     unique: dict[str, str] = {}
     for item in items:
         unique.setdefault(item.lower(), item)
-    result = tuple(unique.values())[:MAX_ITEMS]
     explicitly_removed = tuple(i for i in suggestion if any(_matches(r, i) for r in removals))
-    if any(_INSTRUCTION_WORDS.search(item) for item in result):
-        return ListEdit((), UNCLEAR_LIST, explicitly_removed)
-    return ListEdit(result, None, explicitly_removed)
+    return ListEdit(tuple(unique.values())[:MAX_ITEMS], None, explicitly_removed)
 
 
 _EDIT_WORDS = re.compile(
@@ -264,32 +398,49 @@ def reconcile(current: list[str], ai_items: list[str], text: str) -> list[str]:
     return [item for item in result if item.lower() not in removed]
 
 
-_CURRENCY_CODES = "INR|USD|GBP|EUR|AED|CAD|AUD|SGD|JPY|CHF|SEK|NOK|DKK|PLN|NZD|HKD|SAR|QAR"
 _SALARY_IN_TEXT = re.compile(
     rf"(?:(?<![a-z])(?:{_CURRENCY_CODES})\s*|[₹$£€]\s*)?\d+(?:[.,]\d+)*\s*"
-    rf"(?:lakhs|lakh|lacs|lac|lpa|k|l)?\b\s*(?:(?:{_CURRENCY_CODES})\b|[₹$£€])?\s*(?:/?\s*(?:year|yr|annum|pa|month|mo)\b)?",
+    rf"(?:crores?|cr|lakhs?|lacs?|lpa|k|l)?\b\.?\s*(?:(?:{_CURRENCY_CODES})\b|[₹$£€])?\s*"
+    r"(?:(?:/|per|a|an|p\.?)?\s*(?:years?|yr|annum|pa|months?|mo|monthly|yearly|annually|m)\b)?",
     re.IGNORECASE,
 )
 
 
 def find_salary(text: str, home_country: str) -> Salary | None:
-    """A salary anywhere in a sentence ("make my minimum 15 LPA"), or None."""
-    for match in _SALARY_IN_TEXT.finditer(text.replace("\u00a0", " ")):
-        if salary := parse_salary(match.group().strip(), home_country):
+    """A salary: the whole answer ("12", "50k per month"), or one inside a sentence ("make it 15 LPA").
+
+    Inside a sentence a number needs a unit or currency ("12 apples" is not a salary). Negative amounts are
+    never salaries.
+    """
+    text = text.replace("\u00a0", " ").strip()
+    if re.search(r"(?<![\w])-\s*\d", text):
+        return None
+    if whole := parse_salary(text, home_country):
+        return whole
+    for match in _SALARY_IN_TEXT.finditer(text):
+        piece = match.group().strip()
+        if re.fullmatch(r"[\d.,\s]+", piece):
+            continue  # a bare number inside a sentence: not clearly a salary
+        if salary := parse_salary(piece, home_country):
             return salary
     return None
 
 
 _REMOTE_ONLY = re.compile(
-    r"\b(?:remote\s+only|only\s+remote|fully\s+remote|100%\s+remote|wfh\s+only)\b", re.I
+    r"^\s*(?:remote|wfh|work\s+from\s+home|fully\s+remote)[\s.!]*$|"
+    r"\b(?:remote\s+only|only\s+remote|fully\s+remote|100%\s+remote|wfh\s+only|only\s+wfh)\b",
+    re.IGNORECASE,
 )
 _NO_REMOTE = re.compile(
+    r"^\s*(?:hybrid|office|on-?site|in-?office)[\s.!]*$|"
     r"\b(?:no\s+remote|not\s+remote|on-?site|in\s+office|office\s+only|onsite\s+only|hybrid\s+only|"
     r"on-?site\s+or\s+hybrid|office\s+or\s+hybrid|hybrid\s+or\s+office|from\s+(?:the\s+)?office)\b",
     re.IGNORECASE,
 )
 _ANY_REMOTE = re.compile(
-    r"\b(?:any|anything|all|both|remote\s+(?:is\s+)?(?:ok|fine)|remote\s+or|or\s+remote|hybrid)\b", re.I
+    r"\b(?:any|anything|all|both|either|whatever|don'?t\s+care|doesn'?t\s+matter|no\s+preference|"
+    r"remote\s+(?:is\s+)?(?:ok|fine)|remote\s+or|or\s+remote|all\s+(?:are\s+)?(?:ok|fine))\b",
+    re.IGNORECASE,
 )
 
 

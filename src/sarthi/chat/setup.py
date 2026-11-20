@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from datetime import timedelta
 from enum import StrEnum
@@ -30,11 +31,15 @@ from sarthi.db.jobs import JobStore
 from sarthi.jobs.geo import country_name, first_country
 from sarthi.jobs.models import Salary
 from sarthi.profile.answers import (
+    ALL_COUNTRIES,
+    clean_item,
     edit_list,
     find_salary,
     is_none,
+    is_salary_skip,
     is_simple_answer,
     looks_like_instruction,
+    normalize_answer,
     parse_countries,
     parse_remote_text,
     parse_years,
@@ -55,6 +60,7 @@ MAX_ROLES = 10
 MAX_SKILLS = 40
 SHOWN_SKILLS = 25
 _OK = frozenset({"ok", "okay", "yes", "y", "keep", "same"})
+_OK_EMOJI = frozenset({"👍", "👌", "✅", "✔️", "🆗", "👍🏻", "👍🏽", "👍🏾"})
 
 
 class Step(StrEnum):
@@ -115,12 +121,29 @@ SAVED_TEXT = (
 )
 EDIT_HINT = "Reply <b>ok</b> to use it, or e.g. <i>ok, remove X, add Y</i>, or type your own."
 UNKNOWN_PLACES = "I don't know {places}. Use country names (or 'none')."
+_NO_RESUME = re.compile(
+    r"^(?:no(?:\s+resume|\s+cv)?|later|not\s+now|don'?t\s+have(?:\s+(?:one|it|a\s+(?:resume|cv)))?|"
+    r"i\s+don'?t\s+have(?:\s+(?:one|it|a\s+(?:resume|cv)))?|without(?:\s+(?:resume|cv))?|nope|next)[\s.!]*$",
+    re.IGNORECASE,
+)
+_SAVE_WORDS = re.compile(
+    r"^(?:save|yes|y|ok(?:ay)?|done|confirm|correct|looks\s+good|all\s+good|perfect|go|go\s+ahead)[\s.!]*$",
+    re.IGNORECASE,
+)
+_RESTART_WORDS = re.compile(r"^(?:start\s+over|restart|redo|again|from\s+start|reset)[\s.!]*$", re.IGNORECASE)
+VISA_ANYWHERE = (
+    "Hardly anyone can work everywhere without a visa 🙂 If you need a visa outside {home}, reply "
+    "<b>none</b>. If you hold another passport or permit, name those countries "
+    "(e.g. Europe for an EU passport)."
+)
 _LIST_FIELDS = {Field.ROLES, Field.SKILLS}
 _COUNTRY_FIELDS = {Field.COUNTRIES, Field.VISA_FREE}
 
 
-def _names(codes: list[str]) -> str:
-    """Country names, alphabetically."""
+def _names(codes: list[str] | frozenset[str]) -> str:
+    """Country names, alphabetically ("Anywhere" for every country)."""
+    if len(codes) >= len(ALL_COUNTRIES):
+        return "Anywhere"
     return ", ".join(sorted(country_name(c) for c in codes)) or "none"
 
 
@@ -228,7 +251,7 @@ def _apply_years(draft: dict[str, Any], suggest: dict[str, Any], text: str) -> s
 
 
 def _apply_salary(draft: dict[str, Any], text: str) -> str | None:
-    if is_none(text) or "no minimum" in text.lower():
+    if is_none(text) or is_salary_skip(text):
         draft["salary"] = None
         return None
     salary = find_salary(text, draft.get("home") or "")
@@ -288,6 +311,26 @@ class SetupFlow:
         """The profile field of the question being asked (None for the resume and summary steps)."""
         step = self.step
         return Field(step.value) if step is not None and step.value in Field.__members__.values() else None
+
+    def fits_current_question(self, text: str) -> bool:
+        """True when ``text`` is a clear answer to the (non-list) question being asked.
+
+        "anywhere without visa" mentions visas, but while countries are being asked it answers that question;
+        it must not be taken as a change to the visa answer.
+        """
+        field, text = self.asking, normalize_answer(text)
+        if field is None or field in _LIST_FIELDS:
+            return False
+        if field in _COUNTRY_FIELDS:
+            parsed = parse_countries(text)
+            return not parsed.unknown and (bool(parsed.codes) or parsed.anywhere or parsed.nothing)
+        checks: dict[Field, Callable[[str], bool]] = {
+            Field.HOME: lambda t: len(parse_countries(t).codes) == 1 or first_country(t) is not None,
+            Field.REMOTE: lambda t: parse_remote_text(t) is not None,
+            Field.YEARS: lambda t: parse_years(t) is not None,
+            Field.SALARY: lambda t: is_salary_skip(t) or find_salary(t, "IN") is not None,
+        }
+        return checks[field](text)
 
     def question_text(self) -> str:
         """The current question as plain words, for the AI that routes messages."""
@@ -364,9 +407,11 @@ class SetupFlow:
         if state is None:
             return
         step = Step(state["step"])
-        text = text.strip()
+        text = normalize_answer(text)
+        if text in _OK_EMOJI:
+            text = "ok"
         if step is Step.RESUME:
-            if is_none(text):
+            if is_none(text) or _NO_RESUME.match(text):
                 await self._advance(chat_id, state)
             else:
                 await self.api.send_message(
@@ -374,7 +419,12 @@ class SetupFlow:
                 )
             return
         if step is Step.CONFIRM:
-            await self.api.send_message(chat_id, "Tap ✅ Save or 🔄 Start over.")
+            if _SAVE_WORDS.match(text):
+                await self._finish(chat_id, state)
+            elif _RESTART_WORDS.match(text):
+                await self.start(chat_id)
+            else:
+                await self.api.send_message(chat_id, "Tap ✅ Save (or reply <b>save</b>), or 🔄 Start over.")
             return
         field = Field(step.value)
         error = await self._apply(chat_id, state, field, text)
@@ -388,6 +438,7 @@ class SetupFlow:
 
     async def correct(self, chat_id: int, field: Field, text: str) -> None:
         """Change one answer from a free message: during setup the draft, otherwise the saved profile."""
+        text = normalize_answer(text)
         state = self._state()
         if state is not None:
             error = await self._apply(chat_id, state, field, text, use_suggestion=False)
@@ -471,7 +522,9 @@ class SetupFlow:
             items = await interpret_list(self.ai, question, current, text)
             if items is not None:
                 items = reconcile(current, items, text)  # rules catch what a small model drops or misses
-                if not any(looks_like_instruction(item) for item in items):
+                known = {item.lower() for item in current}
+                added = [item for item in items if item.lower() not in known]
+                if not any(looks_like_instruction(item) or clean_item(item) is None for item in added):
                     return items
         edit = edit_list(text, current)
         return edit.error if edit.error else list(edit.items)
@@ -493,12 +546,16 @@ class SetupFlow:
         """Countries from a plain list ("UK, UAE") or an edit of the current ones ("add UAE, remove UK")."""
         current = [country_name(code) for code in draft.get(field.value) or []]
         names = text
-        if not is_simple_answer(text):
+        direct = parse_countries(text)
+        complete = not direct.unknown and (bool(direct.codes) or direct.anywhere or direct.nothing)
+        if not complete and not is_simple_answer(text):  # an edit of the current list ("add UAE, remove UK")
             result = await self._edited_list(chat_id, QUESTIONS[Step(field.value)], current, text)
             if isinstance(result, str):
                 return result
             names = ", ".join(result) or "none"
         parsed = parse_countries(names)
+        if parsed.anywhere and field is Field.VISA_FREE:
+            return VISA_ANYWHERE.format(home=escape(country_name(draft.get("home", ""))))
         if parsed.unknown:
             return UNKNOWN_PLACES.format(places=escape(", ".join(parsed.unknown)))
         draft[field.value] = sorted(parsed.codes)

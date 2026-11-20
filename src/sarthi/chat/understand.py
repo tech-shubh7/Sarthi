@@ -13,9 +13,9 @@ from sarthi.ai.client import AiClient
 from sarthi.ai.intent import Field, Kind, classify
 
 _SMALLTALK = re.compile(
-    r"^(?:hi+|hello|hey+|hii+|namaste|yo|good\s+(?:morning|afternoon|evening|night)|thanks?(?:\s+you)?|thank\s+you|"
+    r"^(?:hi+|hello|hey+|hii+|namaste|namaskar|नमस्ते|yo|good\s+(?:morning|afternoon|evening|night)|thanks?(?:\s+you)?|thank\s+you|"
     r"thx|ty|cool|nice|great|awesome|wow|wait|one\s+(?:sec|second|min|minute|moment)|hold\s+on|hmm+|ok\s+wait|"
-    r"bye|good\s*bye|see\s+you|lol|haha+|👍|🙏|😊|🙂|👋)[\s!.?]*$",
+    r"bye|good\s*bye|see\s+you|lol|haha+|🙏|😊|🙂|👋)[\s!.?]*$",
     re.IGNORECASE,
 )
 _QUESTION = re.compile(
