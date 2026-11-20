@@ -8,6 +8,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from sarthi.ai.client import AiClient
 from sarthi.ai.providers import resolve
@@ -26,7 +27,8 @@ from sarthi.db.source_state import SourceStateStore
 from sarthi.db.tasks import TaskRecord, TaskStore
 from sarthi.matching.handler import Matcher
 from sarthi.profile.models import Profile
-from sarthi.profile.store import load_profile, profile_path
+from sarthi.profile.repair import repair
+from sarthi.profile.store import load_profile, profile_path, save_profile
 from sarthi.queue import names
 from sarthi.queue.tasks import Priority, TaskQueue
 from sarthi.queue.worker import Worker
@@ -126,6 +128,17 @@ def _ai(settings: Settings, models: list[str], conn: sqlite3.Connection, clock: 
     )
 
 
+def repair_saved_profile(path: Path) -> None:
+    """Remove junk that older versions saved into the profile (e.g. "Use skills" as a skill)."""
+    saved = load_profile(path)
+    if saved is None:
+        return
+    fixed = repair(saved)
+    if fixed is not saved:
+        save_profile(path, fixed)
+        log.info("cleaned leftover instructions from the saved profile's roles and skills")
+
+
 def build(settings: Settings, clock: Clock = utcnow) -> App:
     """Wire Sarthi from ``settings``. Raises ``SetupError`` when the bot token is missing."""
     if settings.telegram_bot_token is None:
@@ -139,6 +152,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         _ai(settings, settings.llm_quality_models, conn, clock),
     )
     path = profile_path(settings.data_dir)
+    repair_saved_profile(path)
 
     def profile() -> Profile | None:
         return load_profile(path)

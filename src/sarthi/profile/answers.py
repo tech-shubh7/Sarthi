@@ -238,8 +238,13 @@ _FILLER_END = re.compile(
 )
 _PURE_FILLER = frozenset({"please", "pls", "thanks", "thank you", "thx", "also", "too"})
 _EVERYTHING = frozenset({"all", "everything", "all of them", "them all"})
+# Words that only appear in an item when an instruction was misread as a name. Not "rest" ("REST API design"),
+# "no"/"not" ("No-code automation") or "others": real names contain them.
 _INSTRUCTION_WORDS = re.compile(
-    rf"\b(?:{_REMOVE_VERB[3:-1]}|okay|ok|keep|rest|others?|use|suggested)\b", re.IGNORECASE
+    r"\b(?:remove|remov|rmove|without|except|expect|excpet|exept|exclude|delete|minus|okay|ok|keep|suggested|"
+    r"suggestions?)\b|^\s*(?:add|include)\s|"
+    r"^\s*use\s+(?:these|them|those|it|all|same|suggested|suggestions?|skills|roles|from|my|the\s+same)\b",
+    re.IGNORECASE,
 )
 UNCLEAR_LIST = "I couldn't tell which items you meant. Please list them, e.g. Backend Engineer, AI Engineer."
 _WORD = re.compile(r"[a-z0-9+#.]+")
@@ -276,6 +281,23 @@ def clean_item(item: str) -> str | None:
     if not re.search(r"[^\W\d_]", text) or len(text) > MAX_ITEM_CHARS:
         return None
     return text
+
+
+def tidy_item(item: str) -> str:
+    """Drop filler around a name: "the microservices one" -> "microservices", "backend AI engineer also"."""
+    return _clean(item)
+
+
+_FROM_RESUME = re.compile(
+    r"\b(?:from|in|as\s+per|per|according\s+to|based\s+on|check|read|see|look\s+at)\s+(?:my\s+|the\s+)?"
+    r"(?:resume|cv|r[eé]sum[eé])\b",
+    re.IGNORECASE,
+)
+
+
+def is_from_resume(text: str) -> bool:
+    """True for "take skills from my resume", "as per my CV", "whatever is in my resume"."""
+    return bool(_FROM_RESUME.search(text))
 
 
 def _clean(item: str) -> str:

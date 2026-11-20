@@ -15,8 +15,8 @@ from sarthi.db.chat import ChatStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
 from sarthi.jobs.models import SalaryPeriod
-from sarthi.profile.models import RemotePreference
-from sarthi.profile.store import load_profile
+from sarthi.profile.models import Preferences, Profile, RemotePreference
+from sarthi.profile.store import load_profile, save_profile
 from sarthi.queue.tasks import PermanentError, TaskQueue
 from tests.chat.test_bot import OWNER, FakeApi, message, tap
 from tests.conftest import FakeClock
@@ -382,3 +382,53 @@ async def test_outside_setup_unclear_messages_get_gentle_help(bot: TelegramBot, 
     assert "no profile yet" in api.texts()[-1]
     await answer(bot, "what can you do?")
     assert "/today" in api.texts()[-1]
+
+
+async def test_setup_never_suggests_junk_saved_by_older_versions(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow
+) -> None:
+    save_profile(
+        flow.profile_file,
+        Profile(
+            preferences=Preferences(roles=("Backend Engineer", "Expect Fintech"), home_country="IN"),
+            skills=("Use skills",),
+        ),
+    )
+    await answer(bot, "/setup", "skip")
+    assert "Expect Fintech" not in api.texts()[-1]
+    assert "Suggested: <b>Backend Engineer</b>" in api.texts()[-1]
+    await answer(bot, "ok", "India", "none", "none")
+    await bot.handle_update(tap(OWNER, "setup:remote:ok"))
+    await answer(bot, "1")
+    assert "Use skills" not in api.texts()[-1]  # the skills question shows no junk suggestion
+
+
+async def test_take_skills_from_resume_reads_the_resume_again(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads: list[str] = []
+
+    async def fake_read(client: AiClient, text: str, today: object = None) -> ResumeFacts:
+        reads.append(text)
+        return ResumeFacts(
+            skills=["Python", "FastAPI", "Use skills"], years_experience=1.0, roles=["Backend Engineer"]
+        )
+
+    monkeypatch.setattr(setup_flow, "read_resume", fake_read)
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await answer(bot, "ok", "India", "none", "none")
+    await bot.handle_update(tap(OWNER, "setup:remote:ok"))
+    await answer(bot, "ok", "use skills take skills from resume")
+    assert len(reads) == 2  # read again for the skills
+    assert api.texts()[-2] == "✓ Skills: <b>Python, FastAPI</b>"  # and junk from the AI is dropped
+
+
+async def test_take_from_resume_without_a_resume_says_so(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow
+) -> None:
+    await answer(bot, "/setup", "skip", "Backend Engineer", "India", "none", "none")
+    await bot.handle_update(tap(OWNER, "setup:remote:ok"))
+    await answer(bot, "1", "take skills from my resume")
+    assert "I don't have your resume yet" in api.texts()[-1]

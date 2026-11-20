@@ -35,6 +35,7 @@ from sarthi.profile.answers import (
     clean_item,
     edit_list,
     find_salary,
+    is_from_resume,
     is_none,
     is_salary_skip,
     is_simple_answer,
@@ -46,6 +47,7 @@ from sarthi.profile.answers import (
     reconcile,
 )
 from sarthi.profile.models import Preferences, Profile, RemotePreference
+from sarthi.profile.repair import clean_list, repair
 from sarthi.profile.resume import MAX_UPLOAD_BYTES, ResumeError, extract_text
 from sarthi.profile.store import load_profile, save_profile
 from sarthi.queue import names
@@ -342,6 +344,9 @@ class SetupFlow:
     async def start(self, chat_id: int) -> None:
         """Begin (or restart) setup; current profile values become the suggestions."""
         current = self._load(self.profile_file)
+        current = (
+            repair(current) if current is not None else None
+        )  # never suggest junk saved by older versions
         suggest: dict[str, Any] = {}
         draft: dict[str, Any] = {}
         if current is not None:
@@ -454,7 +459,7 @@ class SetupFlow:
         if profile is None:
             await self.api.send_message(chat_id, "You have no profile yet. Send /setup to create one.")
             return
-        edit_state: dict[str, Any] = {"draft": draft_from(profile), "suggest": {}}
+        edit_state: dict[str, Any] = {"draft": draft_from(repair(profile)), "suggest": {}}
         error = await self._apply(chat_id, edit_state, field, text, use_suggestion=False)
         if error:
             await self.api.send_message(chat_id, error)
@@ -532,12 +537,27 @@ class SetupFlow:
     async def _apply_list(self, chat_id: int, state: dict[str, Any], field: Field, text: str) -> str | None:
         key = field.value
         current = list(state["draft"].get(key) or state["suggest"].get(key) or [])
+        if is_from_resume(text):  # "take skills from my resume": read the resume again for this list
+            return await self._list_from_resume(chat_id, state, field)
         result = await self._edited_list(chat_id, QUESTIONS[Step(key)], current, text)
         if isinstance(result, str):
             return result
         if field is Field.ROLES and not result:
             return "Please name at least one job title, e.g. Backend Engineer, Data Analyst."
         state["draft"][key] = result[: MAX_ROLES if field is Field.ROLES else MAX_SKILLS]
+        return None
+
+    async def _list_from_resume(self, chat_id: int, state: dict[str, Any], field: Field) -> str | None:
+        resume = state["draft"].get("resume_text") or ""
+        if not resume:
+            return "I don't have your resume yet. Send it with /setup, or type the list."
+        if self.ai.available:
+            await self.api.send_message(chat_id, "📄 Reading your resume…")
+        facts = await read_resume(self.ai, resume)
+        items = clean_list((facts.roles if field is Field.ROLES else facts.skills) if facts else [])
+        if not items:
+            return "I couldn't read that from your resume just now. Please type the list."
+        state["draft"][field.value] = items[: MAX_ROLES if field is Field.ROLES else MAX_SKILLS]
         return None
 
     async def _apply_countries(
