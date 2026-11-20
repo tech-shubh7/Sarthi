@@ -58,6 +58,10 @@ class TelegramApi:
             response = await self._http.post(url, json=payload)
         except httpx.HTTPError as error:
             raise RetryableError(f"telegram {method}: {type(error).__name__}") from None
+        return self._result(method, response)
+
+    @staticmethod
+    def _result(method: str, response: httpx.Response) -> Any:
         body: dict[str, Any] = {}
         with contextlib.suppress(ValueError):  # not JSON: handled below as a failed call
             body = response.json()
@@ -80,6 +84,14 @@ class TelegramApi:
             description = str(body.get("description") or f"HTTP {response.status_code}")
             raise PermanentError(f"telegram {method}: {description[:200]}")
         return body.get("result")
+
+    async def _upload(self, method: str, data: dict[str, str], files: dict[str, Any]) -> Any:
+        url = f"{self._base}/bot{self._token.get_secret_value()}/{method}"
+        try:
+            response = await self._http.post(url, data=data, files=files)
+        except httpx.HTTPError as error:
+            raise RetryableError(f"telegram {method}: {type(error).__name__}") from None
+        return self._result(method, response)
 
     async def get_updates(self, offset: int | None, timeout: int = POLL_TIMEOUT_S) -> list[dict[str, Any]]:
         """New messages and button taps (long polling)."""
@@ -125,6 +137,14 @@ class TelegramApi:
         if response.status_code != httpx.codes.OK or len(response.content) > max_bytes:
             raise PermanentError(f"telegram download: HTTP {response.status_code} or file too large")
         return response.content
+
+    async def send_document(
+        self, chat_id: int, filename: str, content: bytes, caption: str = "", mime: str = "text/csv"
+    ) -> int:
+        """Send a file (HTML caption); returns the message id."""
+        data = {"chat_id": str(chat_id), "caption": caption[:1024], "parse_mode": "HTML"}
+        result = await self._upload("sendDocument", data, {"document": (filename, content, mime)})
+        return int(result["message_id"])
 
     async def answer_callback(self, callback_id: str, text: str = "") -> None:
         """Acknowledge a button tap (stops the spinner), with an optional short toast."""

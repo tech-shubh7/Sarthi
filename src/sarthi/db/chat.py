@@ -77,13 +77,17 @@ class ChatStore:
         row = self._conn.execute("SELECT message_id FROM job_user WHERE job_id = ?", (job_id,)).fetchone()
         return int(row["message_id"]) if row and row["message_id"] is not None else None
 
-    def unsent_matches(self, limit: int) -> list[DigestItem]:
-        """Best matched jobs (alert or digest) the user has not been shown yet."""
+    def unsent_matches(self, limit: int, profile_version: str | None = None) -> list[DigestItem]:
+        """Best matched jobs (alert or digest) the user has not been shown yet.
+
+        With ``profile_version``, only matches made with that profile count (older ones are being redone).
+        """
         rows = self._conn.execute(
             "SELECT m.job_id, m.score FROM job_match m LEFT JOIN job_user u ON u.job_id = m.job_id "
             "WHERE m.decision IN ('alert', 'digest') AND u.job_id IS NULL "
-            "ORDER BY m.score DESC, m.matched_at DESC LIMIT ?",
-            (limit,),
+            "AND (:version IS NULL OR m.profile_version = :version) "
+            "ORDER BY m.score DESC, m.matched_at DESC LIMIT :limit",
+            {"version": profile_version, "limit": limit},
         )
         return [DigestItem(row["job_id"], row["score"]) for row in rows]
 

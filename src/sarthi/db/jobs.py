@@ -117,6 +117,13 @@ class JobStore:
         )
         return [str(row["id"]) for row in rows]
 
+    def ids_active_since(self, since: datetime) -> list[str]:
+        """Ids of jobs seen (first time or again) at or after ``since``, most recently seen first."""
+        rows = self._conn.execute(
+            "SELECT id FROM job WHERE last_seen_at >= ? ORDER BY last_seen_at DESC", (to_iso(since),)
+        )
+        return [str(row["id"]) for row in rows]
+
     def full_text(self, job_id: str) -> str:
         """The complete description saved with the job ("" when none was saved)."""
         row = self._conn.execute("SELECT text_zlib FROM job_text WHERE job_id = ?", (job_id,)).fetchone()

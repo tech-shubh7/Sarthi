@@ -21,6 +21,14 @@ log = logging.getLogger(__name__)
 ALERT_TASK = names.ALERT
 WAIT_FOR_PROFILE_S = 3600
 CHAT_FIRST_WAIT_S = 20  # the user's own messages use the (local) AI first
+# Raised whenever the matching rules change meaning, so stored results (and alerts queued from them) are
+# recognised as out of date and redone.
+LOGIC_VERSION = "2"
+
+
+def match_version(profile: Profile) -> str:
+    """What a stored match was made with: this profile and this version of the matching logic."""
+    return f"{profile.version}.{LOGIC_VERSION}"
 
 
 class Matcher:
@@ -66,7 +74,7 @@ class Matcher:
         self.matches.save(
             MatchRecord(
                 job_id=task.key,
-                profile_version=profile.version,
+                profile_version=match_version(profile),
                 score=result.score,
                 decision=result.decision.value,
                 rule=result.outcome.rule,

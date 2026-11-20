@@ -117,6 +117,10 @@ class TaskQueue:
         """Run the task again after ``seconds`` without counting this attempt."""
         self.store.defer(task.id, until=self._at(seconds))
 
+    def active(self, type_: str) -> int:
+        """How many tasks of ``type_`` are waiting or running."""
+        return self.store.active(type_)
+
     def reclaim_stuck(self) -> int:
         """Return tasks left running by a crash to the queue. Returns how many."""
         return self.store.reclaim_stuck(started_before=to_iso(self._clock() - STUCK_AFTER))

@@ -614,14 +614,40 @@ def location_codes(location: str) -> set[str]:
     return codes
 
 
+_LEVELLED = r"\b(?:engineer|developer|sde|swe|programmer|analyst|scientist|consultant)\s*[-\u2013(]?\s*"
+_NOT_YEARS = r"(?!\s*(?:[-\u2013+]|to\b|\(|years?\b|yrs?\b))"  # "Engineer 5-8 yrs" is years, not level 5
 _SENIORITY = [
-    ("junior", r"\b(?:intern|junior|jr\.?|entry[- ]level|graduate|trainee)\b"),
     ("manager", r"\b(?:manager|head of|director|vp\b)"),
     ("principal", r"\b(?:principal|architect|distinguished)\b"),
-    ("lead", r"\b(?:lead|staff|team lead|tech lead)\b"),
-    ("senior", r"\b(?:senior|sr\.?)\b"),
-    ("mid", r"\b(?:mid[- ]level|intermediate)\b"),
+    ("lead", r"\b(?:lead|leader|staff|team lead|tech lead)\b"),
+    (
+        "senior",
+        r"\b(?:senior|sr\.?)(?=\W|$)|"
+        + _LEVELLED
+        + r"(?:iii\b|iv\b|v\b|[345]\b"
+        + _NOT_YEARS
+        + ")"
+        + r"|\bl[5-7]\b",
+    ),
+    (
+        "junior",
+        r"\b(?:intern|junior|jr\.?|entry[- ]level|graduate|new grad|trainee|fresher|associate)(?=\W|$)|"
+        + _LEVELLED
+        + r"(?:i|1)\b(?!\.)",
+    ),
+    ("mid", r"\b(?:mid[- ]level|intermediate)\b|" + _LEVELLED + r"(?:ii\b|2\b" + _NOT_YEARS + ")"),
 ]
+
+
+def seniority_of(title: str) -> str | None:
+    """The level a job title states (junior, mid, senior, lead, principal, manager), or None.
+
+    Reads words ("Senior", "Sr.", "Staff", "Associate") and level numbers ("SDE III", "Engineer 2", "L5").
+    """
+    for level, pattern in _SENIORITY:
+        if re.search(pattern, title or "", re.I):
+            return level
+    return None
 
 
 def detect_terms(title: str, text: str) -> dict[str, str]:
@@ -667,10 +693,8 @@ def detect_terms(title: str, text: str) -> dict[str, str]:
         ):
             found["employment_type"] = kind
             break
-    for level, pattern in _SENIORITY:
-        if re.search(pattern, title, re.I):
-            found["seniority"] = level
-            break
+    if level := seniority_of(title):
+        found["seniority"] = level
     return found
 
 

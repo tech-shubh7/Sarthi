@@ -165,3 +165,24 @@ async def test_a_new_profile_searches_the_boards_right_away(
     assert scheduler.tick() == 1  # roles changed: search now
     assert scheduler.tick() == 0  # the change was handled once; now it waits for its hour again
     assert pending(task_store) == 1
+
+
+async def test_catchup_reads_every_source_over_the_window_then_queues_the_report(
+    make_scheduler: Any, queue: TaskQueue
+) -> None:
+    good = FakeSource("greenhouse:acme", [make_job()])
+    feed = FakeSource("feed:remotive", [])
+    broken = FakeSource("boards:linkedin", RetryableError("HTTP 503"))
+    scheduler = make_scheduler([(good, "company"), (feed, "feed"), (broken, "boards")], make_profile())
+    await scheduler.handle_catchup(TaskRecord(1, "catchup", "48", {"hours": 48, "started": "x"}, 1))
+    assert [s.queries[0].hours_old for s in (good, feed, broken)] == [48, 48, 48]
+    assert queue.active("match") == 1  # the new job, even on a first read
+    assert queue.active("catchup_report") == 1
+
+
+@pytest.mark.parametrize(("asked", "used"), [(10_000, 168), (0, 24), (-5, 1)])
+async def test_catchup_window_is_clamped(make_scheduler: Any, asked: int, used: int) -> None:
+    source = FakeSource("greenhouse:acme", [])
+    scheduler = make_scheduler([(source, "company")], None)
+    await scheduler.handle_catchup(TaskRecord(1, "catchup", "x", {"hours": asked}, 1))
+    assert source.queries[0].hours_old == used

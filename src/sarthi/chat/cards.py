@@ -28,7 +28,8 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def _place(job: JobPosting) -> str:
+def place_text(job: JobPosting) -> str:
+    """Where the job is, for people: its location, else its countries, plus remote/hybrid."""
     parts: list[str] = []
     if job.location_text:
         parts.append(job.location_text)
@@ -39,7 +40,8 @@ def _place(job: JobPosting) -> str:
     return " · ".join(parts) or "Location not stated"
 
 
-def _salary(salary: Salary | None) -> str | None:
+def salary_text(salary: Salary | None) -> str | None:
+    """A pay range for people ("INR 12,00,000-18,00,000 / year"), or None when none is given."""
     if salary is None or (salary.minimum is None and salary.maximum is None):
         return None
     low, high = salary.minimum, salary.maximum
@@ -50,8 +52,8 @@ def _salary(salary: Salary | None) -> str | None:
 def job_card(job: JobPosting, match: MatchRecord | None) -> str:
     """The message text for one job (Telegram HTML)."""
     title = escape(_clip(job.title, MAX_TITLE_CHARS))
-    lines = [f"<b>{title}</b>", f"{escape(display_company(job.company))} · {escape(_place(job))}"]
-    if salary := _salary(job.salary):
+    lines = [f"<b>{title}</b>", f"{escape(display_company(job.company))} · {escape(place_text(job))}"]
+    if salary := salary_text(job.salary):
         lines.append(escape(salary))
     if match is not None:
         lines.append(f"\nMatch: <b>{match.score}%</b>")

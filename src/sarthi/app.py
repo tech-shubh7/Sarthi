@@ -25,7 +25,7 @@ from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
 from sarthi.db.source_state import SourceStateStore
 from sarthi.db.tasks import TaskRecord, TaskStore
-from sarthi.matching.handler import Matcher
+from sarthi.matching.handler import LOGIC_VERSION, Matcher, match_version
 from sarthi.profile.models import Profile
 from sarthi.profile.repair import repair
 from sarthi.profile.store import load_profile, profile_path, save_profile
@@ -38,6 +38,8 @@ from sarthi.sources.schedule import SourceScheduler, plan_sources
 log = logging.getLogger(__name__)
 
 WORKER_CONCURRENCY = 3
+MATCH_LOGIC_KEY = "matching.logic"
+REMATCH_AFTER_UPGRADE = timedelta(days=7)
 TICK_SECONDS = 60
 
 
@@ -82,6 +84,8 @@ class App:
             names.MATCH: self.matcher.handle,
             names.ALERT: self.bot.handle_alert,
             names.DIGEST: self._digest,
+            names.CATCHUP: self.sources.handle_catchup,
+            names.CATCHUP_REPORT: self.bot.handle_catchup_report,
         }
         return Worker(self.queue, handlers, concurrency=WORKER_CONCURRENCY, name="sarthi")
 
@@ -91,9 +95,22 @@ class App:
                 worker.wake()
             await asyncio.sleep(TICK_SECONDS)
 
+    def rematch_after_upgrade(self) -> int:
+        """Redo recent matches once when the matching logic changed. Returns how many were queued."""
+        chats, jobs = self.bot.chats, self.bot.jobs
+        if chats.get_state(MATCH_LOGIC_KEY) == LOGIC_VERSION:
+            return 0
+        ids = jobs.ids_active_since(self.clock() - REMATCH_AFTER_UPGRADE)
+        for job_id in ids:
+            self.queue.enqueue(names.MATCH, job_id, priority=Priority.NORMAL)
+        chats.set_state(MATCH_LOGIC_KEY, LOGIC_VERSION)
+        log.info("matching logic changed: %d recent job(s) queued to be matched again", len(ids))
+        return len(ids)
+
     async def run(self) -> None:
         """Run the bot, the source scheduler and the worker until cancelled."""
         self.queue.reclaim_stuck()
+        self.rematch_after_upgrade()
         self.schedule_digest()
         worker = self.worker()
         tasks = [
@@ -159,7 +176,22 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
 
     api = TelegramApi(settings.telegram_bot_token)
     setup = SetupFlow(api, chats, quality, path, jobs=jobs, queue=queue, clock=clock)
-    bot = TelegramBot(api, chats, jobs, matches, queue, setup=setup, group_messages=True, clock=clock)
+
+    def profile_version() -> str | None:
+        current = profile()
+        return match_version(current) if current else None
+
+    bot = TelegramBot(
+        api,
+        chats,
+        jobs,
+        matches,
+        queue,
+        setup=setup,
+        group_messages=True,
+        profile_version=profile_version,
+        clock=clock,
+    )
 
     def chat_busy() -> bool:
         return bot.inbox is not None and bot.inbox.busy

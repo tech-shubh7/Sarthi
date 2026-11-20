@@ -9,15 +9,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from sarthi.jobs.geo import country_name
+from sarthi.jobs.geo import country_name, seniority_of
 from sarthi.jobs.models import EmploymentType, JobPosting, RemoteType, Sponsorship
-from sarthi.jobs.requirements import min_years_required
+from sarthi.jobs.requirements import LEVEL_MIN_YEARS, min_years_in_title, min_years_required, years_tolerance
 from sarthi.jobs.scam import check as scam_check
+from sarthi.jobs.stack import missing_stack
 from sarthi.profile.models import Profile, RemotePreference
 
 LOCATION_FIT_POINTS = 15
 LOCATION_UNSURE_POINTS = 9
-YEARS_TOLERANCE = 2  # a job asking up to 2 years more than the user has is still worth showing
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,19 +88,63 @@ def _check_on_site(job: JobPosting, profile: Profile, verdict: _Verdict) -> None
         verdict.notes.append(f"Visa sponsorship not mentioned (you need one for {_names(workable)})")
 
 
+_INTERN_TITLE = re.compile(r"\bintern(?:ship)?s?\b|\btrainee\b|\bapprentice", re.I)
+
+
+def _employment_type(job: JobPosting) -> EmploymentType:
+    """The kind of contract; an intern title wins over what the source said ("MERN Developer Intern")."""
+    return EmploymentType.INTERNSHIP if _INTERN_TITLE.search(job.title) else job.employment_type
+
+
+# Job families that are not engineering, read from the title. A target role naming the family ("Sales
+# Engineer", "Support Engineer") keeps such jobs.
+_OTHER_FAMILIES: dict[str, str] = {
+    "sales": r"\bsales\b|\bbusiness development\b|\bpre-?sales\b",
+    "marketing": r"\bmarketing\b|\bsocial media\b|\bseo\b|\bcontent writer\b",
+    "recruiting": r"\brecruit(?:er|ing|ment)\b|\btalent acquisition\b|\bhr\b|\bhuman resources\b",
+    "support": r"\b(?:production|application|desktop|technical|it|customer|l[123])\s+support\b"
+    r"|\bhelp\s*desk\b|\bsupport (?:engineer|analyst|specialist|executive)\b",
+    "teaching": r"\btrainer\b|\bteacher\b|\btutor\b|\bfaculty\b|\blecturer\b",
+    "project management": r"\bscrum master\b|\bproject manager\b|\bprogram manager\b|\bdelivery manager\b",
+    "operations": r"\bfield service\b|\btechnician\b|\bback office\b|\bdata entry\b|\bcall cent(?:er|re)\b",
+}
+
+
+def _check_family(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:
+    wanted = " | ".join(profile.preferences.roles).lower()
+    for family, pattern in _OTHER_FAMILIES.items():
+        if re.search(pattern, job.title, re.I) and not re.search(pattern, wanted, re.I):
+            verdict.blockers.append(f"Looks like a {family} job, not one of your target roles")
+            return
+
+
+def _check_stack(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:
+    missing = missing_stack(job.title, (*profile.skills, *profile.preferences.keywords))
+    if missing:
+        verdict.blockers.append(f"Built around {', '.join(sorted(missing))}, which is not in your skills")
+
+
 def _check_job_terms(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:
     prefs = profile.preferences
-    if (
-        job.employment_type is not EmploymentType.UNKNOWN
-        and job.employment_type not in prefs.employment_types
-    ):
-        verdict.blockers.append(f"{job.employment_type.value.replace('_', '-').capitalize()} role")
-    needed = min_years_required(job.description)
-    if needed is not None and prefs.years_experience is not None:
-        if needed > prefs.years_experience + YEARS_TOLERANCE:
-            verdict.blockers.append(f"Asks for {needed}+ years of experience")
-        elif needed > prefs.years_experience:
-            verdict.notes.append(f"Asks for {needed}+ years; you have {prefs.years_experience:g}")
+    kind = _employment_type(job)
+    if kind is not EmploymentType.UNKNOWN and kind not in prefs.employment_types:
+        verdict.blockers.append(f"{kind.value.replace('_', '-').capitalize()} role")
+    years = prefs.years_experience
+    if years is None:
+        return
+    level = seniority_of(job.title)
+    level_years = LEVEL_MIN_YEARS.get(level or "")
+    if level_years is not None and level_years > years + years_tolerance(years):
+        verdict.blockers.append(
+            f"{level.capitalize() if level else ''} level role; you have {years:g} year(s)"
+        )
+        return
+    needed = min_years_in_title(job.title) or min_years_required(job.description)
+    if needed is not None:
+        if needed > years + years_tolerance(years):
+            verdict.blockers.append(f"Asks for {needed}+ years of experience; you have {years:g}")
+        elif needed > years:
+            verdict.notes.append(f"Asks for {needed}+ years; you have {years:g}")
 
 
 def _check_exclusions(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:
@@ -126,6 +170,8 @@ def check_rules(job: JobPosting, profile: Profile) -> RulesResult:
     else:
         _check_on_site(job, profile, verdict)
     _check_job_terms(job, profile, verdict)
+    _check_stack(job, profile, verdict)
+    _check_family(job, profile, verdict)
     scam = scam_check(job.description)
     if scam.risk == "high":
         verdict.blockers.append("Looks like a scam: " + "; ".join(scam.signals))

@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -9,7 +10,7 @@ from sarthi.db.tasks import TaskRecord
 from sarthi.jobs.models import JobPosting
 from sarthi.matching.decide import Decision, Thresholds, decide
 from sarthi.matching.funnel import evaluate
-from sarthi.matching.handler import ALERT_TASK, Matcher
+from sarthi.matching.handler import ALERT_TASK, Matcher, match_version
 from sarthi.matching.rules import RulesResult
 from sarthi.profile.models import Profile
 from sarthi.queue.tasks import DeferError, PermanentError, TaskQueue
@@ -99,7 +100,7 @@ async def test_handler_stores_the_match_and_queues_an_alert(matcher: Any, job_st
     record = m.matches.get(saved.job_id)
     assert record is not None
     assert record.decision == "alert"
-    assert record.profile_version == make_profile().version
+    assert record.profile_version == match_version(make_profile())
     alert = m.queue.claim([ALERT_TASK])
     assert alert is not None
     assert alert.key == saved.job_id
@@ -134,7 +135,7 @@ async def test_handler_judges_the_full_text_not_the_snippet(matcher: Any, job_st
     await m.handle(TaskRecord(1, "match", saved.job_id, {}, 1))
     record = m.matches.get(saved.job_id)
     assert record is not None
-    assert (record.decision, record.hidden_because) == ("hide", "Asks for 9+ years of experience")
+    assert (record.decision, record.hidden_because) == ("hide", "Asks for 9+ years of experience; you have 3")
 
 
 async def test_background_scoring_waits_while_the_user_is_chatting(
@@ -160,7 +161,12 @@ async def test_background_scoring_waits_while_the_user_is_chatting(
 
 async def test_ai_is_only_used_near_the_alert_line() -> None:
     ai = FakeAi(AiScore(90, 0.9))
-    fair = make_job(title="Platform Engineer", description="Go services.")  # free score between 35 and 50
+    fair = make_job(  # free score between 35 and 50: a partial title match, a weak description, an old post
+        title="Backend Platform Engineer",
+        description="Kubernetes.",
+        country_codes=["DE", "IN"],
+        posted_at=NOW - timedelta(days=50),
+    )
     result = await evaluate(fair, make_profile(), NOW, ai=ai)
     assert ai.calls == 0
     assert Thresholds().hide_below <= result.score < Thresholds().ai_from

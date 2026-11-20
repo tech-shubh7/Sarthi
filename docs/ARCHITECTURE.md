@@ -125,6 +125,16 @@ The L3 evidence card (StillOpen matchcard) is not ported yet: L0 + rule notes su
 
 **+1:** learns from your taps. Every Apply/Skip adjusts your alert threshold (JobRadar has the idea as a suggestion; we make it automatic).
 
+**Relevance rules (implemented, from a real session where a 1-year developer was sent "SDE III", "Senior" and
+".NET" jobs):** the level a title states ("Senior", "Sr.", "III", "SDE-3", "L5", "Staff", "Leader") must fit the
+user's years (senior 4, lead 6, principal 8, with 1 year of slack early in a career, 2 later); years asked in the
+title ("8-10 yrs") or text count the same way, and the AI also reads the required years from the full posting, with
+code applying the rule to its answer. A title built around a technology the user lacks (Java, .NET, PHP, SAP...)
+is hidden; so are other job families (sales, support, recruiting, teaching). Sharing only "engineer" is no title
+match, synonyms are unified ("AI Developer" = "AI Engineer", "ML" = "Machine Learning"), a job needs a title match
+or 4+ of the user's skills to be shown at all, and only a title match can be an instant alert. Alerts are re-checked
+before sending: a match made with an older profile or older matching logic (``LOGIC_VERSION``) is never sent.
+
 ### 2.8 Decide [MVP]
 **Copy JobRadar `decide.py`** rule table, extended:
 not eligible / scam → hide · strong + sure → **instant Telegram alert** · medium → **daily digest** · above auto-apply score + auto mode on → **apply directly** [Final].
@@ -249,6 +259,10 @@ After the batch is ready, user chooses on Telegram:
 3. **Mix** — auto-apply on easy sites, list for the rest.
 
 **Scheduled catch-up:** "every day at 9 PM, check last 24 hours" — Sarthi starts, does the batch, sends results. Works with a computer that is on only part of the day. If the computer was off for 3 days, the next start automatically catches up on those 3 days.
+
+**Implemented (MVP):** `/catchup` (24 h, 2, 5, 7 days) → `catchup` task reads every source over the window →
+`catchup_report` waits for matching, then sends a summary, the best 10 as cards and every match as a CSV
+(formula-injection safe); single alerts are held meanwhile. Batch apply is added with the apply engine.
 
 **+1:** no repo combines a time-window search over all sources with batch apply + safe pacing + a do-it-yourself pack.
 

@@ -152,6 +152,29 @@ class SourceScheduler:
                 queued += 1
         return queued
 
+    async def handle_catchup(self, task: TaskRecord) -> None:
+        """``catchup`` task: read every source over the requested window, then queue the report.
+
+        New jobs are queued for matching as usual; the report task waits until matching is done.
+        """
+        hours = max(1, min(MAX_LOOK_BACK_HOURS, int(task.payload.get("hours") or 24)))
+        profile = self._load_profile()
+        new, failed, read = 0, [], 0
+        for name, planned in self.planned.items():
+            query = query_for(profile, planned.kind, hours)
+            if query is None:
+                continue
+            read += 1
+            try:
+                report = await self.ingestor.run(planned.source, query, alert=True)
+            except (RetryableError, PermanentError) as error:
+                log.warning("catch-up: %s failed: %s", name, error)
+                failed.append(name)
+                continue
+            new += report.new
+        payload = {**task.payload, "hours": hours, "sources": read, "new": new, "failed": failed}
+        self.queue.enqueue(names.CATCHUP_REPORT, task.key, payload, delay=5, priority=Priority.BACKGROUND)
+
     async def handle(self, task: TaskRecord) -> None:
         """``source_check`` task: read one source; its health decides when it runs again."""
         planned = self.planned.get(task.key)

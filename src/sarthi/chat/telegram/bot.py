@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from html import escape
 from typing import Any
 
 from sarthi.ai.intent import Kind
 from sarthi.chat.cards import display_company, job_card
+from sarthi.chat.catchup import ASK as ASK_CATCHUP
+from sarthi.chat.catchup import CatchUp, window_buttons
 from sarthi.chat.inbox import Inbox
 from sarthi.chat.pairing import owner_chat, redeem
 from sarthi.chat.setup import WHY, SetupFlow
@@ -85,6 +88,7 @@ HELP = (
     "/setup – create or change your profile (resume + a few questions)\n"
     "/profile – show your profile (change anything by just telling me)\n"
     "/today – best matches you have not seen yet\n"
+    "/catchup – everything posted in the last 24 hours to 7 days, in one batch\n"
     "/status – what Sarthi has found so far\n"
     "/pause – stop instant alerts (matches wait for you)\n"
     "/resume – start instant alerts again\n"
@@ -129,6 +133,7 @@ class TelegramBot:
         *,
         setup: SetupFlow | None = None,
         group_messages: bool = False,
+        profile_version: Callable[[], str | None] = lambda: None,
         clock: Clock = utcnow,
     ) -> None:
         """Send with ``api``; read jobs and matches; record choices in ``chats``; queue applications."""
@@ -140,7 +145,9 @@ class TelegramBot:
         self.matches = matches
         self.queue = queue
         self._clock = clock
+        self._profile_version = profile_version
         self._stopping = asyncio.Event()
+        self.catchup = CatchUp(api, chats, jobs, matches, queue, send_job=self.send_job, clock=clock)
 
     # ---- sending ----------------------------------------------------------------------------------------
 
@@ -162,7 +169,26 @@ class TelegramBot:
             raise DeferError(WAIT_FOR_PAIRING_S)  # not paired yet: keep the alert
         if self.chats.get_state(PAUSED_KEY) or self.chats.job_status(task.key) is not None:
             return  # paused: the match waits for /today or the digest; shown before: never twice
+        if not self._still_strong(task.key):
+            return  # re-matched since (e.g. the profile changed): the alert is out of date
+        if self.catchup.running():
+            return  # a catch-up is collecting results: this match comes in its batch
         await self.send_job(chat_id, task.key, JobStatus.ALERTED)
+
+    def _still_strong(self, job_id: str) -> bool:
+        """True when the job's current match is an alert made with the current profile."""
+        match = self.matches.get(job_id)
+        if match is None or match.decision != "alert":
+            return False
+        current = self._profile_version()
+        return current is None or match.profile_version == current
+
+    async def handle_catchup_report(self, task: TaskRecord) -> None:
+        """``catchup_report`` task: send the catch-up batch."""
+        chat_id = owner_chat(self.chats)
+        if chat_id is None:
+            raise DeferError(WAIT_FOR_PAIRING_S)
+        await self.catchup.handle_report(task, chat_id)
 
     async def handle_digest(self, task: TaskRecord) -> None:
         """``digest`` task: the best matches not shown yet, in one batch."""
@@ -172,7 +198,7 @@ class TelegramBot:
         await self._send_unseen(chat_id, quiet_if_none=True)
 
     async def _send_unseen(self, chat_id: int, quiet_if_none: bool) -> None:
-        items = self.chats.unsent_matches(DIGEST_SIZE)
+        items = self.chats.unsent_matches(DIGEST_SIZE, self._profile_version())
         if not items:
             if not quiet_if_none:
                 await self.api.send_message(
@@ -220,7 +246,9 @@ class TelegramBot:
 
     async def _on_command(self, chat_id: int, command: str) -> None:
         """/help, /status, /pause, /resume, /today."""
-        if command in ("/start", "/help"):
+        if command == "/catchup":
+            await self.api.send_message(chat_id, ASK_CATCHUP, window_buttons())
+        elif command in ("/start", "/help"):
             await self.api.send_message(chat_id, HELP)
         elif command == "/status":
             await self.api.send_message(chat_id, self._status_text())
@@ -231,7 +259,7 @@ class TelegramBot:
             )
         elif command == "/resume":
             self.chats.set_state(PAUSED_KEY, None)
-            waiting = len(self.chats.unsent_matches(DIGEST_SIZE))
+            waiting = len(self.chats.unsent_matches(DIGEST_SIZE, self._profile_version()))
             await self.api.send_message(chat_id, f"▶️ Instant alerts on. {waiting} match(es) waiting: /today")
         elif command == "/today":
             await self._send_unseen(chat_id, quiet_if_none=False)
@@ -316,19 +344,7 @@ class TelegramBot:
             await self.api.answer_callback(callback_id)
             return
         data = str(callback.get("data") or "")
-        if data == "profile:undo" and self.setup is not None:
-            await self.api.answer_callback(callback_id)
-            await self.api.edit_buttons(chat_id, message_id, None)
-            await self.setup.undo(chat_id)
-            return
-        if data.startswith("setup:pick:") and self.setup is not None:
-            await self.api.answer_callback(callback_id)
-            await self.setup.on_button(chat_id, data, message_id)  # the picker updates its own buttons
-            return
-        if data.startswith("setup:") and self.setup is not None:
-            await self.api.answer_callback(callback_id)
-            await self.api.edit_buttons(chat_id, message_id, None)  # one tap per question
-            await self.setup.on_button(chat_id, data, message_id)
+        if await self._on_flow_button(callback_id, chat_id, message_id, data):
             return
         action, _, job_id = data.partition(":")
         if action == "more":
@@ -347,6 +363,27 @@ class TelegramBot:
         label = _LABELS[current]
         await self.api.answer_callback(callback_id, label)
         await self.api.edit_buttons(chat_id, message_id, _done(label))
+
+    async def _on_flow_button(self, callback_id: str, chat_id: int, message_id: int, data: str) -> bool:
+        """Buttons of the setup and catch-up conversations. True when handled here."""
+        if data == "profile:undo" and self.setup is not None:
+            await self.api.answer_callback(callback_id)
+            await self.api.edit_buttons(chat_id, message_id, None)
+            await self.setup.undo(chat_id)
+        elif data.startswith("setup:pick:") and self.setup is not None:
+            await self.api.answer_callback(callback_id)
+            await self.setup.on_button(chat_id, data, message_id)  # the picker updates its own buttons
+        elif data.startswith("setup:") and self.setup is not None:
+            await self.api.answer_callback(callback_id)
+            await self.api.edit_buttons(chat_id, message_id, None)  # one tap per question
+            await self.setup.on_button(chat_id, data, message_id)
+        elif data.startswith("catchup:"):
+            await self.api.answer_callback(callback_id)
+            await self.api.edit_buttons(chat_id, message_id, None)
+            await self.catchup.on_button(chat_id, data)
+        else:
+            return False
+        return True
 
     async def _send_details(self, chat_id: int, job_id: str) -> None:
         job = self.jobs.get(job_id)

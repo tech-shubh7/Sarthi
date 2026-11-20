@@ -172,6 +172,13 @@ class TaskStore:
             )
             return cursor.rowcount
 
+    def active(self, type_: str) -> int:
+        """How many tasks of ``type_`` are waiting or running."""
+        row = self._conn.execute(
+            "SELECT count(*) FROM task WHERE type = ? AND status IN ('pending', 'running')", (type_,)
+        ).fetchone()
+        return int(row[0])
+
     def task_counts(self) -> dict[TaskStatus, int]:
         """How many tasks are in each status (every status present, zero when none)."""
         counts = dict.fromkeys(TaskStatus, 0)

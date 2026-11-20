@@ -14,6 +14,18 @@ _YEARS_OF_EXPERIENCE = re.compile(
     re.IGNORECASE,
 )
 _MAX_PLAUSIBLE_YEARS = 30
+# Titles often carry the range themselves: "Java Support Engineer - (8-10) YRS", "Generative AI 5- 9yrs".
+_YEARS_IN_TITLE = re.compile(
+    r"(?<![\d.])(\d{1,2})\s*(?:\+|plus)?\s*\)?\s*(?:(?:-|\u2013|to)\s*\(?\d{1,2}\s*\)?\s*)?(?:years?|yrs?)(?![a-z])",
+    re.IGNORECASE,
+)
+
+
+def min_years_in_title(title: str) -> int | None:
+    """The years a job title itself asks for ("Data Scientist 5 To 12 Years" -> 5), or None."""
+    years = [int(m.group(1)) for m in _YEARS_IN_TITLE.finditer(title or "")]
+    plausible = [n for n in years if 0 < n <= _MAX_PLAUSIBLE_YEARS]
+    return min(plausible) if plausible else None
 
 
 def min_years_required(text: str) -> int | None:
@@ -25,3 +37,21 @@ def min_years_required(text: str) -> int | None:
     years = [int(m.group(1)) for m in _YEARS_OF_EXPERIENCE.finditer(text or "")]
     plausible = [n for n in years if 0 < n <= _MAX_PLAUSIBLE_YEARS]
     return min(plausible) if plausible else None
+
+
+# A job asking a little more than the user has is still worth showing: 1 year early in a career (1 year of
+# experience vs "3+ years" is not a fit), 2 years later on.
+EARLY_CAREER_YEARS = 3
+# Typical minimum years for a level stated in a title ("Senior", "SDE III", "Staff"). "Manager" is not gated:
+# it is a role type as often as a level ("Product Manager").
+LEVEL_MIN_YEARS: dict[str, int] = {"senior": 4, "lead": 6, "principal": 8}
+
+
+def years_tolerance(years: float) -> int:
+    """How many years above the user's experience a job may still ask for."""
+    return 1 if years < EARLY_CAREER_YEARS else 2
+
+
+def too_experienced_for(needed: float, years: float) -> bool:
+    """True when a job asking for ``needed`` years is out of reach with ``years`` of experience."""
+    return needed > years + years_tolerance(years)

@@ -26,6 +26,37 @@ strong ability skills including etc using use new help build building looking jo
 candidate responsibilities requirements qualifications benefits equal opportunity employer
 """
 _STOP = frozenset(_STOP_WORDS.split())
+# Job nouns and level words found in almost every title. Sharing only these ("Integration Engineer" and
+# "Software Engineer" share "engineer") is not a title match: at least one other word must be shared.
+_GENERIC_TITLE_WORDS = frozenset(
+    [
+        "engineer",
+        "developer",
+        "programmer",
+        "sde",
+        "swe",
+        "specialist",
+        "consultant",
+        "analyst",
+        "architect",
+        "expert",
+        "professional",
+        "senior",
+        "junior",
+        "associate",
+        "lead",
+        "staff",
+        "principal",
+        "sr",
+        "jr",
+        "ii",
+        "iii",
+        "iv",
+        "intern",
+        "trainee",
+        "fresher",
+    ]
+)
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9+#.]*[a-z0-9+#]|[a-z0-9]")
 _MIN_STEM_LENGTH = 3
 _MIN_BULLET_TERM_LENGTH = 3
@@ -91,6 +122,30 @@ def _significant(text: str) -> list[str]:
     return [t for t in tokens(text) if t not in _STOP and len(t) > 1]
 
 
+# One spelling for words titles write in several ways, so "AI/ML Developer" matches "ML Engineer".
+_TITLE_SYNONYMS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(pattern, re.I), replacement)
+    for pattern, replacement in (
+        (r"\bback[- ]end\b", "backend"),
+        (r"\bfront[- ]end\b", "frontend"),
+        (r"\bfull[- ]?stack\b", "fullstack"),
+        (r"\bartificial intelligence\b", "ai"),
+        (r"\bmachine learning\b", "ml"),
+        (r"\bgen(?:erative)?[- ]?ai\b", "genai ai"),
+        (r"\b(?:developer|programmer|dev)s?\b", "engineer"),
+        (r"\bnode(?:\.?js)?\b", "node.js"),
+        (r"\bsw\b", "software"),
+    )
+)
+
+
+def title_words(text: str) -> list[str]:
+    """Significant words of a job title, with common synonyms made the same."""
+    for pattern, replacement in _TITLE_SYNONYMS:
+        text = pattern.sub(replacement, text)
+    return _significant(text)
+
+
 @dataclass(frozen=True, slots=True)
 class _Context:
     titles: tuple[tuple[str, ...], ...]
@@ -103,7 +158,7 @@ class _Context:
 def _context(profile: Profile) -> _Context:
     """Everything about the user that scoring needs, built once per profile (profiles are immutable)."""
     prefs = profile.preferences
-    titles = tuple(tuple(t) for t in map(_significant, prefs.roles) if t)
+    titles = tuple(tuple(dict.fromkeys(t)) for t in map(title_words, prefs.roles) if t)
     phrases: dict[str, None] = {}
     for raw in (*prefs.keywords, *profile.skills):
         phrase = re.sub(r"\s*\(.*\)\s*", " ", raw.lower()).strip()
@@ -129,20 +184,30 @@ class PrefilterResult:
 
     score: float
     reasons: tuple[str, ...]
+    title_share: float = 0.0  # 0-1: how much of the best target role the title contains
+    skill_hits: int = 0  # how many of the user's skills and keywords the job mentions
 
 
-def _title_score(job: JobPosting, ctx: _Context) -> tuple[float, str | None]:
-    job_words = set(_significant(job.title))
-    sequence = f" {' '.join(_significant(job.title))} "
+def _title_share(job: JobPosting, ctx: _Context) -> tuple[float, tuple[str, ...]]:
+    job_words = set(title_words(job.title))
+    sequence = f" {' '.join(title_words(job.title))} "
     best = 0.0
     best_title: tuple[str, ...] = ()
     for title in ctx.titles:
-        share = sum(1 for w in title if w in job_words) / len(title)
+        shared = [w for w in title if w in job_words]
+        if all(w in _GENERIC_TITLE_WORDS for w in shared) and len(shared) < len(title):
+            continue  # only "engineer" / "senior" in common (a target of only such words must match whole)
+        share = len(shared) / len(title)
         # All words but not in order ("Product Security Engineer" for "product engineer"): partial credit.
         if share == 1 and len(title) > 1 and f" {' '.join(title)} " not in sequence:
             share = _PARTIAL_ORDER_CREDIT
         if share > best:
             best, best_title = share, title
+    return best, best_title
+
+
+def _title_score(job: JobPosting, ctx: _Context) -> tuple[float, str | None]:
+    best, best_title = _title_share(job, ctx)
     if best == 0:
         return 0.0, "Title does not match your target roles" if ctx.titles else None
     points = TITLE_POINTS * (1 if best == 1 else best * best * 0.8)
@@ -216,6 +281,12 @@ def _recency_score(job: JobPosting, now: datetime) -> tuple[float, str | None]:
     return points, None
 
 
+def _skill_hits(job: JobPosting, ctx: _Context) -> int:
+    text = f"{job.title} {job.description}".lower()
+    body = set(tokens(text))
+    return sum(1 for phrase, toks in ctx.keywords if (toks[0] in body if len(toks) == 1 else phrase in text))
+
+
 def prefilter(job: JobPosting, profile: Profile, now: datetime) -> PrefilterResult:
     """Score ``job`` against ``profile`` without any AI call."""
     ctx = _context(profile)
@@ -228,4 +299,9 @@ def prefilter(job: JobPosting, profile: Profile, now: datetime) -> PrefilterResu
     )
     score = sum(points for points, _ in parts)
     reasons = tuple(reason for _, reason in parts if reason)
-    return PrefilterResult(score=score, reasons=reasons)
+    return PrefilterResult(
+        score=score,
+        reasons=reasons,
+        title_share=_title_share(job, ctx)[0],
+        skill_hits=_skill_hits(job, ctx),
+    )

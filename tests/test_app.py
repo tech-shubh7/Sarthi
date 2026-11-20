@@ -10,6 +10,7 @@ from sarthi.cli import app as cli
 from sarthi.config import Settings, get_settings
 from sarthi.db.tasks import TaskStatus
 from tests.conftest import FakeClock
+from tests.matching.conftest import make_job
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -38,7 +39,14 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
     )
     sarthi = build(settings, clock=clock)
     try:
-        assert set(sarthi.worker().handlers) == {"source_check", "match", "alert", "digest"}
+        assert set(sarthi.worker().handlers) == {
+            "source_check",
+            "match",
+            "alert",
+            "digest",
+            "catchup",
+            "catchup_report",
+        }
         assert sarthi.bot.setup is not None
         planned = set(sarthi.sources.planned)
         assert {
@@ -52,6 +60,11 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
         sarthi.schedule_digest()
         assert sarthi.queue.store.task_counts()[TaskStatus.PENDING] == 1
         assert not any(client.available for client in sarthi.ai_clients)
+
+        sarthi.bot.jobs.save(make_job())
+        assert sarthi.rematch_after_upgrade() == 1  # matching logic changed: recent jobs matched again
+        assert sarthi.rematch_after_upgrade() == 0  # once
+        assert sarthi.queue.active("match") == 1
     finally:
         await sarthi.bot.api.aclose()
         for client in sarthi.ai_clients:
