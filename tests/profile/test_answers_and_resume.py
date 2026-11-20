@@ -6,10 +6,12 @@ import pytest
 from sarthi.jobs.models import SalaryPeriod
 from sarthi.profile.answers import (
     edit_list,
+    is_simple_answer,
     parse_countries,
     parse_remote,
     parse_salary,
     parse_years,
+    reconcile,
     split_list,
 )
 from sarthi.profile.models import RemotePreference
@@ -234,3 +236,58 @@ def test_edit_list_real_phrasings(answer: str, expected: list[str]) -> None:
     result = edit_list(answer, ROLES_2)
     assert result.error is None
     assert list(result.items) == expected
+
+
+@pytest.mark.parametrize(
+    ("answer", "simple"),
+    [
+        ("ok", True),
+        ("Backend Engineer, Data Engineer", True),
+        ("use these", True),
+        ("remove fintech", False),
+        ("keep only first two", False),
+        ("same but replace AI Engineer with GenAI", False),
+    ],
+)
+def test_simple_answers_skip_the_ai(answer: str, simple: bool) -> None:
+    assert is_simple_answer(answer) is simple
+
+
+@pytest.mark.parametrize(
+    ("answer", "qwen_said", "expected"),
+    [
+        # outputs from a local qwen2.5:3b run (2026-11-20), checked by rules
+        (
+            "remove fintech and node one, add ML engineer and python developer instead",
+            ["Backend Engineer", "AI Engineer", "ML Engineer", "Python Developer"],
+            ["Backend Engineer", "AI Engineer", "ML Engineer", "Python Developer", "Microservices Developer"],
+        ),
+        (
+            "same but replace AI Engineer with GenAI Engineer",
+            ["Backend Engineer", "GenAI Engineer", "Node.js Developer", "Microservices Developer"],
+            [
+                "Backend Engineer",
+                "GenAI Engineer",
+                "Node.js Developer",
+                "Fintech Application Developer",
+                "Microservices Developer",
+            ],
+        ),
+        (
+            "ok, backend AI engineer, software developer associate software developer also, expect fintech, "
+            "microservices one",
+            ["Backend Engineer", "AI Engineer", "Software Developer Associate", "Microservices Developer"],
+            ["Backend Engineer", "AI Engineer", "Node.js Developer", "Software Developer Associate"],
+        ),
+        ("keep only first two", ["Backend Engineer", "AI Engineer"], ["Backend Engineer", "AI Engineer"]),
+        (
+            "i dont want microservices and fintech, rest is fine and also add full stack developer",
+            ["Backend Engineer", "AI Engineer", "Node.js Developer", "Full Stack Developer"],
+            ["Backend Engineer", "AI Engineer", "Node.js Developer", "Full Stack Developer"],
+        ),
+    ],
+)
+def test_rules_correct_what_a_small_model_gets_wrong(
+    answer: str, qwen_said: list[str], expected: list[str]
+) -> None:
+    assert reconcile(ROLES_2, qwen_said, answer) == expected

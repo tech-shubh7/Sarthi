@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from sarthi.ai.client import AiClient
+from sarthi.ai.providers import Endpoint
 from sarthi.ai.resume import ResumeFacts
 from sarthi.chat import setup as setup_flow
 from sarthi.chat.setup import STATE_KEY, SetupFlow
@@ -21,6 +22,7 @@ from tests.chat.test_bot import OWNER, FakeApi, message, tap
 from tests.conftest import FakeClock
 from tests.matching.conftest import make_job
 
+LOCAL_AI = Endpoint("ollama", "qwen", "http://localhost:11434/v1", None)
 RESUME = b"Asha Rao\nBackend engineer, 4 years: Python, Go, PostgreSQL, AWS. Built payment APIs for 2M users."
 
 
@@ -274,3 +276,37 @@ async def test_going_forward_or_to_unknown_steps_is_ignored(bot: TelegramBot, ap
     for data in ("setup:back:salary", "setup:back:nonsense", "setup:back:resume"):
         await bot.handle_update(tap(OWNER, data))
     assert len(api.sent) == sent
+
+
+async def test_free_form_edits_go_to_the_ai_and_apply_to_the_current_list(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, ai_reads: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[list[str], str]] = []
+
+    async def fake_interpret(client: AiClient, question: str, current: list[str], answer: str) -> list[str]:
+        seen.append((current, answer))
+        return [item for item in current if "Backend" not in item] + ["ML Engineer"]
+
+    monkeypatch.setattr(setup_flow, "interpret_list", fake_interpret)
+    flow.ai = AiClient([LOCAL_AI], flow.ai._store)
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await answer(bot, "Data Engineer, Backend Engineer")  # a plain list: rules, no AI
+    assert seen == []
+    await bot.handle_update(tap(OWNER, "setup:back:roles"))
+    await answer(bot, "remove the backend one and add ML engineer instead")
+    assert seen == [
+        (["Data Engineer", "Backend Engineer"], "remove the backend one and add ML engineer instead")
+    ]
+    assert "Understanding your answer" in api.texts()[-3]
+    assert api.texts()[-2] == "✓ Roles: <b>Data Engineer, ML Engineer</b>"
+
+
+async def test_without_ai_the_rules_handle_edits(bot: TelegramBot, api: FakeFiles, ai_reads: None) -> None:
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await answer(bot, "ok, add Data Engineer")
+    assert api.texts()[-2] == "✓ Roles: <b>Backend Engineer, Data Engineer</b>"
+    assert not any("Understanding" in text for text in api.texts())

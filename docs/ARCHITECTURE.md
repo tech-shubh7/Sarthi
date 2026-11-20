@@ -141,6 +141,10 @@ time; `app.py` is the composition root.
 `profile/resume.py`: size cap, type from bytes, no XML parser), AI suggestions from the scrubbed resume
 (`ai/resume.py`), questions parsed by `profile/answers.py` (countries, remote, years, salary such as "12 LPA"),
 summary with Save; saving re-matches jobs from the last 7 days. `/profile`, `/cancel`.
+Answers are natural language: plain lists and "ok" use fast rules; anything else ("remove fintech, add ML
+engineer instead") goes to the AI (`ai/answers.py`), whose list is then checked by rules (`reconcile`: items the
+user never mentioned come back, explicit removals always apply), because a 3B local model drops and misses
+items. Every answer is echoed back ("✓ Roles: …") with a Change button.
 **`sarthi run` (MVP):** bot + worker + `sources/schedule.py`: a 1-minute tick queues due sources (boards hourly
 with the profile's roles/countries, company boards every 30 min); each check looks back to its last success
 (catch-up after the computer was off, §2.18); failing sources back off up to 8x. Every new job is matched

@@ -135,6 +135,7 @@ _EVERYTHING = frozenset({"all", "everything", "all of them", "them all"})
 _INSTRUCTION_WORDS = re.compile(
     rf"\b(?:{_REMOVE_VERB[3:-1]}|okay|ok|keep|rest|others?|use|suggested)\b", re.IGNORECASE
 )
+UNCLEAR_LIST = "I couldn't tell which items you meant. Please list them, e.g. Backend Engineer, AI Engineer."
 _WORD = re.compile(r"[a-z0-9+#.]+")
 
 
@@ -144,6 +145,7 @@ class ListEdit:
 
     items: tuple[str, ...]
     error: str | None = None
+    removed: tuple[str, ...] = ()  # suggested items the answer explicitly removed ("except fintech")
 
 
 def _clean(item: str) -> str:
@@ -205,8 +207,58 @@ def edit_list(text: str, suggestion: tuple[str, ...] | list[str]) -> ListEdit:
     for item in items:
         unique.setdefault(item.lower(), item)
     result = tuple(unique.values())[:MAX_ITEMS]
+    explicitly_removed = tuple(i for i in suggestion if any(_matches(r, i) for r in removals))
     if any(_INSTRUCTION_WORDS.search(item) for item in result):
-        return ListEdit(
-            (), "I couldn't tell which items you meant. Please list them, e.g. Backend Engineer, AI Engineer."
-        )
-    return ListEdit(result)
+        return ListEdit((), UNCLEAR_LIST, explicitly_removed)
+    return ListEdit(result, None, explicitly_removed)
+
+
+_EDIT_WORDS = re.compile(
+    r"\b(?:remove|remov|without|except|expect|exclude|drop|delete|add|include|instead|replace|swap|change|"
+    r"only|but|not|no|keep|also|rather|first|last|all|everything|rest|others?|one|ones)\b",
+    re.IGNORECASE,
+)
+
+
+def is_simple_answer(text: str) -> bool:
+    """True for "ok"-style answers and plain lists, which the fast rules handle; edits go to the AI."""
+    text = text.strip()
+    return bool(_KEEP.match(text)) or not _EDIT_WORDS.search(text)
+
+
+def looks_like_instruction(item: str) -> bool:
+    """True when an item contains instruction words ("remove", "ok", ...), i.e. it was misread."""
+    return bool(_INSTRUCTION_WORDS.search(item))
+
+
+_GENERIC_WORDS = frozenset(
+    {"developer", "engineer", "engineering", "application", "applications", "senior", "junior", "lead",
+     "the", "and", "role", "roles", "job", "manager", "specialist", "associate"}
+)  # fmt: skip
+_MIN_DISTINCTIVE = 3
+_RESTRICT = re.compile(r"\b(?:only|just|new\s+list|instead\s+of\s+(?:all|these|everything))\b", re.IGNORECASE)
+
+
+def _mentioned(item: str, text: str) -> bool:
+    """True when a distinctive word of ``item`` is in ``text`` ("fintech" for "Fintech App Developer")."""
+    said = set(_WORD.findall(text.lower()))
+    words = (w.removesuffix(".js") for w in _WORD.findall(item.lower()))
+    distinctive = [w for w in words if len(w) >= _MIN_DISTINCTIVE and w not in _GENERIC_WORDS]
+    return item.lower() in text.lower() or any(w in said or f"{w}.js" in said for w in distinctive)
+
+
+def reconcile(current: list[str], ai_items: list[str], text: str) -> list[str]:
+    """Check an AI-edited list against the answer, using rules that are reliable where small models are not.
+
+    - Items the AI dropped that the user never mentioned come back (unless they said "only" or "just").
+    - Items the rules clearly see removed ("except fintech") are removed even if the AI kept them.
+    """
+    result = list(ai_items)
+    kept = {item.lower() for item in result}
+    if not _RESTRICT.search(text):
+        for position, item in enumerate(current):
+            if item.lower() not in kept and not _mentioned(item, text):
+                result.insert(min(position, len(result)), item)
+                kept.add(item.lower())
+    removed = {item.lower() for item in edit_list(text, current).removed}
+    return [item for item in result if item.lower() not in removed]

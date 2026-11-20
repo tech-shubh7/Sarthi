@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from sarthi.ai.answers import interpret_list
 from sarthi.ai.client import AiClient
 from sarthi.ai.resume import read_resume
 from sarthi.chat.telegram.api import TelegramApi, buttons
@@ -28,10 +29,13 @@ from sarthi.jobs.models import Salary
 from sarthi.profile.answers import (
     edit_list,
     is_none,
+    is_simple_answer,
+    looks_like_instruction,
     parse_countries,
     parse_remote,
     parse_salary,
     parse_years,
+    reconcile,
 )
 from sarthi.profile.models import Preferences, Profile, RemotePreference
 from sarthi.profile.resume import MAX_UPLOAD_BYTES, ResumeError, extract_text
@@ -112,6 +116,14 @@ _UNDERSTOOD: dict[Step, tuple[str, Callable[[dict[str, Any]], str]]] = {
     Step.SKILLS: ("Skills", lambda d: ", ".join(d.get("skills") or []) or "none"),
     Step.SALARY: ("Minimum salary", _salary_text),
 }
+_LIST_STEPS = {Step.ROLES: "roles", Step.SKILLS: "skills"}
+
+
+def _current_list(state: dict[str, Any], key: str) -> list[str]:
+    """The list an edit applies to: the user's own answer (e.g. after Change), else the suggestion."""
+    return list(state["draft"].get(key) or state["suggest"].get(key) or [])
+
+
 UNKNOWN_PLACES = "I don't know {places}. Use country names (or 'none')."
 
 
@@ -251,8 +263,12 @@ class SetupFlow:
         if state is None:
             return
         step = Step(state["step"])
-        answer: Callable[[dict[str, Any], str], str | None] = getattr(self, f"_answer_{step}")
-        error = answer(state, text.strip())
+        error: str | None
+        if step in _LIST_STEPS and not is_simple_answer(text):
+            error = await self._answer_with_ai(chat_id, step, state, text.strip())
+        else:
+            answer: Callable[[dict[str, Any], str], str | None] = getattr(self, f"_answer_{step}")
+            error = answer(state, text.strip())
         if error:
             await self.api.send_message(chat_id, error)
             return
@@ -290,6 +306,23 @@ class SetupFlow:
 
     # ---- answers (each returns an error message, or None when accepted) ---------------------------------
 
+    async def _answer_with_ai(self, chat_id: int, step: Step, state: dict[str, Any], text: str) -> str | None:
+        """Free-form edits ("remove fintech, add ML engineer instead"): the AI works out the new list."""
+        key = _LIST_STEPS[step]
+        current = _current_list(state, key)
+        if self.ai.available:
+            await self.api.send_message(chat_id, "🤔 Understanding your answer…")
+        items = await interpret_list(self.ai, QUESTIONS[step], current, text)
+        if items is not None:
+            items = reconcile(current, items, text)  # rules catch what a small model drops or misses
+        if items is None or any(looks_like_instruction(item) for item in items):
+            answer: Callable[[dict[str, Any], str], str | None] = getattr(self, f"_answer_{step}")
+            return answer(state, text)  # no AI, or it could not tell: the rules try
+        if step is Step.ROLES and not items:
+            return "Please name at least one job title, e.g. Backend Engineer, Data Analyst."
+        state["draft"][key] = items[: MAX_ROLES if step is Step.ROLES else MAX_SKILLS]
+        return None
+
     @staticmethod
     def _suggested(state: dict[str, Any], key: str, text: str) -> Any:
         """The suggestion when the user replied "ok", else None."""
@@ -301,7 +334,7 @@ class SetupFlow:
         return "Please send the resume as a file (📎 → File), or reply skip."
 
     def _answer_roles(self, state: dict[str, Any], text: str) -> str | None:
-        edit = edit_list(text, state["suggest"].get("roles") or [])
+        edit = edit_list(text, _current_list(state, "roles"))
         if edit.error:
             return edit.error
         if not edit.items:
@@ -346,7 +379,7 @@ class SetupFlow:
         return None
 
     def _answer_skills(self, state: dict[str, Any], text: str) -> str | None:
-        edit = edit_list(text, state["suggest"].get("skills") or [])
+        edit = edit_list(text, _current_list(state, "skills"))
         if edit.error:
             return edit.error
         state["draft"]["skills"] = list(edit.items[:MAX_SKILLS])
