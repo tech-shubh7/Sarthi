@@ -5,7 +5,7 @@ import pytest
 from pydantic import SecretStr
 from typer.testing import CliRunner
 
-from sarthi.app import DIGEST_TASK, SetupError, build, next_digest_at
+from sarthi.app import SetupError, build, next_digest_at
 from sarthi.cli import app as cli
 from sarthi.config import Settings, get_settings
 from sarthi.db.tasks import TaskStatus
@@ -29,17 +29,27 @@ def test_build_needs_a_bot_token(tmp_path: Path) -> None:
 
 async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, clock: FakeClock) -> None:
     settings = Settings(
-        _env_file=None, data_dir=tmp_path, telegram_bot_token=SecretStr("1:x"), llm_fast_models=[]
+        _env_file=None,
+        data_dir=tmp_path,
+        telegram_bot_token=SecretStr("1:x"),
+        llm_fast_models=[],
+        llm_quality_models=[],
+        watch_companies=["greenhouse/razorpay", "not-valid"],
     )
     sarthi = build(settings, clock=clock)
-    assert set(sarthi.worker().handlers) == {"match", "alert", DIGEST_TASK}
-    sarthi.schedule_digest()
-    sarthi.schedule_digest()
-    assert sarthi.queue.store.task_counts()[TaskStatus.PENDING] == 1
-    assert not sarthi.ai.available
-    await sarthi.bot.api.aclose()
-    await sarthi.ai.aclose()
-    sarthi.conn.close()
+    try:
+        assert set(sarthi.worker().handlers) == {"source_check", "match", "alert", "digest"}
+        assert sarthi.bot.setup is not None
+        assert set(sarthi.sources.planned) == {"boards:linkedin+indeed", "greenhouse:razorpay"}
+        sarthi.schedule_digest()
+        sarthi.schedule_digest()
+        assert sarthi.queue.store.task_counts()[TaskStatus.PENDING] == 1
+        assert not any(client.available for client in sarthi.ai_clients)
+    finally:
+        await sarthi.bot.api.aclose()
+        for client in sarthi.ai_clients:
+            await client.aclose()
+        sarthi.conn.close()
 
 
 def test_pair_command_prints_a_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,7 +68,7 @@ def test_bot_command_explains_a_missing_token(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setenv("SARTHI_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
     try:
-        result = CliRunner().invoke(cli, ["bot"])
+        result = CliRunner().invoke(cli, ["run"])
     finally:
         get_settings.cache_clear()
     assert result.exit_code == 1

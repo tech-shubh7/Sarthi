@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr | None = None
     digest_hour: int = Field(default=19, ge=0, le=23, description="Local hour for the daily digest.")
 
+    # Job sources. Company boards are "<hiring system>/<company slug>", e.g. "greenhouse/razorpay".
+    job_boards: list[str] = Field(default=["linkedin", "indeed"], description="JobSpy boards to search.")
+    watch_companies: list[str] = Field(default=[], description="Company boards to watch.")
+    boards_every_minutes: int = Field(default=60, ge=15)
+    companies_every_minutes: int = Field(default=30, ge=5)
+
     # AI models, tried in order until one answers: "<provider>/<model>", e.g. "gemini/gemini-2.5-flash".
     # Providers: ollama, gemini, openai, anthropic, groq, openrouter, deepseek (see sarthi.ai.providers).
     llm_fast_models: list[str] = Field(default=["ollama/llama3.1"], description="For matching.")

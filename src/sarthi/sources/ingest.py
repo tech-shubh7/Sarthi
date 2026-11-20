@@ -14,12 +14,13 @@ from sarthi.db.jobs import JobStore
 from sarthi.db.source_state import SourceStateStore
 from sarthi.jobs.models import JobPosting
 from sarthi.jobs.normalize import complete, snippet
+from sarthi.queue import names
 from sarthi.queue.tasks import Priority, TaskQueue
 from sarthi.sources.base import SearchQuery, Source
 
 log = logging.getLogger(__name__)
 
-MATCH_TASK = "match"
+MATCH_TASK = names.MATCH
 
 
 @dataclass(frozen=True, slots=True)

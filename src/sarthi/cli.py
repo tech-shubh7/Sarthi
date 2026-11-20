@@ -42,12 +42,12 @@ def pair() -> None:
         conn.close()
     minutes = int(CODE_LIFETIME.total_seconds() // 60)
     typer.echo(f"In Telegram, open your Sarthi bot and send:\n\n    /start {code}\n")
-    typer.echo(f"The code works once and expires in {minutes} minutes. Then run: sarthi bot")
+    typer.echo(f"The code works once and expires in {minutes} minutes. Then run: uv run sarthi run")
 
 
 @app.command()
-def bot() -> None:
-    """Run the Telegram bot with matching, alerts and the daily digest (Ctrl+C to stop)."""
+def run() -> None:
+    """Run Sarthi: job sources, matching, Telegram alerts and the daily digest (Ctrl+C to stop)."""
     try:
         sarthi = build(get_settings())
     except SetupError as error:

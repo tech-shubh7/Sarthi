@@ -93,3 +93,14 @@ async def test_get_updates_and_callbacks() -> None:
     assert bodies[0]["allowed_updates"] == ["message", "callback_query"]
     assert len(bodies[1]["text"]) == 200
     await client.aclose()
+
+
+async def test_a_second_running_sarthi_waits_instead_of_stopping() -> None:
+    conflict = api(
+        lambda r: httpx.Response(
+            409, json={"ok": False, "description": "Conflict: terminated by other getUpdates"}
+        )
+    )
+    with pytest.raises(RetryableError, match="another Sarthi is already running") as caught:
+        await conflict.get_updates(None)
+    assert caught.value.retry_after == 15.0

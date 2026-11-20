@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 import zlib
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sarthi.clock import Clock, to_iso, utcnow
 from sarthi.db.connection import transaction
@@ -109,6 +109,13 @@ class JobStore:
         """The stored posting, or None."""
         row = self._conn.execute("SELECT posting FROM job WHERE id = ?", (job_id,)).fetchone()
         return JobPosting.model_validate_json(row["posting"]) if row else None
+
+    def ids_seen_since(self, since: datetime) -> list[str]:
+        """Ids of jobs first seen at or after ``since``, newest first."""
+        rows = self._conn.execute(
+            "SELECT id FROM job WHERE first_seen_at >= ? ORDER BY first_seen_at DESC", (to_iso(since),)
+        )
+        return [str(row["id"]) for row in rows]
 
     def full_text(self, job_id: str) -> str:
         """The complete description saved with the job ("" when none was saved)."""

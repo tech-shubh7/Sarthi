@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from sarthi.ai.client import AiClient
 from sarthi.ai.providers import resolve
 from sarthi.ai.scoring import LlmMatchScorer
+from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import TelegramApi
 from sarthi.chat.telegram.bot import TelegramBot
 from sarthi.clock import Clock, utcnow
@@ -21,16 +22,21 @@ from sarthi.db.chat import ChatStore
 from sarthi.db.connection import connect
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
+from sarthi.db.source_state import SourceStateStore
 from sarthi.db.tasks import TaskRecord, TaskStore
-from sarthi.matching.handler import ALERT_TASK, Matcher
+from sarthi.matching.handler import Matcher
+from sarthi.profile.models import Profile
 from sarthi.profile.store import load_profile, profile_path
+from sarthi.queue import names
 from sarthi.queue.tasks import Priority, TaskQueue
 from sarthi.queue.worker import Worker
-from sarthi.sources.ingest import MATCH_TASK
+from sarthi.sources.ingest import Ingestor
+from sarthi.sources.schedule import SourceScheduler, plan_sources
 
 log = logging.getLogger(__name__)
 
-DIGEST_TASK = "digest"
+WORKER_CONCURRENCY = 3
+TICK_SECONDS = 60
 
 
 class SetupError(Exception):
@@ -53,34 +59,46 @@ class App:
     queue: TaskQueue
     bot: TelegramBot
     matcher: Matcher
-    ai: AiClient
+    sources: SourceScheduler
+    ai_clients: tuple[AiClient, ...]
     clock: Clock
 
     def schedule_digest(self) -> None:
         """Queue the next daily digest (idempotent: one task per local date)."""
         at = next_digest_at(self.clock(), self.settings.digest_hour)
         delay = (at - self.clock()).total_seconds()
-        self.queue.enqueue(DIGEST_TASK, at.date().isoformat(), delay=delay, priority=Priority.NORMAL)
+        self.queue.enqueue(names.DIGEST, at.date().isoformat(), delay=delay, priority=Priority.NORMAL)
 
     async def _digest(self, task: TaskRecord) -> None:
         await self.bot.handle_digest(task)
         self.schedule_digest()
 
     def worker(self) -> Worker:
-        """A worker for matching, alerts and digests."""
+        """A worker for source checks, matching, alerts and digests."""
         handlers = {
-            MATCH_TASK: self.matcher.handle,
-            ALERT_TASK: self.bot.handle_alert,
-            DIGEST_TASK: self._digest,
+            names.SOURCE_CHECK: self.sources.handle,
+            names.MATCH: self.matcher.handle,
+            names.ALERT: self.bot.handle_alert,
+            names.DIGEST: self._digest,
         }
-        return Worker(self.queue, handlers, concurrency=2, name="sarthi")
+        return Worker(self.queue, handlers, concurrency=WORKER_CONCURRENCY, name="sarthi")
+
+    async def _tick_sources(self, worker: Worker) -> None:
+        while True:
+            if self.sources.tick():
+                worker.wake()
+            await asyncio.sleep(TICK_SECONDS)
 
     async def run(self) -> None:
-        """Run the bot and the worker until cancelled."""
+        """Run the bot, the source scheduler and the worker until cancelled."""
         self.queue.reclaim_stuck()
         self.schedule_digest()
         worker = self.worker()
-        tasks = [asyncio.create_task(self.bot.poll()), asyncio.create_task(worker.run())]
+        tasks = [
+            asyncio.create_task(self.bot.poll()),
+            asyncio.create_task(worker.run()),
+            asyncio.create_task(self._tick_sources(worker)),
+        ]
         try:
             await asyncio.gather(*tasks)
         finally:
@@ -91,8 +109,19 @@ class App:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
             await self.bot.api.aclose()
-            await self.ai.aclose()
+            for client in self.ai_clients:
+                await client.aclose()
             self.conn.close()
+
+
+def _ai(settings: Settings, models: list[str], conn: sqlite3.Connection, clock: Clock) -> AiClient:
+    return AiClient(
+        resolve(models, settings),
+        AiStore(conn, clock=clock),
+        daily_token_budget=settings.llm_daily_token_budget,
+        requests_per_minute=settings.llm_requests_per_minute,
+        clock=clock,
+    )
 
 
 def build(settings: Settings, clock: Clock = utcnow) -> App:
@@ -102,21 +131,25 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
     conn = connect(settings.db_path)
     queue = TaskQueue(TaskStore(conn, clock=clock), clock=clock)
     jobs, matches = JobStore(conn, clock=clock), MatchStore(conn, clock=clock)
-    ai = AiClient(
-        resolve(settings.llm_fast_models, settings),
-        AiStore(conn, clock=clock),
-        daily_token_budget=settings.llm_daily_token_budget,
-        requests_per_minute=settings.llm_requests_per_minute,
-        clock=clock,
+    chats, states = ChatStore(conn, clock=clock), SourceStateStore(conn, clock=clock)
+    fast, quality = (
+        _ai(settings, settings.llm_fast_models, conn, clock),
+        _ai(settings, settings.llm_quality_models, conn, clock),
     )
     path = profile_path(settings.data_dir)
-    matcher = Matcher(jobs, matches, queue, lambda: load_profile(path), ai=LlmMatchScorer(ai), clock=clock)
-    bot = TelegramBot(
-        TelegramApi(settings.telegram_bot_token),
-        ChatStore(conn, clock=clock),
-        jobs,
-        matches,
-        queue,
-        clock=clock,
+
+    def profile() -> Profile | None:
+        return load_profile(path)
+
+    matcher = Matcher(jobs, matches, queue, profile, ai=LlmMatchScorer(fast), clock=clock)
+    api = TelegramApi(settings.telegram_bot_token)
+    setup = SetupFlow(api, chats, quality, path, jobs=jobs, queue=queue, clock=clock)
+    bot = TelegramBot(api, chats, jobs, matches, queue, setup=setup, clock=clock)
+    planned = plan_sources(
+        settings.job_boards,
+        settings.watch_companies,
+        timedelta(minutes=settings.boards_every_minutes),
+        timedelta(minutes=settings.companies_every_minutes),
     )
-    return App(settings, conn, queue, bot, matcher, ai, clock)
+    sources = SourceScheduler(planned, Ingestor(jobs, queue, states), states, queue, profile, clock=clock)
+    return App(settings, conn, queue, bot, matcher, sources, (fast, quality), clock)

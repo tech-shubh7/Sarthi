@@ -6,6 +6,7 @@ request logging is silenced, and errors here mention only the method name and st
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
@@ -19,7 +20,9 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 API_BASE = "https://api.telegram.org"
 POLL_TIMEOUT_S = 30
+CONFLICT_WAIT_S = 15.0
 _HTTP_TIMEOUT_S = POLL_TIMEOUT_S + 15
+_CONFLICT = 409  # another program is already reading this bot's updates
 _TOO_MANY_REQUESTS = 429
 _SERVER_ERROR = 500
 _NOT_MODIFIED = "message is not modified"
@@ -55,10 +58,15 @@ class TelegramApi:
             response = await self._http.post(url, json=payload)
         except httpx.HTTPError as error:
             raise RetryableError(f"telegram {method}: {type(error).__name__}") from None
-        try:
+        body: dict[str, Any] = {}
+        with contextlib.suppress(ValueError):  # not JSON: handled below as a failed call
             body = response.json()
-        except ValueError:
-            body = {}
+        if response.status_code == _CONFLICT:
+            raise RetryableError(
+                "telegram: another Sarthi is already running with this bot; stop it (Ctrl+C) to continue",
+                retry_after=CONFLICT_WAIT_S,
+                status=_CONFLICT,
+            )
         if response.status_code == _TOO_MANY_REQUESTS:
             wait = float((body.get("parameters") or {}).get("retry_after") or 30)
             raise RetryableError(
@@ -103,6 +111,20 @@ class TelegramApi:
         except PermanentError as error:
             if _NOT_MODIFIED not in str(error):
                 raise
+
+    async def download(self, file_id: str, max_bytes: int) -> bytes:
+        """The bytes of a file the user sent; ``PermanentError`` when it is larger than ``max_bytes``."""
+        info = await self._call("getFile", {"file_id": file_id})
+        if int(info.get("file_size") or 0) > max_bytes or "file_path" not in info:
+            raise PermanentError("telegram getFile: file too large or unavailable")
+        url = f"{self._base}/file/bot{self._token.get_secret_value()}/{info['file_path']}"
+        try:
+            response = await self._http.get(url)
+        except httpx.HTTPError as error:
+            raise RetryableError(f"telegram download: {type(error).__name__}") from None
+        if response.status_code != httpx.codes.OK or len(response.content) > max_bytes:
+            raise PermanentError(f"telegram download: HTTP {response.status_code} or file too large")
+        return response.content
 
     async def answer_callback(self, callback_id: str, text: str = "") -> None:
         """Acknowledge a button tap (stops the spinner), with an optional short toast."""

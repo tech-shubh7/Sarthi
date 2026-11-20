@@ -13,17 +13,19 @@ from typing import Any
 
 from sarthi.chat.cards import display_company, job_card
 from sarthi.chat.pairing import owner_chat, redeem
+from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
 from sarthi.clock import Clock, utcnow
 from sarthi.db.chat import ANSWERED, ChatStore, JobStatus
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
 from sarthi.db.tasks import TaskRecord
+from sarthi.queue import names
 from sarthi.queue.tasks import DeferError, PermanentError, Priority, RetryableError, TaskQueue
 
 log = logging.getLogger(__name__)
 
-APPLY_TASK = "apply"
+APPLY_TASK = names.APPLY
 PAUSED_KEY = "alerts.paused"
 OFFSET_KEY = "telegram.offset"
 WAIT_FOR_PAIRING_S = 600
@@ -39,6 +41,8 @@ PAIR_FAILED = "That code didn't work (wrong or expired). Run <code>uv run sarthi
 
 HELP = (
     "<b>Sarthi</b> finds jobs that fit you and messages you here.\n\n"
+    "/setup – create or change your profile (resume + a few questions)\n"
+    "/profile – show your profile\n"
     "/today – best matches you have not seen yet\n"
     "/status – what Sarthi has found so far\n"
     "/pause – stop instant alerts (matches wait for you)\n"
@@ -82,9 +86,11 @@ class TelegramBot:
         matches: MatchStore,
         queue: TaskQueue,
         *,
+        setup: SetupFlow | None = None,
         clock: Clock = utcnow,
     ) -> None:
         """Send with ``api``; read jobs and matches; record choices in ``chats``; queue applications."""
+        self.setup = setup
         self.api = api
         self.chats = chats
         self.jobs = jobs
@@ -160,6 +166,8 @@ class TelegramBot:
             return
         if chat_id != owner:
             return  # strangers get no reply
+        if await self._on_setup_message(chat_id, message, command, text):
+            return
 
         if command in ("/start", "/help"):
             await self.api.send_message(chat_id, HELP)
@@ -179,6 +187,24 @@ class TelegramBot:
         else:
             await self.api.send_message(chat_id, "I didn't understand that. /help lists what I can do.")
 
+    async def _on_setup_message(self, chat_id: int, message: dict[str, Any], command: str, text: str) -> bool:
+        """Route setup commands, files and answers. True when the message was handled here."""
+        if self.setup is None:
+            return False
+        if message.get("document"):
+            await self.setup.on_document(chat_id, message["document"])
+        elif command == "/setup":
+            await self.setup.start(chat_id)
+        elif command == "/profile":
+            await self.setup.show(chat_id)
+        elif command == "/cancel" and self.setup.active:
+            await self.setup.cancel(chat_id)
+        elif text and not text.startswith("/") and self.setup.active:
+            await self.setup.on_text(chat_id, text)
+        else:
+            return False
+        return True
+
     async def _pair(self, chat_id: int, code: str, *, quiet: bool = False) -> None:
         """Try ``code``; before anyone is paired, explain how to pair instead of staying silent.
 
@@ -186,7 +212,9 @@ class TelegramBot:
         """
         if code and not code.startswith("/"):
             if redeem(self.chats, code, chat_id, self._clock()):
-                await self.api.send_message(chat_id, "✅ Paired. I'll send your job matches here.\n\n" + HELP)
+                await self.api.send_message(
+                    chat_id, "✅ Paired. Next: send /setup to create your profile.\n\n" + HELP
+                )
             elif not quiet:
                 await self.api.send_message(chat_id, PAIR_FAILED)
         elif owner_chat(self.chats) is None:
@@ -199,7 +227,13 @@ class TelegramBot:
         if chat_id != owner_chat(self.chats):
             await self.api.answer_callback(callback_id)
             return
-        action, _, job_id = str(callback.get("data") or "").partition(":")
+        data = str(callback.get("data") or "")
+        if data.startswith("setup:") and self.setup is not None:
+            await self.api.answer_callback(callback_id)
+            await self.api.edit_buttons(chat_id, message_id, None)  # one tap per question
+            await self.setup.on_button(chat_id, data)
+            return
+        action, _, job_id = data.partition(":")
         if action == "more":
             await self.api.answer_callback(callback_id)
             await self._send_details(chat_id, job_id)

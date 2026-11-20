@@ -136,8 +136,15 @@ not eligible / scam → hide · strong + sure → **instant Telegram alert** · 
 pairing code from `sarthi pair` (hash stored, 15-minute expiry, cancelled after 5 wrong guesses; strangers get no
 reply); job cards with Apply / Skip / Later / Details (job-site text HTML-escaped; first answer wins; Apply queues
 an `apply` task); `/today`, `/status`, `/pause`, `/resume`, `/help`; daily digest at `SARTHI_DIGEST_HOUR` local
-time; `sarthi bot` runs polling + the worker (`app.py` is the composition root). Still to come: the setup
-conversation (resume upload + preferences) and `sarthi run` with source scheduling.
+time; `app.py` is the composition root.
+**Setup (MVP):** `/setup` conversation (`chat/setup.py`): resume upload (PDF/.docx/text, read locally by
+`profile/resume.py`: size cap, type from bytes, no XML parser), AI suggestions from the scrubbed resume
+(`ai/resume.py`), questions parsed by `profile/answers.py` (countries, remote, years, salary such as "12 LPA"),
+summary with Save; saving re-matches jobs from the last 7 days. `/profile`, `/cancel`.
+**`sarthi run` (MVP):** bot + worker + `sources/schedule.py`: a 1-minute tick queues due sources (boards hourly
+with the profile's roles/countries, company boards every 30 min); each check looks back to its last success
+(catch-up after the computer was off, §2.18); failing sources back off up to 8x. Every new job is matched
+(JobRadar's quiet first run is not used: matching decides what alerts, and the look-back window drops old jobs).
 
 ### 2.10 Documents [MVP]
 | Need | Best code | Copy |

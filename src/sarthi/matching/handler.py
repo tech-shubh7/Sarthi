@@ -13,11 +13,12 @@ from sarthi.db.tasks import TaskRecord
 from sarthi.matching.decide import Decision, Thresholds
 from sarthi.matching.funnel import evaluate
 from sarthi.profile.models import Profile
+from sarthi.queue import names
 from sarthi.queue.tasks import DeferError, PermanentError, Priority, TaskQueue
 
 log = logging.getLogger(__name__)
 
-ALERT_TASK = "alert"
+ALERT_TASK = names.ALERT
 WAIT_FOR_PROFILE_S = 3600
 
 
