@@ -110,6 +110,8 @@ class SourceScheduler:
         self.queue = queue
         self._load_profile = load_profile
         self._clock = clock
+        current = load_profile()
+        self._profile_version = current.version if current else None  # a restart alone forces nothing
 
     def _due(self, planned: Planned, state: SourceState | None, now: datetime) -> bool:
         if state is None or state.last_checked_at is None:
@@ -121,12 +123,15 @@ class SourceScheduler:
     def tick(self) -> int:
         """Queue every source that is due. Returns how many were queued."""
         now = self._clock()
-        has_profile = self._load_profile() is not None
+        profile = self._load_profile()
+        changed = profile is not None and profile.version != self._profile_version
+        self._profile_version = profile.version if profile else None
         queued = 0
         for name, planned in self.planned.items():
-            if planned.kind == "boards" and not has_profile:
+            if planned.kind == "boards" and profile is None:
                 continue  # board searches need the user's roles
-            if self._due(planned, self.states.get(name), now):
+            new_search = planned.kind == "boards" and changed  # new roles or countries: search now
+            if new_search or self._due(planned, self.states.get(name), now):
                 self.queue.enqueue(names.SOURCE_CHECK, name, priority=Priority.NORMAL)
                 queued += 1
         return queued

@@ -240,3 +240,37 @@ async def test_editing_the_suggested_roles_in_plain_words(
     summary = api.texts()[-1]
     assert "Roles: Backend Engineer, AI Engineer" in summary
     assert "Skills: Python, Docker, FastAPI" in summary
+
+
+async def test_each_answer_is_repeated_back_with_a_change_button(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, ai_reads: None
+) -> None:
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await answer(bot, "ok, add AI Engineer")
+    _, understood, markup = api.sent[-2]
+    assert understood == "✓ Roles: <b>Backend Engineer, AI Engineer</b>"
+    assert markup == {"inline_keyboard": [[{"text": "✏️ Change", "callback_data": "setup:back:roles"}]]}
+    await answer(bot, "India", "UK")
+    assert api.texts()[-2] == "✓ Other countries: <b>United Kingdom</b>"
+
+    # three questions later, fix the roles: the flow comes back to the current question afterwards
+    await bot.handle_update(tap(OWNER, "setup:back:roles"))
+    assert "job titles" in api.texts()[-1]
+    await answer(bot, "Data Engineer")
+    assert api.texts()[-2] == "✓ Roles: <b>Data Engineer</b>"
+    assert "without a visa" in api.texts()[-1]  # back at the question the user was on
+    await answer(bot, "none")
+    await bot.handle_update(tap(OWNER, "setup:remote:ok"))
+    await answer(bot, "ok", "use these", "skip")
+    assert "Roles: Data Engineer" in api.texts()[-1]
+    assert "Skills: Python, Go, PostgreSQL" in api.texts()[-1]
+
+
+async def test_going_forward_or_to_unknown_steps_is_ignored(bot: TelegramBot, api: FakeFiles) -> None:
+    await answer(bot, "/setup", "skip")
+    sent = len(api.sent)
+    for data in ("setup:back:salary", "setup:back:nonsense", "setup:back:resume"):
+        await bot.handle_update(tap(OWNER, data))
+    assert len(api.sent) == sent

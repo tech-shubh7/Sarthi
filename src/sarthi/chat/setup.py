@@ -95,6 +95,23 @@ SAVED_TEXT = (
     "Strong matches come right away, the rest in your daily digest. /profile shows your profile."
 )
 EDIT_HINT = "Reply <b>ok</b> to use it, or e.g. <i>ok, remove X, add Y</i>, or type your own."
+
+
+def _salary_text(draft: dict[str, Any]) -> str:
+    salary = draft.get("salary")
+    return f"{salary['currency']} {salary['minimum']:,.0f} / {salary['period']}" if salary else "not set"
+
+
+_UNDERSTOOD: dict[Step, tuple[str, Callable[[dict[str, Any]], str]]] = {
+    Step.ROLES: ("Roles", lambda d: ", ".join(d.get("roles") or []) or "none"),
+    Step.HOME: ("Lives in", lambda d: country_name(d["home"])),
+    Step.COUNTRIES: ("Other countries", lambda d: _names(d.get("countries") or [])),
+    Step.VISA_FREE: ("No visa needed in (besides home)", lambda d: _names(d.get("visa_free") or [])),
+    Step.REMOTE: ("Remote", lambda d: _REMOTE_LABELS[RemotePreference(d["remote"])]),
+    Step.YEARS: ("Experience", lambda d: f"{d['years']:g} years"),
+    Step.SKILLS: ("Skills", lambda d: ", ".join(d.get("skills") or []) or "none"),
+    Step.SALARY: ("Minimum salary", _salary_text),
+}
 UNKNOWN_PLACES = "I don't know {places}. Use country names (or 'none')."
 
 
@@ -233,11 +250,15 @@ class SetupFlow:
         state = self._state()
         if state is None:
             return
-        answer: Callable[[dict[str, Any], str], str | None] = getattr(self, f"_answer_{state['step']}")
+        step = Step(state["step"])
+        answer: Callable[[dict[str, Any], str], str | None] = getattr(self, f"_answer_{step}")
         error = answer(state, text.strip())
         if error:
             await self.api.send_message(chat_id, error)
             return
+        if understood := self._understood(step, state["draft"]):
+            change = buttons([("✏️ Change", f"setup:back:{step}")])
+            await self.api.send_message(chat_id, understood, change)
         await self._advance(chat_id, state)
 
     async def on_button(self, chat_id: int, data: str) -> None:
@@ -251,6 +272,21 @@ class SetupFlow:
             await self._finish(chat_id, state)
         elif data == "setup:restart":
             await self.start(chat_id)
+        elif data.startswith("setup:back:"):
+            await self._go_back(chat_id, state, data.removeprefix("setup:back:"))
+
+    async def _go_back(self, chat_id: int, state: dict[str, Any], step_name: str) -> None:
+        """Ask an earlier question again (later answers are kept and shown again at the summary)."""
+        if step_name not in Step.__members__.values() or step_name == Step.RESUME:
+            return
+        step = Step(step_name)
+        if _ORDER.index(step) > _ORDER.index(Step(state["step"])):
+            return
+        current = state["step"]
+        state["step"] = step
+        state["back_to"] = state.get("back_to") or current  # after fixing, return to where the user was
+        self._save_state(state)
+        await self._ask(chat_id, state)
 
     # ---- answers (each returns an error message, or None when accepted) ---------------------------------
 
@@ -346,7 +382,18 @@ class SetupFlow:
         skills = tuple(draft.get("skills", []))
         return Profile(preferences=prefs, skills=skills, resume_text=draft.get("resume_text", ""))
 
+    @staticmethod
+    def _understood(step: Step, draft: dict[str, Any]) -> str | None:
+        """How Sarthi read the answer, so a misunderstanding is caught right away."""
+        shown = _UNDERSTOOD.get(step)
+        return f"✓ {shown[0]}: <b>{escape(shown[1](draft))}</b>" if shown else None
+
     async def _advance(self, chat_id: int, state: dict[str, Any]) -> None:
+        if back_to := state.pop("back_to", None):  # a corrected answer returns to where the user was
+            state["step"] = back_to
+            self._save_state(state)
+            await self._ask(chat_id, state)
+            return
         state["step"] = _ORDER[_ORDER.index(Step(state["step"])) + 1]
         self._save_state(state)
         await self._ask(chat_id, state)

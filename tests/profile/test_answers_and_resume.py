@@ -185,6 +185,52 @@ def test_edit_list(answer: str, expected: list[str]) -> None:
 
 
 def test_instructions_are_never_saved_as_items() -> None:
-    assert edit_list("okay okay", SUGGESTED).error is not None
+    assert edit_list("okay okay", SUGGESTED).items == tuple(SUGGESTED)  # read as "ok"
     assert edit_list("please keep backend", SUGGESTED).error is not None
     assert edit_list("other okay", []).items == ()
+
+
+ROLES_2 = [
+    "Backend Engineer",
+    "AI Engineer",
+    "Node.js Developer",
+    "Fintech Application Developer",
+    "Microservices Developer",
+]
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        # real answers from the second setup session (2026-11-20)
+        (
+            "ok, backend AI engineer, software developer, associate software developer also, "
+            "Expect Fintech, microservices one",
+            [
+                "Backend Engineer",
+                "AI Engineer",
+                "Node.js Developer",
+                "backend AI engineer",
+                "software developer",
+                "associate software developer",
+            ],
+        ),
+        ("Use skills", ROLES_2),
+        ("use these", ROLES_2),
+        ("ok add Data Engineer too", [*ROLES_2, "Data Engineer"]),
+        (
+            "okay remove fintech",
+            ["Backend Engineer", "AI Engineer", "Node.js Developer", "Microservices Developer"],
+        ),
+        (
+            "except the fintech one",
+            ["Backend Engineer", "AI Engineer", "Node.js Developer", "Microservices Developer"],
+        ),
+        ("yes please", ROLES_2),
+        ("Okta Engineer", ["Okta Engineer"]),
+    ],
+)
+def test_edit_list_real_phrasings(answer: str, expected: list[str]) -> None:
+    result = edit_list(answer, ROLES_2)
+    assert result.error is None
+    assert list(result.items) == expected

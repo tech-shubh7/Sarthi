@@ -110,18 +110,32 @@ def parse_salary(text: str, home_country: str) -> Salary | None:
     return Salary(currency=currency, period=period, minimum=amount)
 
 
-_REMOVE = re.compile(
-    r"^(?:remove|without|except|exclude|drop|delete|minus|not|no)\s+(?P<item>.+)$", re.IGNORECASE
+# Verbs include common typos seen in real answers ("expect Fintech" meant "except Fintech").
+_REMOVE_VERB = (
+    r"(?:remove|remov|rmove|without|except|expect|excpet|exept|exclude|drop|delete|minus|skip|not|no)"
 )
-_ADD = re.compile(r"^(?:add|plus|also|and also)\s+(?P<item>.+)$", re.IGNORECASE)
+_ADD_VERB = r"(?:add|plus|include|also\s+add|and\s+also)"
+_REMOVE = re.compile(rf"^{_REMOVE_VERB}\s+(?P<item>.+)$", re.IGNORECASE)
+_ADD = re.compile(rf"^{_ADD_VERB}\s+(?P<item>.+)$", re.IGNORECASE)
 _KEEP = re.compile(
-    r"^(?:ok(?:ay)?|yes|y|fine|keep|same|"
+    r"^(?:ok(?:ay)?|yes|y|yep|sure|fine|good|correct|perfect|keep|same|all\s+good|looks\s+good|as\s+suggested|"
     r"(?:the\s+)?(?:other|others|rest|remaining)(?:\s+(?:are|is))?\s*(?:ok(?:ay)?|fine|good)?|"
-    r"keep\s+(?:the\s+)?(?:other|others|rest|remaining))$",
+    r"keep\s+(?:the\s+)?(?:other|others|rest|remaining|these|them|all)|"
+    r"use\s+(?:the\s+)?(?:these|them|those|it|all|same|suggested|suggestions?|skills|roles)"
+    r"(?:\s+(?:ones?|skills|roles|suggestions?))?)$",
     re.IGNORECASE,
 )
+_KEEP_PREFIX = re.compile(r"^(?:ok(?:ay)?|yes|sure|fine|good)[\s:-]+(?P<rest>\S.*)$", re.IGNORECASE)
+_FILLER_START = re.compile(r"^(?:the|a|an|also|and|please|pls)\s+", re.IGNORECASE)
+_FILLER_END = re.compile(
+    r"\s+(?:also|too|as\s+well|please|pls|ones?|roles?|jobs?|positions?)$", re.IGNORECASE
+)
+_PURE_FILLER = frozenset({"please", "pls", "thanks", "thank you", "thx", "also", "too"})
 _EVERYTHING = frozenset({"all", "everything", "all of them", "them all"})
-_INSTRUCTION_WORDS = re.compile(r"\b(?:remove|without|except|okay|ok|keep|rest|others?)\b", re.IGNORECASE)
+_INSTRUCTION_WORDS = re.compile(
+    rf"\b(?:{_REMOVE_VERB[3:-1]}|okay|ok|keep|rest|others?|use|suggested)\b", re.IGNORECASE
+)
+_WORD = re.compile(r"[a-z0-9+#.]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,41 +146,61 @@ class ListEdit:
     error: str | None = None
 
 
+def _clean(item: str) -> str:
+    """Drop filler around an item: "the microservices one" -> "microservices", "backend AI engineer also"."""
+    previous = None
+    while previous != item:
+        previous = item
+        item = _FILLER_END.sub("", _FILLER_START.sub("", item.strip())).strip()
+    return item
+
+
+def _matches(needle: str, item: str) -> bool:
+    """True when every word of ``needle`` is in ``item`` ("fintech" matches "Fintech App Developer")."""
+    words = set(_WORD.findall(needle.lower()))
+    return bool(words) and words <= set(_WORD.findall(item.lower()))
+
+
 def edit_list(text: str, suggestion: tuple[str, ...] | list[str]) -> ListEdit:
     """Apply an answer to a suggested list.
 
-    Understands a fresh list ("Backend Engineer, SRE"), "ok", and edits of the suggestion such as
-    "remove frontend developer intern, other okay" or "ok, add Data Engineer, without AI Engineer".
-    Removal matches by name containment, ignoring case. Never returns instruction words as items.
+    Understands a fresh list ("Backend Engineer, SRE"), "ok" / "use these", and edits such as
+    "remove frontend developer intern, other okay", "ok, add Data Engineer, without AI Engineer" or
+    "add backend AI engineer also, except Fintech, microservices one". Items after a verb take that verb
+    until another verb. Removal matches by words, ignoring case. Instruction words are never returned as
+    items.
     """
     base = list(suggestion)
     keep_base = False
     removals: list[str] = []
     additions: list[str] = []
     plain: list[str] = []
-    mode = "plain"  # "remove trainee and intern": items after "remove" are removals until another verb
-    for part in split_list(text):
+    mode = "plain"
+    for raw in split_list(text):
+        part = raw.strip()
+        if prefix := _KEEP_PREFIX.match(part):  # "ok add Data Engineer" without a comma
+            keep_base, part = True, prefix["rest"]
         if _KEEP.match(part):
             keep_base, mode = True, "plain"
         elif removal := _REMOVE.match(part):
-            removals.append(removal["item"].strip())
+            removals.append(_clean(removal["item"]))
             mode = "remove"
         elif addition := _ADD.match(part):
-            additions.append(addition["item"].strip())
+            additions.append(_clean(addition["item"]))
             mode = "add"
         elif mode == "remove":
-            removals.append(part)
+            removals.append(_clean(part))
         elif mode == "add":
-            additions.append(part)
+            additions.append(_clean(part))
         else:
-            plain.append(part)
+            plain.append(_clean(part))
     if any(r.lower() in _EVERYTHING for r in removals):
         base, removals = [], [r for r in removals if r.lower() not in _EVERYTHING]
     edited = keep_base or removals or additions or len(base) != len(suggestion)
     items = (base + additions + plain) if edited else plain
-    for removal_text in removals:
-        needle = removal_text.lower()
-        items = [i for i in items if needle not in i.lower() and i.lower() not in needle]
+    items = [
+        i for i in items if i and i.lower() not in _PURE_FILLER and not any(_matches(r, i) for r in removals)
+    ]
     unique: dict[str, str] = {}
     for item in items:
         unique.setdefault(item.lower(), item)

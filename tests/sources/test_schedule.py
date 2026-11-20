@@ -134,3 +134,25 @@ async def test_board_check_without_profile_or_unknown_source_does_nothing(make_s
     await scheduler.handle(TaskRecord(1, "source_check", boards.name, {}, 1))
     await scheduler.handle(TaskRecord(1, "source_check", "removed:source", {}, 1))
     assert boards.queries == []
+
+
+async def test_a_new_profile_searches_the_boards_right_away(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, clock: FakeClock, task_store: TaskStore
+) -> None:
+    states = SourceStateStore(conn, clock=clock)
+    boards = FakeSource("boards:linkedin", [])
+    current: dict[str, Profile] = {"p": make_profile()}
+    scheduler = SourceScheduler(
+        [Planned(boards, "boards", HOUR)],
+        Ingestor(job_store, queue, states),
+        states,
+        queue,
+        lambda: current["p"],
+        clock=clock,  # type: ignore[list-item]
+    )
+    await scheduler.handle(TaskRecord(1, "source_check", boards.name, {}, 1))
+    assert scheduler.tick() == 0  # checked just now, same profile: waits for its hour
+    current["p"] = make_profile(roles=["Data Engineer"])
+    assert scheduler.tick() == 1  # roles changed: search now
+    assert scheduler.tick() == 0  # the change was handled once; now it waits for its hour again
+    assert pending(task_store) == 1
