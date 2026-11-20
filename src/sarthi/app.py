@@ -172,6 +172,9 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         settings.watch_companies,
         timedelta(minutes=settings.boards_every_minutes),
         timedelta(minutes=settings.companies_every_minutes),
+        feeds=settings.feeds,
+        feeds_every=timedelta(minutes=settings.feeds_every_minutes),
+        freehire=settings.freehire,
     )
     sources = SourceScheduler(planned, Ingestor(jobs, queue, states), states, queue, profile, clock=clock)
     return App(settings, conn, queue, bot, matcher, sources, (fast, quality), clock)

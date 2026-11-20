@@ -35,6 +35,21 @@ class Settings(BaseSettings):
     watch_companies: list[str] = Field(default=[], description="Company boards to watch.")
     boards_every_minutes: int = Field(default=60, ge=15)
     companies_every_minutes: int = Field(default=30, ge=5)
+    feeds: list[str] = Field(
+        default=[
+            "remotive",
+            "remoteok",
+            "weworkremotely",
+            "himalayas",
+            "jobicy",
+            "arbeitnow",
+            "workingnomads",
+            "hackernews",
+        ],
+        description="Free public job feeds (no key).",
+    )
+    feeds_every_minutes: int = Field(default=60, ge=15)
+    freehire: bool = Field(default=True, description="Search Freehire (~90 hiring systems) for your roles.")
 
     # AI models, tried in order until one answers: "<provider>/<model>", e.g. "gemini/gemini-2.5-flash".
     # Providers: ollama, gemini, openai, anthropic, groq, openrouter, deepseek (see sarthi.ai.providers).

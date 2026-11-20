@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from sarthi.jobs.models import JobPosting, RemoteType, Salary, SalaryPeriod
+from sarthi.jobs.models import JobPosting, RemoteType, Salary, SalaryPeriod, says_anywhere
 
 
 def make(**overrides: Any) -> JobPosting:
@@ -70,3 +70,30 @@ def test_jobs_are_immutable() -> None:
     job = make()
     with pytest.raises(ValidationError):
         job.title = "Other"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "Remote",
+        "REMOTE",
+        "Worldwide",
+        "Anywhere in the World",
+        "Remote (Global)",
+        "100% remote",
+        "Remote job",
+    ],
+)
+def test_says_anywhere(text: str) -> None:
+    assert says_anywhere(text)
+    assert make(remote_type="remote", location_text=text).is_remote_anywhere
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Lausanne", "Any State", "CET (+/- 3 hours)", "REMOTE (anywhere, EST hours)", "Europe Only", "US"],
+)
+def test_restrictions_are_not_anywhere(text: str) -> None:
+    assert not says_anywhere(text)
+    assert not make(remote_type="remote", location_text=text).is_remote_anywhere

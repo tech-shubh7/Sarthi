@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -23,11 +23,14 @@ from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQue
 from sarthi.sources.ats import CompanyBoardSource
 from sarthi.sources.base import SearchQuery, Source
 from sarthi.sources.boards import JobBoardSource
+from sarthi.sources.feeds import FEEDS, FeedSource
+from sarthi.sources.freehire import FreehireSource
+from sarthi.sources.hackernews import HackerNewsSource
 from sarthi.sources.ingest import Ingestor
 
 log = logging.getLogger(__name__)
 
-FIRST_LOOK_BACK_HOURS = {"boards": 24, "company": 72}
+FIRST_LOOK_BACK_HOURS = {"boards": 24, "company": 72, "feed": 72}
 MAX_LOOK_BACK_HOURS = 168
 LOOK_BACK_MARGIN_HOURS = 1
 MAX_BACKOFF_FACTOR = 8
@@ -38,20 +41,33 @@ class Planned:
     """One source and how often to read it."""
 
     source: Source
-    kind: str  # "boards" or "company"
+    kind: str  # "boards" (needs the profile's roles), "company" or "feed" (list everything)
     every: timedelta
 
 
-def plan_sources(
+def plan_sources(  # noqa: PLR0913  (one argument per source group)
     job_boards: list[str],
     watch_companies: list[str],
     boards_every: timedelta,
     companies_every: timedelta,
+    *,
+    feeds: Sequence[str] = (),
+    feeds_every: timedelta = timedelta(hours=1),
+    freehire: bool = False,
 ) -> list[Planned]:
     """The sources to watch. Company entries look like ``"greenhouse/razorpay"``; bad ones are skipped."""
     planned: list[Planned] = []
     if job_boards:
         planned.append(Planned(JobBoardSource(tuple(job_boards)), "boards", boards_every))
+    if freehire:
+        planned.append(Planned(FreehireSource(), "boards", boards_every))
+    for feed in dict.fromkeys(f.strip().lower() for f in feeds):
+        if feed == "hackernews":
+            planned.append(Planned(HackerNewsSource(), "feed", feeds_every))
+        elif feed in FEEDS:
+            planned.append(Planned(FeedSource(feed), "feed", feeds_every))
+        else:
+            log.warning("feed %r skipped: known feeds are %s, hackernews", feed, ", ".join(FEEDS))
     for entry in watch_companies:
         system, slash, slug = entry.strip().partition("/")
         if not slash or not system or not slug:
@@ -73,7 +89,7 @@ def look_back_hours(kind: str, state: SourceState | None, now: datetime) -> int:
 
 def query_for(profile: Profile | None, kind: str, hours_old: int) -> SearchQuery | None:
     """What to ask a source for; None when a board search has no profile (and so no roles) yet."""
-    if kind == "company":
+    if kind != "boards":
         return SearchQuery(hours_old=hours_old)
     if profile is None:
         return None

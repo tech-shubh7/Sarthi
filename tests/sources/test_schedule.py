@@ -39,6 +39,15 @@ def test_plan_sources_skips_bad_entries() -> None:
     assert plan_sources([], [], HOUR, HOUR) == []
 
 
+def test_plan_sources_adds_feeds_and_freehire() -> None:
+    planned = plan_sources(
+        [], [], HOUR, HOUR, feeds=["Remotive", "remotive", "hackernews", "myspace"], freehire=True
+    )
+    assert [p.source.name for p in planned] == ["search:freehire", "feed:remotive", "feed:hackernews"]
+    assert [p.kind for p in planned] == ["boards", "feed", "feed"]
+    assert query_for(None, "feed", 5) == SearchQuery(hours_old=5)  # feeds need no profile
+
+
 def test_look_back_covers_the_gap_since_the_last_success() -> None:
     assert look_back_hours("boards", None, NOW) == 24
     assert look_back_hours("company", None, NOW) == 72

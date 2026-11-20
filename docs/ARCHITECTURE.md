@@ -66,6 +66,11 @@ Common plug-in shape (JobRadar's design): every source is one module with `fetch
 public `scrape_jobs`; Naukri added for India, Seek for Australia), `sources/ingest.py` (store, quiet first-run
 baseline, alert-priority `match` tasks). ATS-Scrapers is installed **without** its `[scrapers]` extra: that extra
 downloads a stealth Chromium binary; without it ~93 of 99 hiring systems work and Meta/Tesla boards are unavailable.
+`sources/feeds.py` (StillOpen connectors: Remotive, RemoteOK, We Work Remotely, Himalayas, Jobicy, Arbeitnow, Working
+Nomads; one request each, no key), `sources/hackernews.py` ("Who is hiring?" threads via the Algolia HN API),
+`sources/freehire.py` (JobRadar port: one search per role over ~90 hiring systems, filtered by the user's countries and
+remote preference). A remote job is "open worldwide" only when its location names no restriction; a time zone or a
+city Sarthi cannot place is shown as "check it includes you" instead of being read as anywhere.
 
 **+1 (nobody does this):**
 - **Smart polling:** each source gets its own speed. Telegram live, company job systems every 5–30 min, LinkedIn/Naukri slower to avoid blocks. Sources that often post new jobs get checked more.

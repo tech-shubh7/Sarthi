@@ -57,6 +57,9 @@ def _check_remote(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:
     elif prefs.home_country in job.remote_countries:
         verdict.location_points = LOCATION_FIT_POINTS
         verdict.notes.append(f"Remote, open to people in {country_name(prefs.home_country)}")
+    elif not job.remote_countries:  # a restriction Sarthi cannot place: a time zone, an unknown city
+        verdict.location_points = LOCATION_UNSURE_POINTS
+        verdict.notes.append(f"Remote, but limited to “{job.location_text[:80]}”: check it includes you")
     else:
         verdict.blockers.append(f"Remote only for people in {_names(job.remote_countries)}")
 

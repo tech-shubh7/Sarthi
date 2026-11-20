@@ -21,6 +21,11 @@ USER: dict[str, Any] = {"countries": ["GB"]}
         ({"remote_type": "remote", "country_codes": []}, True, "Remote, open worldwide"),
         ({"remote_type": "remote", "remote_countries": ["IN"]}, True, "open to people in India"),
         (
+            {"remote_type": "remote", "country_codes": [], "location_text": "CET (+/- 3 hours)"},
+            True,
+            "Remote, but limited to “CET (+/- 3 hours)”: check it includes you",
+        ),
+        (
             {"remote_type": "remote", "remote_countries": ["US"]},
             False,
             "Remote only for people in United States",

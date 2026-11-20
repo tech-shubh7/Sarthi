@@ -40,7 +40,14 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
     try:
         assert set(sarthi.worker().handlers) == {"source_check", "match", "alert", "digest"}
         assert sarthi.bot.setup is not None
-        assert set(sarthi.sources.planned) == {"boards:linkedin+indeed", "greenhouse:razorpay"}
+        planned = set(sarthi.sources.planned)
+        assert {
+            "boards:linkedin+indeed",
+            "greenhouse:razorpay",
+            "search:freehire",
+            "feed:hackernews",
+        } <= planned
+        assert len([name for name in planned if name.startswith("feed:")]) == len(settings.feeds)
         sarthi.schedule_digest()
         sarthi.schedule_digest()
         assert sarthi.queue.store.task_counts()[TaskStatus.PENDING] == 1

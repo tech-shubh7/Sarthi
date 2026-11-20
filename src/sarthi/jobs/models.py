@@ -6,6 +6,7 @@ needs for global matching: where remote work is allowed, visa sponsorship and wh
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Self
@@ -14,6 +15,48 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, HttpUrl, Stri
 
 DESCRIPTION_SNIPPET_CHARS = 700
 """Jobs are stored lean (OpenApply's "lean index"); full text is fetched only for jobs that pass matching."""
+
+
+_ANYWHERE_WORDS = frozenset(
+    [
+        "remote",
+        "job",
+        "jobs",
+        "worldwide",
+        "anywhere",
+        "in",
+        "the",
+        "world",
+        "global",
+        "globally",
+        "work",
+        "from",
+        "fully",
+        "100",
+        "international",
+        "all",
+        "any",
+        "location",
+        "locations",
+        "everywhere",
+        "earth",
+        "only",
+        "open",
+        "to",
+        "candidates",
+        "distributed",
+    ]
+)
+
+
+def says_anywhere(location_text: str) -> bool:
+    """True when a remote job's location field names no restriction ("Remote", "Worldwide", empty).
+
+    "REMOTE (EST hours)", "Any State" or a city the geo table does not know are restrictions Sarthi cannot
+    place, so they are not read as "anywhere".
+    """
+    words = re.findall(r"[a-z0-9]+", location_text.lower())
+    return all(word in _ANYWHERE_WORDS for word in words)
 
 
 def _utc_now() -> datetime:
@@ -136,5 +179,9 @@ class JobPosting(BaseModel):
 
     @property
     def is_remote_anywhere(self) -> bool:
-        """True for remote jobs open to people in any country."""
-        return self.remote_type is RemoteType.REMOTE and not self.remote_countries
+        """True for remote jobs open to people in any country (no countries named, no other restriction)."""
+        return (
+            self.remote_type is RemoteType.REMOTE
+            and not self.remote_countries
+            and says_anywhere(self.location_text)
+        )
