@@ -29,7 +29,8 @@ _CHANGE = re.compile(
     re.IGNORECASE,
 )
 _OFF_TOPIC_WORDS = re.compile(
-    r"\b(?:joke|poem|weather|news|story|song|recipe|movie|cricket|football|match\s+score|homework|essay)\b",
+    r"\b(?:joke|poem|weather|news|story|song|recipe|movie|cricket|football|match\s+score|homework|essay|"
+    r"write|draft|translate|summari[sz]e|code)\b",
     re.IGNORECASE,
 )
 _CHATTY = re.compile(r"\b(?:you|your|tell\s+me|write|give\s+me)\b", re.IGNORECASE)

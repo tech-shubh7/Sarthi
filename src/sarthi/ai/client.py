@@ -20,6 +20,7 @@ from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from sarthi.ai.gate import local_gate
 from sarthi.ai.prompts import SYSTEM_RULES, Prompt
 from sarthi.ai.providers import FREE_PROVIDERS, Endpoint
 from sarthi.clock import Clock, to_iso, utcnow
@@ -101,7 +102,7 @@ class AiClient:
         """Close the HTTP connection pool."""
         await self._http.aclose()
 
-    async def structured(self, prompt: Prompt, schema: type[T], **data: str) -> T:
+    async def structured(self, prompt: Prompt, schema: type[T], *, urgent: bool = False, **data: str) -> T:
         """Run ``prompt`` with ``data`` and return the validated answer (cached by model, version and input).
 
         Raises ``BudgetExhaustedError`` when only paid models are left and the budget is spent, and
@@ -127,7 +128,11 @@ class AiClient:
                     budget_hit = error
                     continue
             try:
-                result = await self._ask(endpoint, text, schema)
+                if endpoint.free:  # a local model: one request at a time, the user's chat first
+                    async with local_gate(endpoint.base_url).hold(urgent=urgent):
+                        result = await self._ask(endpoint, text, schema)
+                else:
+                    result = await self._ask(endpoint, text, schema)
             except _CallFailedError as error:
                 log.warning("AI model %s failed: %s", endpoint.label, error)
                 continue

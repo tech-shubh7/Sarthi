@@ -57,7 +57,7 @@ async def evaluate(
     free_score = _clamp(free.score + rules.location_points)
     reasons = free.reasons
     ai_verdict: AiScore | None = None
-    if ai is not None and free_score >= thresholds.hide_below:
+    if ai is not None and free_score >= thresholds.ai_from:
         ai_verdict = await ai.score(job, profile)
 
     if ai_verdict is None:

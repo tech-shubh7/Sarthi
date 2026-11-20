@@ -26,6 +26,7 @@ from tests.conftest import FakeClock
         ("tell me a joke", Field.ROLES, None),
         ("what is the weather?", Field.ROLES, None),
         ("hello there friend", None, None),
+        ("can you write my cover letter", None, None),  # a request, not a question about Sarthi
     ],
 )
 def test_rules(text: str, asking: Field | None, expected: Route | None) -> None:

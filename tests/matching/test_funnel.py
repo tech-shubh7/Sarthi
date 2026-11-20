@@ -156,3 +156,11 @@ async def test_background_scoring_waits_while_the_user_is_chatting(
     busy["chat"] = False
     await matcher.handle(TaskRecord(1, "match", saved.job_id, {}, 1))
     assert matcher.matches.get(saved.job_id) is not None
+
+
+async def test_ai_is_only_used_near_the_alert_line() -> None:
+    ai = FakeAi(AiScore(90, 0.9))
+    fair = make_job(title="Platform Engineer", description="Go services.")  # free score between 35 and 50
+    result = await evaluate(fair, make_profile(), NOW, ai=ai)
+    assert ai.calls == 0
+    assert Thresholds().hide_below <= result.score < Thresholds().ai_from

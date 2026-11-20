@@ -76,7 +76,11 @@ async def classify(client: AiClient, question: str, message: str) -> IntentAnswe
         return None
     try:
         return await client.structured(
-            INTENT_PROMPT, IntentAnswer, question=question or "none", user_answer=message[:MAX_MESSAGE_CHARS]
+            INTENT_PROMPT,
+            IntentAnswer,
+            urgent=True,
+            question=question or "none",
+            user_answer=message[:MAX_MESSAGE_CHARS],
         )
     except AiError as error:
         log.info("message not classified by AI: %s", error)

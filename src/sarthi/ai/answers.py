@@ -61,6 +61,7 @@ async def interpret_list(
         result = await client.structured(
             EDIT_LIST_PROMPT,
             ListAnswer,
+            urgent=True,
             question=question,
             current_list="\n".join(f"- {item}" for item in current) or "(empty)",
             user_answer=answer[:MAX_ANSWER_CHARS],

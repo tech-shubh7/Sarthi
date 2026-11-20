@@ -35,6 +35,7 @@ class Thresholds:
 
     hide_below: int = 35
     alert_at: int = 60
+    ai_from: int = 50  # only jobs this close to an alert are worth an AI read (saves a laptop CPU hours)
     min_ai_confidence: float = 0.6
 
 
