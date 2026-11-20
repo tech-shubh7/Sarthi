@@ -24,6 +24,7 @@ dev = [
     "import-linter>=2.1",
     "pip-audit>=2.7",
     "pre-commit>=4.0",
+    "pytest-asyncio>=0.24",
 ]
 
 [build-system]
@@ -63,7 +64,7 @@ select = [
 ignore = ["D203", "D213", "TRY003"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "D", "PLR2004"]
+"tests/**" = ["S101", "S311", "D", "PLR2004", "A005"]
 # Upstream data tables and regexes kept verbatim (long lines) so future syncs with StillOpen stay easy.
 "src/sarthi/jobs/{geo,countries}.py" = ["E501", "RUF001"]
 
@@ -82,6 +83,9 @@ plugins = ["pydantic.mypy"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --cov=sarthi --cov-report=term-missing --cov-fail-under=80"
 markers = ["live: hits real external services (skipped by default, run with -m live)"]
+asyncio_mode = "auto"
+filterwarnings = ["error::ResourceWarning"]
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
@@ -105,7 +109,8 @@ type = "layers"
 layers = [
     "sarthi.cli",
     "sarthi.sources | sarthi.matching | sarthi.documents | sarthi.answers | sarthi.apply | sarthi.tracking | sarthi.chat",
-    "sarthi.queue | sarthi.ai | sarthi.jobs | sarthi.profile",
+    "sarthi.queue | sarthi.ai | sarthi.profile",
     "sarthi.db",
-    "sarthi.config | sarthi.log",
+    "sarthi.jobs",
+    "sarthi.clock | sarthi.config | sarthi.log",
 ]

@@ -38,7 +38,8 @@ Principles:
 ## 3. Architecture rules (enforced by import-linter)
 
 - **Pipeline steps never import each other:** `sources`, `matching`, `documents`, `answers`, `apply`, `tracking`, `chat` are independent. They talk only through `db` + `queue`.
-- **Layers import downwards only:** `cli` → steps → `queue / ai / jobs / profile` → `db` → `config / log`.
+- **Layers import downwards only:** `cli` → steps → `queue / ai / profile` → `db` → `jobs` → `clock / config / log`.
+- **`jobs` is pure domain code:** the job model, geo, dedupe and normalisation. No network, no database.
 - **Only `db` writes SQL.** Parameterised queries only, never string-built SQL.
 - **Only `ai` talks to LLMs.**
 

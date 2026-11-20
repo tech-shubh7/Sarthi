@@ -230,9 +230,9 @@ step folders, per-site plug-ins, or web-app layers — no shared standard; MVC f
 ```
 sarthi/
 ├── src/sarthi/
-│   ├── sources/        # 2.1  one module per source group (base.py = Source protocol)
+│   ├── sources/        # 2.1  one module per source group (base.py = Source protocol) + liveness check
 │   ├── queue/          # 2.2, 2.18  task queue, workers, scheduler, catch-up
-│   ├── jobs/           # 2.3–2.6  job model, geo, dedupe, quality gate
+│   ├── jobs/           # 2.3–2.6  pure job model, geo, dedupe, normalise, scam/repost checks (no I/O)
 │   ├── matching/       # 2.7–2.8  match funnel + decide
 │   ├── documents/      # 2.10 resume, cover letter, truth check, PDF
 │   ├── answers/        # 2.11 form questions + answer bank
@@ -256,7 +256,7 @@ sarthi/
 
 Full list in [STANDARDS.md](STANDARDS.md). The architecture-level ones, enforced by `import-linter` in CI:
 - Pipeline steps (`sources`, `matching`, `documents`, `answers`, `apply`, `tracking`, `chat`) never import each other; they talk only through `db` + `queue`.
-- Layers import downwards only: `cli` → steps → `queue / ai / jobs / profile` → `db` → `config / log`.
+- Layers import downwards only: `cli` → steps → `queue / ai / profile` → `db` → `jobs` (pure job model, no I/O) → `clock / config / log`.
 - Only `db` writes SQL; only `ai` calls LLMs.
 
 ## 7. Not yet proven
