@@ -57,7 +57,7 @@ def test_query_uses_the_profile() -> None:
     )
     remote_only = query_for(make_profile(remote="only"), "boards", 5)
     assert remote_only is not None
-    assert (remote_only.countries, remote_only.remote) == ((), True)
+    assert (remote_only.countries, remote_only.remote) == (("IN",), True)  # never the boards' US default
     assert query_for(None, "boards", 5) is None
     assert query_for(None, "company", 72) == SearchQuery(hours_old=72)
 

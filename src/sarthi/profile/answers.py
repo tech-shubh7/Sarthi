@@ -108,3 +108,71 @@ def parse_salary(text: str, home_country: str) -> Salary | None:
         return None
     period = SalaryPeriod.MONTH if (match["period"] or "").lower() in {"month", "mo"} else SalaryPeriod.YEAR
     return Salary(currency=currency, period=period, minimum=amount)
+
+
+_REMOVE = re.compile(
+    r"^(?:remove|without|except|exclude|drop|delete|minus|not|no)\s+(?P<item>.+)$", re.IGNORECASE
+)
+_ADD = re.compile(r"^(?:add|plus|also|and also)\s+(?P<item>.+)$", re.IGNORECASE)
+_KEEP = re.compile(
+    r"^(?:ok(?:ay)?|yes|y|fine|keep|same|"
+    r"(?:the\s+)?(?:other|others|rest|remaining)(?:\s+(?:are|is))?\s*(?:ok(?:ay)?|fine|good)?|"
+    r"keep\s+(?:the\s+)?(?:other|others|rest|remaining))$",
+    re.IGNORECASE,
+)
+_EVERYTHING = frozenset({"all", "everything", "all of them", "them all"})
+_INSTRUCTION_WORDS = re.compile(r"\b(?:remove|without|except|okay|ok|keep|rest|others?)\b", re.IGNORECASE)
+
+
+@dataclass(frozen=True, slots=True)
+class ListEdit:
+    """The list the user wants, or a message asking again."""
+
+    items: tuple[str, ...]
+    error: str | None = None
+
+
+def edit_list(text: str, suggestion: tuple[str, ...] | list[str]) -> ListEdit:
+    """Apply an answer to a suggested list.
+
+    Understands a fresh list ("Backend Engineer, SRE"), "ok", and edits of the suggestion such as
+    "remove frontend developer intern, other okay" or "ok, add Data Engineer, without AI Engineer".
+    Removal matches by name containment, ignoring case. Never returns instruction words as items.
+    """
+    base = list(suggestion)
+    keep_base = False
+    removals: list[str] = []
+    additions: list[str] = []
+    plain: list[str] = []
+    mode = "plain"  # "remove trainee and intern": items after "remove" are removals until another verb
+    for part in split_list(text):
+        if _KEEP.match(part):
+            keep_base, mode = True, "plain"
+        elif removal := _REMOVE.match(part):
+            removals.append(removal["item"].strip())
+            mode = "remove"
+        elif addition := _ADD.match(part):
+            additions.append(addition["item"].strip())
+            mode = "add"
+        elif mode == "remove":
+            removals.append(part)
+        elif mode == "add":
+            additions.append(part)
+        else:
+            plain.append(part)
+    if any(r.lower() in _EVERYTHING for r in removals):
+        base, removals = [], [r for r in removals if r.lower() not in _EVERYTHING]
+    edited = keep_base or removals or additions or len(base) != len(suggestion)
+    items = (base + additions + plain) if edited else plain
+    for removal_text in removals:
+        needle = removal_text.lower()
+        items = [i for i in items if needle not in i.lower() and i.lower() not in needle]
+    unique: dict[str, str] = {}
+    for item in items:
+        unique.setdefault(item.lower(), item)
+    result = tuple(unique.values())[:MAX_ITEMS]
+    if any(_INSTRUCTION_WORDS.search(item) for item in result):
+        return ListEdit(
+            (), "I couldn't tell which items you meant. Please list them, e.g. Backend Engineer, AI Engineer."
+        )
+    return ListEdit(result)

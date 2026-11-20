@@ -154,3 +154,18 @@ async def test_budget_resets_the_next_day(store: AiStore, clock: FakeClock) -> N
     providers = FakeProviders({"gemini.test": [reply('{"greeting": "new day", "count": 1}')]})
     result = await client(store, providers, [GEMINI], clock, budget=1000).structured(PROMPT, Answer)
     assert result.greeting == "new day"
+
+
+async def test_local_models_get_a_longer_timeout(store: AiStore, clock: FakeClock) -> None:
+    timeouts: list[object] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        timeouts.append(request.extensions["timeout"]["read"])
+        return reply('{"greeting": "hi", "count": 1}')
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    local = AiClient([OLLAMA], store, requests_per_minute=6000, http=http, clock=clock)
+    cloud = AiClient([GEMINI], store, requests_per_minute=6000, http=http, clock=clock)
+    await local.structured(PROMPT, Answer)
+    await cloud.structured(PROMPT, Answer, job_posting="other input")
+    assert timeouts == [600.0, 90.0]

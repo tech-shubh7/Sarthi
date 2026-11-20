@@ -26,12 +26,12 @@ from sarthi.db.jobs import JobStore
 from sarthi.jobs.geo import country_name
 from sarthi.jobs.models import Salary
 from sarthi.profile.answers import (
+    edit_list,
     is_none,
     parse_countries,
     parse_remote,
     parse_salary,
     parse_years,
-    split_list,
 )
 from sarthi.profile.models import Preferences, Profile, RemotePreference
 from sarthi.profile.resume import MAX_UPLOAD_BYTES, ResumeError, extract_text
@@ -94,6 +94,7 @@ SAVED_TEXT = (
     "✅ Saved. I'm matching {count} recent job(s) against your profile, and every new one from now on.\n"
     "Strong matches come right away, the rest in your daily digest. /profile shows your profile."
 )
+EDIT_HINT = "Reply <b>ok</b> to use it, or e.g. <i>ok, remove X, add Y</i>, or type your own."
 UNKNOWN_PLACES = "I don't know {places}. Use country names (or 'none')."
 
 
@@ -264,10 +265,12 @@ class SetupFlow:
         return "Please send the resume as a file (📎 → File), or reply skip."
 
     def _answer_roles(self, state: dict[str, Any], text: str) -> str | None:
-        roles = self._suggested(state, "roles", text) or list(split_list(text))
-        if not roles:
+        edit = edit_list(text, state["suggest"].get("roles") or [])
+        if edit.error:
+            return edit.error
+        if not edit.items:
             return "Please name at least one job title, e.g. Backend Engineer, Data Analyst."
-        state["draft"]["roles"] = roles[:MAX_ROLES]
+        state["draft"]["roles"] = list(edit.items[:MAX_ROLES])
         return None
 
     def _answer_home(self, state: dict[str, Any], text: str) -> str | None:
@@ -307,8 +310,10 @@ class SetupFlow:
         return None
 
     def _answer_skills(self, state: dict[str, Any], text: str) -> str | None:
-        skills = self._suggested(state, "skills", text) or list(split_list(text))
-        state["draft"]["skills"] = skills[:MAX_SKILLS]
+        edit = edit_list(text, state["suggest"].get("skills") or [])
+        if edit.error:
+            return edit.error
+        state["draft"]["skills"] = list(edit.items[:MAX_SKILLS])
         return None
 
     def _answer_salary(self, state: dict[str, Any], text: str) -> str | None:
@@ -355,7 +360,7 @@ class SetupFlow:
             Step.YEARS: f"{suggest['years']:g} years" if suggest.get("years") is not None else "",
             Step.SKILLS: ", ".join((suggest.get("skills") or [])[:SHOWN_SKILLS]),
         }.get(step, "")
-        return f"\n\nSuggested: <b>{escape(shown)}</b>\nReply <b>ok</b> to use it." if shown else ""
+        return f"\n\nSuggested: <b>{escape(shown)}</b>\n{EDIT_HINT}" if shown else ""
 
     async def _ask(self, chat_id: int, state: dict[str, Any]) -> None:
         step = Step(state["step"])

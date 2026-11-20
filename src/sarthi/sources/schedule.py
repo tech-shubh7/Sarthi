@@ -78,11 +78,14 @@ def query_for(profile: Profile | None, kind: str, hours_old: int) -> SearchQuery
     if profile is None:
         return None
     prefs = profile.preferences
-    countries = tuple(sorted(prefs.work_countries)) if prefs.remote is not RemotePreference.ONLY else ()
+    # Remote-only still searches the home country ("remote jobs in India"): with no location the boards
+    # default to the United States.
+    only_remote = prefs.remote is RemotePreference.ONLY
+    countries = (prefs.home_country,) if only_remote else tuple(sorted(prefs.work_countries))
     return SearchQuery(
         roles=prefs.roles,
         countries=countries,
-        remote=prefs.remote is RemotePreference.ONLY,
+        remote=only_remote,
         hours_old=hours_old,
     )
 

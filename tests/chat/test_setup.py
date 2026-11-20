@@ -83,7 +83,7 @@ def document(file_id: str = "f1", size: int = 2000) -> dict[str, Any]:
 
 @pytest.fixture
 def ai_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_read(client: AiClient, text: str) -> ResumeFacts:
+    async def fake_read(client: AiClient, text: str, today: object = None) -> ResumeFacts:
         assert "Asha Rao" in text
         return ResumeFacts(
             skills=["Python", "Go", "PostgreSQL"], years_experience=4, roles=["Backend Engineer"]
@@ -217,3 +217,26 @@ async def test_cancel_profile_and_restart(
 async def test_commands_still_work_during_setup(bot: TelegramBot, api: FakeFiles) -> None:
     await answer(bot, "/setup", "/status")
     assert "Sarthi status" in api.texts()[-1]
+
+
+async def test_editing_the_suggested_roles_in_plain_words(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_read(client: AiClient, text: str, today: object = None) -> ResumeFacts:
+        return ResumeFacts(
+            skills=["Python", "Docker"],
+            years_experience=1.1,
+            roles=["Backend Engineer", "Frontend Developer Intern", "AI Engineer"],
+        )
+
+    monkeypatch.setattr(setup_flow, "read_resume", fake_read)
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    assert "ok, remove X, add Y" in api.texts()[-1]
+    await answer(bot, "remove frontend developer intern, other okay", "India", "none", "none")
+    await bot.handle_update(tap(OWNER, "setup:remote:only"))
+    await answer(bot, "ok", "ok, add FastAPI", "skip")
+    summary = api.texts()[-1]
+    assert "Roles: Backend Engineer, AI Engineer" in summary
+    assert "Skills: Python, Docker, FastAPI" in summary

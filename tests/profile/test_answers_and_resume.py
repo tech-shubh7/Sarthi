@@ -4,7 +4,14 @@ import zipfile
 import pytest
 
 from sarthi.jobs.models import SalaryPeriod
-from sarthi.profile.answers import parse_countries, parse_remote, parse_salary, parse_years, split_list
+from sarthi.profile.answers import (
+    edit_list,
+    parse_countries,
+    parse_remote,
+    parse_salary,
+    parse_years,
+    split_list,
+)
 from sarthi.profile.models import RemotePreference
 from sarthi.profile.resume import MAX_UPLOAD_BYTES, ResumeError, ResumeKind, detect, extract_text
 
@@ -143,3 +150,41 @@ def test_docx_entities_are_not_expanded() -> None:
     text = extract_text(bomb)
     assert "&lol9;" in text  # unknown entities stay as text: nothing expands
     assert len(text) < 200
+
+
+SUGGESTED = [
+    "Backend Engineer",
+    "Software Developer",
+    "Web Developer Trainee",
+    "Frontend Developer Intern",
+    "AI Engineer",
+]
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        # the real answer that was once saved as two job titles (2026-11-20)
+        (
+            "remove frontend developer intern, other okay",
+            ["Backend Engineer", "Software Developer", "Web Developer Trainee", "AI Engineer"],
+        ),
+        ("ok", SUGGESTED),
+        ("remove trainee and intern, rest ok", ["Backend Engineer", "Software Developer", "AI Engineer"]),
+        ("ok, add Data Engineer, without AI Engineer", [*SUGGESTED[:4], "Data Engineer"]),
+        ("keep the rest, remove Frontend Developer Intern", [*SUGGESTED[:3], "AI Engineer"]),
+        ("remove all, add Data Engineer", ["Data Engineer"]),
+        ("remove everything", []),
+        ("Python, Go", ["Python", "Go"]),
+    ],
+)
+def test_edit_list(answer: str, expected: list[str]) -> None:
+    result = edit_list(answer, SUGGESTED)
+    assert result.error is None
+    assert list(result.items) == expected
+
+
+def test_instructions_are_never_saved_as_items() -> None:
+    assert edit_list("okay okay", SUGGESTED).error is not None
+    assert edit_list("please keep backend", SUGGESTED).error is not None
+    assert edit_list("other okay", []).items == ()

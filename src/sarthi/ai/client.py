@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 REQUEST_TIMEOUT_S = 90.0
+LOCAL_TIMEOUT_S = 600.0  # a local model on a laptop CPU can take minutes for one answer
 MAX_ERROR_CHARS = 800
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 _HTTP_OK = 200
@@ -185,7 +186,10 @@ class AiClient:
         }
         try:
             response = await self._http.post(
-                f"{endpoint.base_url}/chat/completions", json=body, headers=headers
+                f"{endpoint.base_url}/chat/completions",
+                json=body,
+                headers=headers,
+                timeout=LOCAL_TIMEOUT_S if endpoint.free else REQUEST_TIMEOUT_S,
             )
         except httpx.HTTPError as error:
             raise _CallFailedError(type(error).__name__) from error
