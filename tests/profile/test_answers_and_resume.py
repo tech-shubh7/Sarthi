@@ -3,12 +3,15 @@ import zipfile
 
 import pytest
 
+from sarthi.jobs.geo import first_country
 from sarthi.jobs.models import SalaryPeriod
 from sarthi.profile.answers import (
     edit_list,
+    find_salary,
     is_simple_answer,
     parse_countries,
     parse_remote,
+    parse_remote_text,
     parse_salary,
     parse_years,
     reconcile,
@@ -291,3 +294,19 @@ def test_rules_correct_what_a_small_model_gets_wrong(
     answer: str, qwen_said: list[str], expected: list[str]
 ) -> None:
     assert reconcile(ROLES_2, qwen_said, answer) == expected
+
+
+def test_values_found_inside_sentences() -> None:
+    salary = find_salary("make my minimum 15 LPA please", "IN")
+    assert salary is not None
+    assert (salary.currency, salary.minimum) == ("INR", 1_500_000)
+    pay = find_salary("change pay to USD 120000", "IN")
+    assert pay is not None
+    assert pay.currency == "USD"  # "pay" is not read as a currency
+    assert find_salary("no idea yet", "IN") is None
+    assert parse_remote_text("actually remote only") is RemotePreference.ONLY
+    assert parse_remote_text("office or hybrid please") is RemotePreference.NO
+    assert parse_remote_text("remote or office, both fine") is RemotePreference.OK
+    assert parse_remote_text("hmm") is None
+    assert first_country("I moved to Dubai") == "AE"
+    assert first_country("nowhere") is None

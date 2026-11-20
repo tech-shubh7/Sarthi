@@ -414,6 +414,12 @@ def resolve_place(text: str) -> set[str] | None:
     return {hit[0]} if hit else None
 
 
+def first_country(text: str) -> str | None:
+    """The first country or city named anywhere in ``text`` ("I moved to Dubai" -> "AE"), or None."""
+    hit = _first_place(text)
+    return hit[0] if hit else None
+
+
 def _first_place(text: str) -> _Hit | None:
     """(code, matched text, start) of the earliest recognised country or city in `text`."""
     best: _Hit | None = None

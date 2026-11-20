@@ -135,3 +135,24 @@ async def test_handler_judges_the_full_text_not_the_snippet(matcher: Any, job_st
     record = m.matches.get(saved.job_id)
     assert record is not None
     assert (record.decision, record.hidden_because) == ("hide", "Asks for 9+ years of experience")
+
+
+async def test_background_scoring_waits_while_the_user_is_chatting(
+    job_store: JobStore, conn: Any, queue: TaskQueue, clock: FakeClock
+) -> None:
+    saved = job_store.save(make_job())
+    busy = {"chat": True}
+    matcher = Matcher(
+        job_store,
+        MatchStore(conn, clock=clock),
+        queue,
+        make_profile,
+        ai=FakeAi(AiScore(80, 0.9)),
+        ai_paused=lambda: busy["chat"],
+        clock=clock,
+    )
+    with pytest.raises(DeferError):
+        await matcher.handle(TaskRecord(1, "match", saved.job_id, {}, 1))
+    busy["chat"] = False
+    await matcher.handle(TaskRecord(1, "match", saved.job_id, {}, 1))
+    assert matcher.matches.get(saved.job_id) is not None

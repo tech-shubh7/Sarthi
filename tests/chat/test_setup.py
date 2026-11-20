@@ -310,3 +310,75 @@ async def test_without_ai_the_rules_handle_edits(bot: TelegramBot, api: FakeFile
     await answer(bot, "ok, add Data Engineer")
     assert api.texts()[-2] == "✓ Roles: <b>Backend Engineer, Data Engineer</b>"
     assert not any("Understanding" in text for text in api.texts())
+
+
+async def test_small_talk_and_side_questions_are_never_saved_as_answers(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, ai_reads: None
+) -> None:
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await answer(bot, "hi")
+    assert api.texts()[-2] == "Hi! 👋"
+    assert "job titles" in api.texts()[-1]  # the question again
+    await answer(bot, "why do you need my roles?")
+    assert "I search LinkedIn" in api.texts()[-2]
+    await answer(bot, "thanks")
+    assert api.texts()[-2] == "You're welcome! 🙂"
+    state = flow._state()
+    assert state is not None
+    assert "roles" not in state["draft"]  # nothing was saved from the small talk
+
+
+async def test_a_correction_mid_setup_updates_that_answer_and_skips_its_question(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, ai_reads: None
+) -> None:
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await answer(bot, "ok", "India")
+    await answer(bot, "actually change my salary to 15 LPA")  # while being asked about countries
+    assert api.texts()[-2] == "✓ Minimum salary: <b>INR 1,500,000 / year</b> (updated)"
+    assert "other countries" in api.texts()[-1]
+    await answer(bot, "UK", "none")
+    await bot.handle_update(tap(OWNER, "setup:remote:ok"))
+    await answer(bot, "ok", "ok")
+    assert "Minimum salary: INR 1,500,000 / year" in api.texts()[-1]  # not asked again: straight to summary
+    assert not any("Minimum salary</b> you'd accept" in t for t in api.texts()[-3:])
+
+
+async def test_after_setup_profile_changes_by_message_with_undo(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, ai_reads: None
+) -> None:
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await answer(bot, "ok", "India", "none", "none")
+    await bot.handle_update(tap(OWNER, "setup:remote:ok"))
+    await answer(bot, "ok", "ok", "skip")
+    await bot.handle_update(tap(OWNER, "setup:save"))
+
+    await answer(bot, "please add UAE to my countries")
+    reply, markup = api.texts()[-1], api.sent[-1][2]
+    assert reply == "✓ Other countries: <b>United Arab Emirates</b> (saved)"
+    assert markup == {"inline_keyboard": [[{"text": "↩️ Undo", "callback_data": "profile:undo"}]]}
+    profile = load_profile(flow.profile_file)
+    assert profile is not None
+    assert profile.preferences.countries == {"AE"}
+    await answer(bot, "actually I want remote only")
+    assert "Remote: <b>Remote only</b> (saved)" in api.texts()[-1]
+    await bot.handle_update(tap(OWNER, "profile:undo"))
+    restored = load_profile(flow.profile_file)
+    assert restored is not None
+    assert restored.preferences.remote is RemotePreference.OK
+    await bot.handle_update(tap(OWNER, "profile:undo"))
+    assert api.texts()[-1] == "Nothing to undo."
+
+
+async def test_outside_setup_unclear_messages_get_gentle_help(bot: TelegramBot, api: FakeFiles) -> None:
+    await answer(bot, "hello")
+    assert "watching new jobs" in api.texts()[-1]
+    await answer(bot, "add Python to my skills")
+    assert "no profile yet" in api.texts()[-1]
+    await answer(bot, "what can you do?")
+    assert "/today" in api.texts()[-1]

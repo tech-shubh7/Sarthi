@@ -145,6 +145,12 @@ Answers are natural language: plain lists and "ok" use fast rules; anything else
 engineer instead") goes to the AI (`ai/answers.py`), whose list is then checked by rules (`reconcile`: items the
 user never mentioned come back, explicit removals always apply), because a 3B local model drops and misses
 items. Every answer is echoed back ("✓ Roles: …") with a Change button.
+**Conversation (MVP):** every non-command message goes through `chat/inbox.py` (quick bursts grouped into one;
+one batch at a time with a single "still reading" note; polling never waits) and `chat/understand.py`, which
+decides answer / correction / question / small talk / off-topic (rules first, `ai/intent.py` for unclear
+messages, fixed choices only). Corrections work any time ("add UAE to my countries"): during setup they update
+the draft and that question is skipped; afterwards they update the saved profile with an Undo button. While
+the user is waiting on a reply, background match scoring defers so the local model answers the chat first.
 **`sarthi run` (MVP):** bot + worker + `sources/schedule.py`: a 1-minute tick queues due sources (boards hourly
 with the profile's roles/countries, company boards every 30 min); each check looks back to its last success
 (catch-up after the computer was off, §2.18); failing sources back off up to 8x. Every new job is matched

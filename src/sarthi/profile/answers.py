@@ -262,3 +262,45 @@ def reconcile(current: list[str], ai_items: list[str], text: str) -> list[str]:
                 kept.add(item.lower())
     removed = {item.lower() for item in edit_list(text, current).removed}
     return [item for item in result if item.lower() not in removed]
+
+
+_CURRENCY_CODES = "INR|USD|GBP|EUR|AED|CAD|AUD|SGD|JPY|CHF|SEK|NOK|DKK|PLN|NZD|HKD|SAR|QAR"
+_SALARY_IN_TEXT = re.compile(
+    rf"(?:(?<![a-z])(?:{_CURRENCY_CODES})\s*|[₹$£€]\s*)?\d+(?:[.,]\d+)*\s*"
+    rf"(?:lakhs|lakh|lacs|lac|lpa|k|l)?\b\s*(?:(?:{_CURRENCY_CODES})\b|[₹$£€])?\s*(?:/?\s*(?:year|yr|annum|pa|month|mo)\b)?",
+    re.IGNORECASE,
+)
+
+
+def find_salary(text: str, home_country: str) -> Salary | None:
+    """A salary anywhere in a sentence ("make my minimum 15 LPA"), or None."""
+    for match in _SALARY_IN_TEXT.finditer(text.replace("\u00a0", " ")):
+        if salary := parse_salary(match.group().strip(), home_country):
+            return salary
+    return None
+
+
+_REMOTE_ONLY = re.compile(
+    r"\b(?:remote\s+only|only\s+remote|fully\s+remote|100%\s+remote|wfh\s+only)\b", re.I
+)
+_NO_REMOTE = re.compile(
+    r"\b(?:no\s+remote|not\s+remote|on-?site|in\s+office|office\s+only|onsite\s+only|hybrid\s+only|"
+    r"on-?site\s+or\s+hybrid|office\s+or\s+hybrid|hybrid\s+or\s+office|from\s+(?:the\s+)?office)\b",
+    re.IGNORECASE,
+)
+_ANY_REMOTE = re.compile(
+    r"\b(?:any|anything|all|both|remote\s+(?:is\s+)?(?:ok|fine)|remote\s+or|or\s+remote|hybrid)\b", re.I
+)
+
+
+def parse_remote_text(text: str) -> RemotePreference | None:
+    """Remote preference from a sentence ("actually remote only", "office or hybrid please")."""
+    if exact := parse_remote(text):
+        return exact
+    if _REMOTE_ONLY.search(text):
+        return RemotePreference.ONLY
+    if _NO_REMOTE.search(text):
+        return RemotePreference.NO
+    if _ANY_REMOTE.search(text):
+        return RemotePreference.OK
+    return None

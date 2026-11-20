@@ -11,10 +11,13 @@ import logging
 from html import escape
 from typing import Any
 
+from sarthi.ai.intent import Kind
 from sarthi.chat.cards import display_company, job_card
+from sarthi.chat.inbox import Inbox
 from sarthi.chat.pairing import owner_chat, redeem
-from sarthi.chat.setup import SetupFlow
+from sarthi.chat.setup import WHY, SetupFlow
 from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
+from sarthi.chat.understand import Route, route, route_by_rules
 from sarthi.clock import Clock, utcnow
 from sarthi.db.chat import ANSWERED, ChatStore, JobStatus
 from sarthi.db.jobs import JobStore
@@ -39,10 +42,48 @@ PAIR_HOW = (
 )
 PAIR_FAILED = "That code didn't work (wrong or expired). Run <code>uv run sarthi pair</code> for a new one."
 
+BUSY_TEXT = "⏳ Still reading your last message — I'll take this one right after."
+_THANKS = ("thank", "thx", "ty")
+_WAIT = ("wait", "hold", "one sec", "one min", "one moment", "hmm")
+_BYE = ("bye", "see you")
+
+
+_SMALLTALK_REPLIES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (_THANKS, "You're welcome! 🙂"),
+    (_WAIT, "Sure, take your time."),
+    (_BYE, "Bye! I'll keep looking for jobs for you."),
+)
+NOT_SURE = (
+    "I'm not sure what you mean. You can change your profile just by telling me, "
+    "e.g. <i>add UAE to my countries</i> — or see /help."
+)
+
+
+def _smalltalk_reply(text: str, *, in_setup: bool) -> str:
+    lowered = text.lower()
+    for words, reply in _SMALLTALK_REPLIES:
+        if any(word in lowered for word in words):
+            return reply
+    return "Hi! 👋" if in_setup else "Hi! 👋 I'm watching new jobs for you. /today shows your best matches."
+
+
+def reply_for(decided: Route, text: str, *, in_setup: bool) -> str:
+    """A short reply to small talk, a side question or an off-topic message."""
+    if decided.kind is Kind.SMALLTALK:
+        return _smalltalk_reply(text, in_setup=in_setup)
+    if decided.kind is Kind.QUESTION and decided.field is not None:
+        return f"ℹ️ {WHY[decided.field]}"
+    if decided.kind is Kind.QUESTION:
+        return "ℹ️ I'm setting up your job profile so I only send you jobs that fit." if in_setup else HELP
+    if decided.kind is Kind.ANSWER:  # outside setup nothing was asked
+        return NOT_SURE
+    return "🙂 I can only help with your job search." + ("" if in_setup else " /help shows what I can do.")
+
+
 HELP = (
     "<b>Sarthi</b> finds jobs that fit you and messages you here.\n\n"
     "/setup – create or change your profile (resume + a few questions)\n"
-    "/profile – show your profile\n"
+    "/profile – show your profile (change anything by just telling me)\n"
     "/today – best matches you have not seen yet\n"
     "/status – what Sarthi has found so far\n"
     "/pause – stop instant alerts (matches wait for you)\n"
@@ -87,10 +128,12 @@ class TelegramBot:
         queue: TaskQueue,
         *,
         setup: SetupFlow | None = None,
+        group_messages: bool = False,
         clock: Clock = utcnow,
     ) -> None:
         """Send with ``api``; read jobs and matches; record choices in ``chats``; queue applications."""
         self.setup = setup
+        self.inbox = Inbox(self._handle_batch, self._busy_notice) if group_messages else None
         self.api = api
         self.chats = chats
         self.jobs = jobs
@@ -166,9 +209,17 @@ class TelegramBot:
             return
         if chat_id != owner:
             return  # strangers get no reply
-        if await self._on_setup_message(chat_id, message, command, text):
+        if message.get("document") or (text and not text.startswith("/")):
+            if self.inbox is not None:
+                await self.inbox.put(chat_id, message)  # grouped and handled in the background
+            else:
+                await self._handle_batch(chat_id, [message])
             return
+        if not await self._on_setup_command(chat_id, command):
+            await self._on_command(chat_id, command)
 
+    async def _on_command(self, chat_id: int, command: str) -> None:
+        """/help, /status, /pause, /resume, /today."""
         if command in ("/start", "/help"):
             await self.api.send_message(chat_id, HELP)
         elif command == "/status":
@@ -187,23 +238,56 @@ class TelegramBot:
         else:
             await self.api.send_message(chat_id, "I didn't understand that. /help lists what I can do.")
 
-    async def _on_setup_message(self, chat_id: int, message: dict[str, Any], command: str, text: str) -> bool:
-        """Route setup commands, files and answers. True when the message was handled here."""
+    async def _on_setup_command(self, chat_id: int, command: str) -> bool:
+        """/setup, /profile, /cancel. True when handled here."""
         if self.setup is None:
             return False
-        if message.get("document"):
-            await self.setup.on_document(chat_id, message["document"])
-        elif command == "/setup":
+        if command == "/setup":
             await self.setup.start(chat_id)
         elif command == "/profile":
             await self.setup.show(chat_id)
         elif command == "/cancel" and self.setup.active:
             await self.setup.cancel(chat_id)
-        elif text and not text.startswith("/") and self.setup.active:
-            await self.setup.on_text(chat_id, text)
         else:
             return False
         return True
+
+    async def _busy_notice(self, chat_id: int) -> None:
+        await self.api.send_message(chat_id, BUSY_TEXT)
+
+    async def _handle_batch(self, chat_id: int, messages: list[dict[str, Any]]) -> None:
+        """Files first, then all text of a quick burst read as one message."""
+        texts: list[str] = []
+        for message in messages:
+            if message.get("document") and self.setup is not None:
+                await self.setup.on_document(chat_id, message["document"])
+            elif text := str(message.get("text") or "").strip():
+                texts.append(text)
+        if texts:
+            await self._converse(chat_id, "\n".join(texts))
+
+    async def _converse(self, chat_id: int, text: str) -> None:
+        """Work out what the message is, then answer, correct, explain or chat back."""
+        setup = self.setup
+        if setup is None:
+            await self.api.send_message(chat_id, "I didn't understand that. /help lists what I can do.")
+            return
+        in_setup = setup.active
+        if in_setup and setup.asking is None:  # resume or summary step: no profile field is being asked
+            decided = route_by_rules(text, None)
+            if decided is None or decided.kind is Kind.ANSWER:
+                await setup.on_text(chat_id, text)
+                return
+        else:
+            decided = await route(setup.ai, text, setup.asking, setup.question_text())
+        if decided.kind is Kind.ANSWER and in_setup:
+            await setup.on_text(chat_id, text)
+        elif decided.kind is Kind.CORRECTION and decided.field is not None:
+            await setup.correct(chat_id, decided.field, text)
+        else:
+            await self.api.send_message(chat_id, reply_for(decided, text, in_setup=in_setup))
+            if in_setup:
+                await setup.ask_again(chat_id)
 
     async def _pair(self, chat_id: int, code: str, *, quiet: bool = False) -> None:
         """Try ``code``; before anyone is paired, explain how to pair instead of staying silent.
@@ -228,6 +312,11 @@ class TelegramBot:
             await self.api.answer_callback(callback_id)
             return
         data = str(callback.get("data") or "")
+        if data == "profile:undo" and self.setup is not None:
+            await self.api.answer_callback(callback_id)
+            await self.api.edit_buttons(chat_id, message_id, None)
+            await self.setup.undo(chat_id)
+            return
         if data.startswith("setup:") and self.setup is not None:
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)  # one tap per question

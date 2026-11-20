@@ -108,6 +108,8 @@ class App:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
+            if self.bot.inbox is not None:
+                await self.bot.inbox.close()
             await self.bot.api.aclose()
             for client in self.ai_clients:
                 await client.aclose()
@@ -141,10 +143,16 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
     def profile() -> Profile | None:
         return load_profile(path)
 
-    matcher = Matcher(jobs, matches, queue, profile, ai=LlmMatchScorer(fast), clock=clock)
     api = TelegramApi(settings.telegram_bot_token)
     setup = SetupFlow(api, chats, quality, path, jobs=jobs, queue=queue, clock=clock)
-    bot = TelegramBot(api, chats, jobs, matches, queue, setup=setup, clock=clock)
+    bot = TelegramBot(api, chats, jobs, matches, queue, setup=setup, group_messages=True, clock=clock)
+
+    def chat_busy() -> bool:
+        return bot.inbox is not None and bot.inbox.busy
+
+    matcher = Matcher(
+        jobs, matches, queue, profile, ai=LlmMatchScorer(fast), ai_paused=chat_busy, clock=clock
+    )
     planned = plan_sources(
         settings.job_boards,
         settings.watch_companies,

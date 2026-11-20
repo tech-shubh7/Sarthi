@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 
 ALERT_TASK = names.ALERT
 WAIT_FOR_PROFILE_S = 3600
+CHAT_FIRST_WAIT_S = 20  # the user's own messages use the (local) AI first
 
 
 class Matcher:
@@ -34,6 +35,7 @@ class Matcher:
         *,
         thresholds: Thresholds = Thresholds(),  # noqa: B008  (frozen dataclass, safe default)
         ai: AiScorer | None = None,
+        ai_paused: Callable[[], bool] = lambda: False,
         clock: Clock = utcnow,
     ) -> None:
         """Read jobs from ``jobs``, write results to ``matches``, queue alerts on ``queue``."""
@@ -43,6 +45,7 @@ class Matcher:
         self._load_profile = load_profile
         self.thresholds = thresholds
         self.ai = ai
+        self._ai_paused = ai_paused
         self._clock = clock
 
     async def handle(self, task: TaskRecord) -> None:
@@ -50,6 +53,8 @@ class Matcher:
         profile = self._load_profile()
         if profile is None:
             raise DeferError(WAIT_FOR_PROFILE_S)  # not set up yet: keep the job, try again later
+        if self.ai is not None and self._ai_paused():
+            raise DeferError(CHAT_FIRST_WAIT_S)  # the user is waiting on a reply: chat goes first
         job = self.jobs.get(task.key)
         if job is None:
             raise PermanentError(f"job {task.key} no longer exists")
