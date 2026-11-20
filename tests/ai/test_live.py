@@ -26,17 +26,23 @@ async def test_configured_model_scores_a_good_and_a_bad_fit(tmp_path: Path) -> N
     if not endpoints:
         pytest.skip("no AI model configured in .env")
     conn = connect(tmp_path / "live.db")
-    scorer = LlmMatchScorer(AiClient(endpoints, AiStore(conn)))
+    client = AiClient(endpoints, AiStore(conn))
+    scorer = LlmMatchScorer(client)
     profile = make_profile().model_copy(
         update={"resume_text": "4 years building Python and Go payment APIs on AWS."}
     )
-
-    good = await scorer.score(make_job(), profile)
-    bad = await scorer.score(
-        make_job(title="Senior iOS Engineer", description="Swift, SwiftUI, 8 years of iOS."), profile
-    )
-    conn.close()
-    assert good is not None
+    try:
+        good = await scorer.score(make_job(), profile)
+        if good is None:
+            pytest.skip(
+                f"no configured AI model answered ({', '.join(e.label for e in endpoints)}); is it running?"
+            )
+        bad = await scorer.score(
+            make_job(title="Senior iOS Engineer", description="Swift, SwiftUI, 8 years of iOS."), profile
+        )
+    finally:
+        await client.aclose()
+        conn.close()
     assert bad is not None
     assert good.score > bad.score
     assert good.reasons
