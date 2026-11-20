@@ -31,6 +31,12 @@ DIGEST_SIZE = 10
 DETAILS_CHARS = 1500
 _POLL_ERROR_WAIT_S = 5.0
 
+PAIR_HOW = (
+    "👋 Hi! To link this chat to your Sarthi, run this on your computer:\n\n"
+    "<code>uv run sarthi pair</code>\n\nthen send me the code it shows."
+)
+PAIR_FAILED = "That code didn't work (wrong or expired). Run <code>uv run sarthi pair</code> for a new one."
+
 HELP = (
     "<b>Sarthi</b> finds jobs that fit you and messages you here.\n\n"
     "/today – best matches you have not seen yet\n"
@@ -146,13 +152,11 @@ class TelegramBot:
         command, _, argument = text.partition(" ")
         command = command.split("@", 1)[0].lower()
 
-        if command == "/start" and chat_id != owner:
-            if argument and redeem(self.chats, argument, chat_id, self._clock()):
-                await self.api.send_message(chat_id, "✅ Paired. I'll send your job matches here.\n\n" + HELP)
-            elif argument:
-                await self.api.send_message(
-                    chat_id, "Pairing failed. Run <code>sarthi pair</code> for a new code."
-                )
+        if owner is None:
+            await self._pair(chat_id, argument if command == "/start" else text)
+            return
+        if command == "/start" and argument and chat_id != owner:
+            await self._pair(chat_id, argument, quiet=True)  # moving to a new chat after `sarthi pair`
             return
         if chat_id != owner:
             return  # strangers get no reply
@@ -174,6 +178,19 @@ class TelegramBot:
             await self._send_unseen(chat_id, quiet_if_none=False)
         else:
             await self.api.send_message(chat_id, "I didn't understand that. /help lists what I can do.")
+
+    async def _pair(self, chat_id: int, code: str, *, quiet: bool = False) -> None:
+        """Try ``code``; before anyone is paired, explain how to pair instead of staying silent.
+
+        ``quiet`` (after pairing): a failed attempt gets no reply, so strangers learn nothing.
+        """
+        if code and not code.startswith("/"):
+            if redeem(self.chats, code, chat_id, self._clock()):
+                await self.api.send_message(chat_id, "✅ Paired. I'll send your job matches here.\n\n" + HELP)
+            elif not quiet:
+                await self.api.send_message(chat_id, PAIR_FAILED)
+        elif owner_chat(self.chats) is None:
+            await self.api.send_message(chat_id, PAIR_HOW)
 
     async def _on_button(self, callback: dict[str, Any]) -> None:
         callback_id = str(callback.get("id", ""))

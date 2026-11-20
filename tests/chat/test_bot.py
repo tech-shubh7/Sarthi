@@ -92,14 +92,46 @@ def saved_job(bot: TelegramBot, score: int = 80, decision: str = "alert", n: int
     return job_id
 
 
-async def test_pairing_through_start(
-    bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock
+async def test_before_pairing_everyone_gets_instructions(
+    bot: TelegramBot, api: FakeApi, chats: ChatStore
+) -> None:
+    for text in ("/start", "/help", "/status"):
+        await bot.handle_update(message(OWNER, text))
+    assert all("uv run sarthi pair" in reply for reply in api.texts())
+    assert len(api.sent) == 3
+
+
+@pytest.mark.parametrize("form", ["/start {code}", "{code}", "  {code} "])
+async def test_pairing_with_or_without_start(
+    bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock, form: str
 ) -> None:
     code = new_code(chats, clock())
-    await bot.handle_update(message(OWNER, f"/start {code}"))
-    assert "Paired" in api.texts()[0]
+    await bot.handle_update(message(OWNER, "/start"))  # the Start button sends no code
+    await bot.handle_update(message(OWNER, form.format(code=code.lower())))
+    assert "Paired" in api.texts()[-1]
+    await bot.handle_update(message(OWNER, "/help"))
+    assert "/today" in api.texts()[-1]
+
+
+async def test_wrong_code_explains_before_pairing_but_is_silent_after(
+    bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock
+) -> None:
+    new_code(chats, clock())
+    await bot.handle_update(message(STRANGER, "NOTTHECODE00"))
+    assert "didn't work" in api.texts()[-1]
+    pair(bot, chats, clock)
+    sent = len(api.sent)
     await bot.handle_update(message(STRANGER, "/start NOTTHECODE00"))
-    assert "Pairing failed" in api.texts()[1]
+    assert len(api.sent) == sent
+
+
+async def test_running_pair_again_moves_sarthi_to_a_new_chat(
+    bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock
+) -> None:
+    pair(bot, chats, clock)
+    code = new_code(chats, clock())
+    await bot.handle_update(message(222, f"/start {code}"))
+    assert chats.get_state("telegram.owner_chat_id") == "222"
 
 
 async def test_strangers_get_no_reply(
