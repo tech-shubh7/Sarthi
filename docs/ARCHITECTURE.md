@@ -62,6 +62,11 @@ Everything is a task in the SQLite queue, so a crash loses nothing and each step
 
 Common plug-in shape (JobRadar's design): every source is one module with `fetch() -> list[RawJob]`.
 
+**Implemented (MVP):** `sources/ats.py` (ATS-Scrapers, one source per company board), `sources/boards.py` (JobSpy
+public `scrape_jobs`; Naukri added for India, Seek for Australia), `sources/ingest.py` (store, quiet first-run
+baseline, alert-priority `match` tasks). ATS-Scrapers is installed **without** its `[scrapers]` extra: that extra
+downloads a stealth Chromium binary; without it ~93 of 99 hiring systems work and Meta/Tesla boards are unavailable.
+
 **+1 (nobody does this):**
 - **Smart polling:** each source gets its own speed. Telegram live, company job systems every 5–30 min, LinkedIn/Naukri slower to avoid blocks. Sources that often post new jobs get checked more.
 - **Focus list:** from 173k companies, check often only the ones matching the user's roles + countries; rest covered by Freehire + board searches.

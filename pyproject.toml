@@ -7,8 +7,10 @@ license = "AGPL-3.0-only"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*"]
 requires-python = ">=3.12"
 dependencies = [
+    "ats-scrapers>=0.4,<0.5",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "python-jobspy>=1.4.1,<1.5",
     "typer>=0.12",
 ]
 
@@ -25,6 +27,7 @@ dev = [
     "pip-audit>=2.7",
     "pre-commit>=4.0",
     "pytest-asyncio>=0.24",
+    "pandas-stubs>=3.1.0.261029",
 ]
 
 [build-system]
@@ -81,7 +84,7 @@ plugins = ["pydantic.mypy"]
 # ---------- Tests ----------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --cov=sarthi --cov-report=term-missing --cov-fail-under=80"
+addopts = "-ra --strict-markers -m \"not live\" --cov=sarthi --cov-report=term-missing --cov-fail-under=80"
 markers = ["live: hits real external services (skipped by default, run with -m live)"]
 asyncio_mode = "auto"
 filterwarnings = ["error::ResourceWarning"]

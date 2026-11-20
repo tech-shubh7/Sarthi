@@ -53,6 +53,17 @@ MIGRATIONS: tuple[str, ...] = (
     ) STRICT;
     CREATE INDEX task_ready ON task (status, priority DESC, run_after);
     """,
+    # 2: per-source state: first-run baseline (no alert flood) and health
+    """
+    CREATE TABLE source_state (
+        name                 TEXT PRIMARY KEY,
+        baseline_done        INTEGER NOT NULL DEFAULT 0, -- first successful read only records what is there
+        last_checked_at      TEXT,
+        last_ok_at           TEXT,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_error           TEXT
+    ) STRICT;
+    """,
 )
 
 

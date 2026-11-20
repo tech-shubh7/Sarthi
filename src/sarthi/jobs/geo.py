@@ -1,7 +1,8 @@
 # Adapted from StillOpen (Apache-2.0), tracker/services/geo.py @ ce7fb22
 # Copyright 2026 Zahid Hasan and the StillOpen contributors. Modifications (c) Sarthi contributors.
 # Changes: removed Django-bound fill_details(); added type annotations; split resolve_place() helper;
-# added more Indian cities.
+# added more Indian cities; location_codes() resolves 'Place, XX' endings by place first (was: any
+# state-like code meant US, so 'Toronto, CA' became US+CA); added Indianapolis and the Zürich spelling.
 """Places and posting details, with no external service.
 
 resolve_place(text)  ->  set of ISO country codes, {"*"} for "anywhere", or None when the place is not recognised.
@@ -13,8 +14,10 @@ reported as such rather than guessed. Detection only suggests: the person can al
 
 import re
 
+from sarthi.jobs.countries import ALL as _ISO_NAMES
 from sarthi.jobs.countries import name as _iso_country_name
 
+_ISO_CODES = frozenset(_ISO_NAMES)
 _Place = tuple[re.Pattern[str], str, str, str]
 _Hit = tuple[str, str, int]
 
@@ -268,7 +271,7 @@ CITIES = {
     "IT": ["Milan", "Rome"],
     "NL": ["Amsterdam", "Rotterdam", "Eindhoven", "The Hague"],
     "BE": ["Brussels"],
-    "CH": ["Zurich", "Geneva", "Basel"],
+    "CH": ["Zurich", "Zürich", "Geneva", "Basel"],
     "AT": ["Vienna"],
     "SE": ["Stockholm", "Gothenburg"],
     "NO": ["Oslo"],
@@ -293,6 +296,7 @@ CITIES = {
     "GH": ["Accra"],
     "RW": ["Kigali"],
     "US": [
+        "Indianapolis",
         "New York",
         "San Francisco",
         "Seattle",
@@ -489,7 +493,33 @@ def _location(text: str) -> tuple[str, str]:
 
 
 _US_STATES = "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC"
-_US_STATE_SUFFIX = re.compile(r"(?:^|[,(]\s*|\s)[A-Z][A-Za-z.' -]+,\s*(?:" + _US_STATES + r")\b(?![a-z])")
+_US_STATE_CODES = frozenset(_US_STATES.split("|"))
+_ALPHA3 = {
+    "USA": "US", "CAN": "CA", "GBR": "GB", "IND": "IN", "DEU": "DE", "FRA": "FR", "AUS": "AU", "NLD": "NL",
+    "IRL": "IE", "SGP": "SG", "CHE": "CH", "ESP": "ES", "ITA": "IT", "BRA": "BR", "MEX": "MX", "JPN": "JP",
+    "POL": "PL", "SWE": "SE", "ARE": "AE", "ISR": "IL", "NZL": "NZ", "ZAF": "ZA", "PRT": "PT", "BEL": "BE",
+}  # fmt: skip
+_WORK_MODE_ONLY = re.compile(r"(?i)^\s*(?:remote|hybrid|on-?site)\s*$")
+
+
+def _code_after_comma(segment: str) -> set[str]:
+    """Countries for a 'Place, XX' / 'Place, XXX' ending; empty when the ending is not a code.
+
+    A known place before the comma wins ('Toronto, CA' is Canada); otherwise a US state code means the US
+    ('Palo Alto, CA'), unless only a work mode precedes it ('Remote, DE' is Germany); otherwise an ISO code.
+    """
+    head, comma, tail = segment.rpartition(",")
+    code = tail.strip(" )]")
+    if not comma or not re.fullmatch(r"[A-Z]{2,3}", code):
+        return set()
+    if len(code) == 3:  # noqa: PLR2004  (ISO 3166-1 alpha-3)
+        return {_ALPHA3[code]} if code in _ALPHA3 else set()
+    place = resolve_place(head)
+    if place and "*" not in place:
+        return set(place)
+    if code in _US_STATE_CODES and not _WORK_MODE_ONLY.match(head):
+        return {"US"}
+    return {code} if code in _ISO_CODES else set()
 
 
 _US_STATE_NAMES = frozenset(
@@ -561,8 +591,8 @@ def location_codes(location: str) -> set[str]:
     if not location:
         return set()
     codes: set[str] = set()
-    if _US_STATE_SUFFIX.search(location):
-        codes.add("US")
+    for segment in re.split(r"[;|/]", location):
+        codes |= _code_after_comma(segment)
     parts = [p for p in re.split(r"[;|/]|\s[-\u2013\u2014]\s|,|\band\b", location) if p.strip()]
     for part in [location, *parts]:
         cleaned = re.sub(r"[()\[\]]|\bremote\b|\bhybrid\b|\bon-?site\b", " ", part, flags=re.I)

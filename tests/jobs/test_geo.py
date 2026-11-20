@@ -153,6 +153,16 @@ def test_a_vague_posting_yields_nothing_rather_than_a_guess() -> None:
         ("Anywhere in the World", set()),
         ("Time zone: CET (+/- 3 hours)", set()),
         ("Zug (remote)", set()),
+        # Sarthi: real-data cases found in an end-to-end run (2026-11-20)
+        ("Toronto, CA", {"CA"}),
+        ("Zürich, CH", {"CH"}),
+        ("Ontario, CAN", {"CA"}),
+        ("Remote, DE", {"DE"}),
+        ("Indianapolis, IN", {"US"}),
+        ("San Francisco, CA | Seattle, WA", {"US"}),
+        ("London, UK; New York, NY", {"GB", "US"}),
+        ("Pune, IN", {"IN"}),
+        ("Somewhere, ZZ", set()),
     ],
 )
 def test_location_codes(text: str, expected: set[str]) -> None:
