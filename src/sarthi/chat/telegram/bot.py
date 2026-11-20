@@ -321,10 +321,14 @@ class TelegramBot:
             await self.api.edit_buttons(chat_id, message_id, None)
             await self.setup.undo(chat_id)
             return
+        if data.startswith("setup:pick:") and self.setup is not None:
+            await self.api.answer_callback(callback_id)
+            await self.setup.on_button(chat_id, data, message_id)  # the picker updates its own buttons
+            return
         if data.startswith("setup:") and self.setup is not None:
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)  # one tap per question
-            await self.setup.on_button(chat_id, data)
+            await self.setup.on_button(chat_id, data, message_id)
             return
         action, _, job_id = data.partition(":")
         if action == "more":

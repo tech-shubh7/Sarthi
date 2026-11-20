@@ -169,3 +169,20 @@ async def test_local_models_get_a_longer_timeout(store: AiStore, clock: FakeCloc
     await local.structured(PROMPT, Answer)
     await cloud.structured(PROMPT, Answer, job_posting="other input")
     assert timeouts == [600.0, 90.0]
+
+
+async def test_a_short_rate_limit_is_waited_out_once(store: AiStore, clock: FakeClock) -> None:
+    slow_down = httpx.Response(429, headers={"retry-after": "0"})
+    providers = FakeProviders({"gemini.test": [slow_down, reply('{"greeting": "after wait", "count": 1}')]})
+    result = await client(store, providers, [GEMINI, OLLAMA], clock).structured(PROMPT, Answer)
+    assert result.greeting == "after wait"
+    assert [r.url.host for r in providers.requests] == ["gemini.test", "gemini.test"]
+
+
+async def test_a_long_rate_limit_moves_on_to_the_next_model(store: AiStore, clock: FakeClock) -> None:
+    long_wait = httpx.Response(429, headers={"retry-after": "3600"})
+    providers = FakeProviders(
+        {"gemini.test": [long_wait], "localhost": [reply('{"greeting": "local", "count": 1}')]}
+    )
+    result = await client(store, providers, [GEMINI, OLLAMA], clock).structured(PROMPT, Answer)
+    assert result.greeting == "local"

@@ -44,7 +44,6 @@ from sarthi.profile.answers import (
     parse_countries,
     parse_remote_text,
     parse_years,
-    reconcile,
 )
 from sarthi.profile.models import Preferences, Profile, RemotePreference
 from sarthi.profile.repair import clean_list, repair
@@ -139,6 +138,30 @@ VISA_ANYWHERE = (
     "(e.g. Europe for an EU passport)."
 )
 _LIST_FIELDS = {Field.ROLES, Field.SKILLS}
+_PICK_FIELDS = {"roles", "skills"}
+PICK_HINT = (
+    "\n\nTap any you <b>don't</b> want (tap again to bring it back), then <b>✔️ Done</b>. "
+    "Or just type changes, e.g. <i>remove ML engineer, add Data Engineer</i>."
+)
+_PICK_PER_ROW = 2
+
+
+def _pick_buttons(items: list[str], off: set[int]) -> Any:
+    """One button per item (✅ kept, ❌ removed), two per row, then Done."""
+    cells = [(("❌ " if i in off else "✅ ") + item[:40], f"setup:pick:{i}") for i, item in enumerate(items)]
+    rows = [cells[i : i + _PICK_PER_ROW] for i in range(0, len(cells), _PICK_PER_ROW)]
+    return buttons(*rows, [("✔️ Done", "setup:pick:done")])
+
+
+def _picked(state: dict[str, Any], key: str) -> list[str]:
+    """Items still selected in the picker for ``key`` (empty when no picker is open for it)."""
+    pick = state.get("pick")
+    if not pick or pick["field"] != key:
+        return []
+    off = set(pick["off"])
+    return [item for i, item in enumerate(pick["items"]) if i not in off]
+
+
 _COUNTRY_FIELDS = {Field.COUNTRIES, Field.VISA_FREE}
 
 
@@ -436,7 +459,12 @@ class SetupFlow:
         if error:
             await self.api.send_message(chat_id, error)
             return
+        await self._accepted(chat_id, state, field)
+
+    async def _accepted(self, chat_id: int, state: dict[str, Any], field: Field) -> None:
+        """Show how the answer was understood (with Change) and move on."""
         state["answered"] = sorted({*state.get("answered", []), field.value})
+        state.pop("pick", None)
         change = buttons([("✏️ Change", f"setup:back:{field.value}")])
         await self.api.send_message(chat_id, understood(field, state["draft"]), change)
         await self._advance(chat_id, state)
@@ -488,12 +516,14 @@ class SetupFlow:
         self._rematch()
         await self.api.send_message(chat_id, "↩️ Undone. /profile shows your profile.")
 
-    async def on_button(self, chat_id: int, data: str) -> None:
-        """Setup buttons: ``setup:remote:<v>``, ``setup:save``, ``setup:restart``, ``setup:back:<step>``."""
+    async def on_button(self, chat_id: int, data: str, message_id: int = 0) -> None:
+        """Setup buttons: remote choice, save, restart, back, and the tap-to-remove list picker."""
         state = self._state()
         if state is None:
             return
-        if data.startswith("setup:remote:") and state["step"] == Step.REMOTE:
+        if data.startswith("setup:pick:") and state.get("pick"):
+            await self._on_pick(chat_id, state, data.removeprefix("setup:pick:"), message_id)
+        elif data.startswith("setup:remote:") and state["step"] == Step.REMOTE:
             await self.on_text(chat_id, data.removeprefix("setup:remote:"))
         elif data == "setup:save" and state["step"] == Step.CONFIRM:
             await self._finish(chat_id, state)
@@ -501,6 +531,27 @@ class SetupFlow:
             await self.start(chat_id)
         elif data.startswith("setup:back:"):
             await self._go_back(chat_id, state, data.removeprefix("setup:back:"))
+
+    async def _on_pick(self, chat_id: int, state: dict[str, Any], choice: str, message_id: int) -> None:
+        pick = state["pick"]
+        if choice == "done":
+            field = Field(pick["field"])
+            chosen = _picked(state, field.value)
+            if field is Field.ROLES and not chosen:
+                await self.api.send_message(
+                    chat_id, "Keep at least one job title (tap it again), or type one."
+                )
+                return
+            state["draft"][field.value] = chosen
+            await self.api.edit_buttons(chat_id, message_id, None)
+            await self._accepted(chat_id, state, field)
+            return
+        if not choice.isdigit() or int(choice) >= len(pick["items"]):
+            return
+        off = set(pick["off"]) ^ {int(choice)}  # tap again to bring it back
+        pick["off"] = sorted(off)
+        self._save_state(state)
+        await self.api.edit_buttons(chat_id, message_id, _pick_buttons(pick["items"], off))
 
     # ---- reading answers (each returns an error message, or None when the draft was updated) ----------
 
@@ -520,13 +571,16 @@ class SetupFlow:
     async def _edited_list(
         self, chat_id: int, question: str, current: list[str], text: str
     ) -> list[str] | str:
-        """The list after an answer: rules for simple answers, the AI checked by rules for free-form ones."""
+        """The list after an answer: rules for plain answers ("ok", a plain list), the AI for anything else.
+
+        The AI says which current items to keep and what to add; code only checks the new items are names.
+        The rules are used when no AI model answers.
+        """
         if not is_simple_answer(text):
             if self.ai.available:
                 await self.api.send_message(chat_id, "🤔 Understanding your answer…")
             items = await interpret_list(self.ai, question, current, text)
             if items is not None:
-                items = reconcile(current, items, text)  # rules catch what a small model drops or misses
                 known = {item.lower() for item in current}
                 added = [item for item in items if item.lower() not in known]
                 if not any(looks_like_instruction(item) or clean_item(item) is None for item in added):
@@ -536,7 +590,7 @@ class SetupFlow:
 
     async def _apply_list(self, chat_id: int, state: dict[str, Any], field: Field, text: str) -> str | None:
         key = field.value
-        current = list(state["draft"].get(key) or state["suggest"].get(key) or [])
+        current = _picked(state, key) or list(state["draft"].get(key) or state["suggest"].get(key) or [])
         if is_from_resume(text):  # "take skills from my resume": read the resume again for this list
             return await self._list_from_resume(chat_id, state, field)
         result = await self._edited_list(chat_id, QUESTIONS[Step(key)], current, text)
@@ -633,6 +687,15 @@ class SetupFlow:
             choices = [[(label, f"setup:remote:{value.value}")] for value, label in _REMOTE_LABELS.items()]
             await self.api.send_message(chat_id, QUESTIONS[step], buttons(*choices))
             return
+        if step.value in _PICK_FIELDS and (
+            items := list(state["draft"].get(step.value) or state["suggest"].get(step.value) or [])
+        ):
+            state["pick"] = {"field": step.value, "items": items, "off": []}
+            self._save_state(state)
+            await self.api.send_message(chat_id, QUESTIONS[step] + PICK_HINT, _pick_buttons(items, set()))
+            return
+        state.pop("pick", None)
+        self._save_state(state)
         home = escape(country_name(state["draft"].get("home", "")))
         question = QUESTIONS[step].format(home=home)
         await self.api.send_message(chat_id, question + self._suggestion(step, state["suggest"]))

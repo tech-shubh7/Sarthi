@@ -66,6 +66,20 @@ def _parse_json(content: str) -> Any:
         raise
 
 
+_TOO_MANY_REQUESTS = 429
+MAX_RETRY_WAIT_S = 10.0
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """Seconds a rate-limited provider asks us to wait, when short enough to wait for; else None."""
+    raw = response.headers.get("retry-after", "")
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return None
+    return seconds if 0 <= seconds <= MAX_RETRY_WAIT_S else None
+
+
 class _CallFailedError(Exception):
     """One endpoint failed; try the next."""
 
@@ -178,6 +192,19 @@ class AiClient:
                 await asyncio.sleep(self._next_call - now)
             self._next_call = max(now, self._next_call) + self._interval
 
+    async def _post(
+        self, endpoint: Endpoint, body: dict[str, Any], headers: dict[str, str]
+    ) -> httpx.Response:
+        try:
+            return await self._http.post(
+                f"{endpoint.base_url}/chat/completions",
+                json=body,
+                headers=headers,
+                timeout=LOCAL_TIMEOUT_S if endpoint.free else REQUEST_TIMEOUT_S,
+            )
+        except httpx.HTTPError as error:
+            raise _CallFailedError(type(error).__name__) from error
+
     async def _call(self, endpoint: Endpoint, messages: list[dict[str, str]]) -> str:
         await self._pace()
         headers = (
@@ -189,15 +216,10 @@ class AiClient:
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }
-        try:
-            response = await self._http.post(
-                f"{endpoint.base_url}/chat/completions",
-                json=body,
-                headers=headers,
-                timeout=LOCAL_TIMEOUT_S if endpoint.free else REQUEST_TIMEOUT_S,
-            )
-        except httpx.HTTPError as error:
-            raise _CallFailedError(type(error).__name__) from error
+        response = await self._post(endpoint, body, headers)
+        if response.status_code == _TOO_MANY_REQUESTS and (wait := _retry_after(response)) is not None:
+            await asyncio.sleep(wait)  # a short "slow down" from a fast provider: worth one wait
+            response = await self._post(endpoint, body, headers)
         if response.status_code != _HTTP_OK:
             kind = (
                 "temporary"

@@ -141,10 +141,12 @@ time; `app.py` is the composition root.
 `profile/resume.py`: size cap, type from bytes, no XML parser), AI suggestions from the scrubbed resume
 (`ai/resume.py`), questions parsed by `profile/answers.py` (countries, remote, years, salary such as "12 LPA"),
 summary with Save; saving re-matches jobs from the last 7 days. `/profile`, `/cancel`.
-Answers are natural language: plain lists and "ok" use fast rules; anything else ("remove fintech, add ML
-engineer instead") goes to the AI (`ai/answers.py`), whose list is then checked by rules (`reconcile`: items the
-user never mentioned come back, explicit removals always apply), because a 3B local model drops and misses
-items. Every answer is echoed back ("✓ Roles: …") with a Change button.
+Lists (roles, skills) follow the usual chatbot pattern: **tap-to-remove buttons** for suggestions
+(✅/❌ per item, then Done), and free text for edits. Plain lists and "ok" use fast rules; anything else goes to
+the AI (`ai/answers.py`), which must answer which *current items* to keep (exact text, so "ML engineer" can
+match "Machine Learning Engineer") and what to add; code builds the list and checks new items are names.
+Rules never override the AI (an earlier rule "safety net" undid correct AI answers). Rules alone are used only
+when no AI answers. Groq first (about 2 s, 11/11 real phrasings), local model as fallback. Every answeris echoed back ("✓ Roles: …") with a Change button.
 **Conversation (MVP):** every non-command message goes through `chat/inbox.py` (quick bursts grouped into one;
 one batch at a time with a single "still reading" note; polling never waits) and `chat/understand.py`, which
 decides answer / correction / question / small talk / off-topic (rules first, `ai/intent.py` for unclear

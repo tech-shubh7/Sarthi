@@ -387,39 +387,6 @@ def looks_like_instruction(item: str) -> bool:
     return bool(_INSTRUCTION_WORDS.search(item))
 
 
-_GENERIC_WORDS = frozenset(
-    {"developer", "engineer", "engineering", "application", "applications", "senior", "junior", "lead",
-     "the", "and", "role", "roles", "job", "manager", "specialist", "associate"}
-)  # fmt: skip
-_MIN_DISTINCTIVE = 3
-_RESTRICT = re.compile(r"\b(?:only|just|new\s+list|instead\s+of\s+(?:all|these|everything))\b", re.IGNORECASE)
-
-
-def _mentioned(item: str, text: str) -> bool:
-    """True when a distinctive word of ``item`` is in ``text`` ("fintech" for "Fintech App Developer")."""
-    said = set(_WORD.findall(text.lower()))
-    words = (w.removesuffix(".js") for w in _WORD.findall(item.lower()))
-    distinctive = [w for w in words if len(w) >= _MIN_DISTINCTIVE and w not in _GENERIC_WORDS]
-    return item.lower() in text.lower() or any(w in said or f"{w}.js" in said for w in distinctive)
-
-
-def reconcile(current: list[str], ai_items: list[str], text: str) -> list[str]:
-    """Check an AI-edited list against the answer, using rules that are reliable where small models are not.
-
-    - Items the AI dropped that the user never mentioned come back (unless they said "only" or "just").
-    - Items the rules clearly see removed ("except fintech") are removed even if the AI kept them.
-    """
-    result = list(ai_items)
-    kept = {item.lower() for item in result}
-    if not _RESTRICT.search(text):
-        for position, item in enumerate(current):
-            if item.lower() not in kept and not _mentioned(item, text):
-                result.insert(min(position, len(result)), item)
-                kept.add(item.lower())
-    removed = {item.lower() for item in edit_list(text, current).removed}
-    return [item for item in result if item.lower() not in removed]
-
-
 _SALARY_IN_TEXT = re.compile(
     rf"(?:(?<![a-z])(?:{_CURRENCY_CODES})\s*|[₹$£€]\s*)?\d+(?:[.,]\d+)*\s*"
     rf"(?:crores?|cr|lakhs?|lacs?|lpa|k|l)?\b\.?\s*(?:(?:{_CURRENCY_CODES})\b|[₹$£€])?\s*"

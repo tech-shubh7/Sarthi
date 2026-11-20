@@ -8,7 +8,7 @@ from sarthi.ai.client import AiClient
 from sarthi.ai.providers import Endpoint
 from sarthi.ai.resume import ResumeFacts
 from sarthi.chat import setup as setup_flow
-from sarthi.chat.setup import STATE_KEY, SetupFlow
+from sarthi.chat.setup import STATE_KEY, SetupFlow, Step
 from sarthi.chat.telegram.bot import TelegramBot
 from sarthi.db.ai_store import AiStore
 from sarthi.db.chat import ChatStore
@@ -94,6 +94,13 @@ def ai_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(setup_flow, "read_resume", fake_read)
 
 
+def picker(api: FakeFiles) -> list[str]:
+    """Button labels on the last message."""
+    markup = api.sent[-1][2]
+    assert markup is not None
+    return [button["text"] for row in markup["inline_keyboard"] for button in row]
+
+
 async def answer(bot: TelegramBot, *texts: str) -> None:
     for text in texts:
         await bot.handle_update(message(OWNER, text))
@@ -107,7 +114,7 @@ async def test_full_setup_saves_a_profile_and_rematches_recent_jobs(
     await answer(bot, "/setup")
     assert "send me your <b>resume</b>" in api.texts()[-1]
     await bot.handle_update(document())
-    assert "Suggested: <b>Backend Engineer</b>" in api.texts()[-1]
+    assert picker(api) == ["✅ Backend Engineer", "✔️ Done"]
     await answer(bot, "ok", "India", "UK, UAE", "none")
     assert api.sent[-1][2] is not None  # remote question has buttons
     await bot.handle_update(tap(OWNER, "setup:remote:ok"))
@@ -211,7 +218,7 @@ async def test_cancel_profile_and_restart(
     await answer(bot, "/setup")
     assert "keep the one you sent before" in api.texts()[-1]
     await answer(bot, "skip")
-    assert "Suggested: <b>Backend Engineer</b>" in api.texts()[-1]  # current values become suggestions
+    assert picker(api) == ["✅ Backend Engineer", "✔️ Done"]  # current values become the picker
     await bot.handle_update(tap(OWNER, "setup:restart"))
     assert "send me your <b>resume</b>" in api.texts()[-1]
 
@@ -235,7 +242,7 @@ async def test_editing_the_suggested_roles_in_plain_words(
     api.files["f1"] = RESUME
     await answer(bot, "/setup")
     await bot.handle_update(document())
-    assert "ok, remove X, add Y" in api.texts()[-1]
+    assert "remove ML engineer, add Data Engineer" in api.texts()[-1]
     await answer(bot, "remove frontend developer intern, other okay", "India", "none", "none")
     await bot.handle_update(tap(OWNER, "setup:remote:only"))
     await answer(bot, "ok", "ok, add FastAPI", "skip")
@@ -396,7 +403,7 @@ async def test_setup_never_suggests_junk_saved_by_older_versions(
     )
     await answer(bot, "/setup", "skip")
     assert "Expect Fintech" not in api.texts()[-1]
-    assert "Suggested: <b>Backend Engineer</b>" in api.texts()[-1]
+    assert picker(api) == ["✅ Backend Engineer", "✔️ Done"]  # junk role dropped
     await answer(bot, "ok", "India", "none", "none")
     await bot.handle_update(tap(OWNER, "setup:remote:ok"))
     await answer(bot, "1")
@@ -432,3 +439,83 @@ async def test_take_from_resume_without_a_resume_says_so(
     await bot.handle_update(tap(OWNER, "setup:remote:ok"))
     await answer(bot, "1", "take skills from my resume")
     assert "I don't have your resume yet" in api.texts()[-1]
+
+
+async def test_tap_to_remove_picker(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_read(client: AiClient, text: str, today: object = None) -> ResumeFacts:
+        return ResumeFacts(
+            skills=["Python"],
+            years_experience=1.0,
+            roles=["Backend Engineer", "Machine Learning Engineer", "AI Engineer"],
+        )
+
+    monkeypatch.setattr(setup_flow, "read_resume", fake_read)
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    assert picker(api) == ["✅ Backend Engineer", "✅ Machine Learning Engineer", "✅ AI Engineer", "✔️ Done"]
+    await bot.handle_update(tap(OWNER, "setup:pick:1"))
+    edited = api.edits[-1][2]
+    assert edited is not None
+    assert [b["text"] for row in edited["inline_keyboard"] for b in row][1] == "❌ Machine Learning Engineer"
+    await bot.handle_update(tap(OWNER, "setup:pick:2"))
+    await bot.handle_update(tap(OWNER, "setup:pick:2"))  # tapped again: back in
+    await bot.handle_update(tap(OWNER, "setup:pick:99"))  # out of range: ignored
+    await bot.handle_update(tap(OWNER, "setup:pick:done"))
+    assert api.texts()[-2] == "✓ Roles: <b>Backend Engineer, AI Engineer</b>"
+
+
+async def test_picker_keeps_at_least_one_role(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, ai_reads: None
+) -> None:
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await bot.handle_update(tap(OWNER, "setup:pick:0"))
+    await bot.handle_update(tap(OWNER, "setup:pick:done"))
+    assert "Keep at least one job title" in api.texts()[-1]
+    assert flow.step is Step.ROLES
+
+
+async def test_typing_while_the_picker_is_open_edits_what_is_still_selected(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_read(client: AiClient, text: str, today: object = None) -> ResumeFacts:
+        return ResumeFacts(
+            skills=["Python"],
+            years_experience=1.0,
+            roles=["Backend Engineer", "Machine Learning Engineer", "AI Engineer"],
+        )
+
+    monkeypatch.setattr(setup_flow, "read_resume", fake_read)
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await bot.handle_update(tap(OWNER, "setup:pick:2"))  # AI Engineer off
+    await answer(bot, "ok, add Data Engineer")
+    assert api.texts()[-2] == "✓ Roles: <b>Backend Engineer, Machine Learning Engineer, Data Engineer</b>"
+
+
+async def test_remove_ml_engineer_stays_removed(
+    bot: TelegramBot, api: FakeFiles, flow: SetupFlow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_read(client: AiClient, text: str, today: object = None) -> ResumeFacts:
+        return ResumeFacts(
+            skills=["Python"],
+            years_experience=1.0,
+            roles=["Backend Engineer", "Machine Learning Engineer", "AI Engineer"],
+        )
+
+    async def ai_drops_it(client: AiClient, question: str, current: list[str], answer_text: str) -> list[str]:
+        return [item for item in current if item != "Machine Learning Engineer"]  # the AI understood "ML"
+
+    monkeypatch.setattr(setup_flow, "read_resume", fake_read)
+    monkeypatch.setattr(setup_flow, "interpret_list", ai_drops_it)
+    flow.ai = AiClient([LOCAL_AI], flow.ai._store)
+    api.files["f1"] = RESUME
+    await answer(bot, "/setup")
+    await bot.handle_update(document())
+    await answer(bot, "remove ML engineer")
+    assert api.texts()[-2] == "✓ Roles: <b>Backend Engineer, AI Engineer</b>"  # no rule puts it back

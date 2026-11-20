@@ -1,8 +1,10 @@
-"""Understanding a free-form setup answer with the AI ("remove fintech and node, add ML engineer instead").
+"""Understanding a free-form list edit with the AI ("remove ML engineer, add data engineer instead").
 
-Simple answers ("ok", a plain list) are handled by fast rules in ``sarthi.profile.answers``; this is for
-everything else. The model returns the complete new list; Sarthi shows it back to the user, who can change it
-with one tap, so a misreading never goes unnoticed.
+The model does not rewrite the list. It answers two things: which of the *current items* to keep (by exact
+text, so "ML engineer" can be matched to "Machine Learning Engineer" by the model, and nothing outside the
+list can be "kept"), and which new items to add. Code then builds the list from those answers and checks
+them; it never second-guesses the model with word patterns. Plain answers ("ok", a plain list) and the
+tap-to-remove buttons never reach this module.
 """
 
 from __future__ import annotations
@@ -21,34 +23,41 @@ MAX_ANSWER_CHARS = 1000
 Item = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 
 
-class ListAnswer(BaseModel):
+class ListEditAnswer(BaseModel):
     """The JSON shape the model must return."""
 
     model_config = ConfigDict(extra="ignore")
 
-    items: list[Item] = Field(default_factory=list, max_length=40)
+    keep: list[Item] = Field(default_factory=list, max_length=60)
+    add: list[Item] = Field(default_factory=list, max_length=40)
     unclear: bool = False
 
 
 EDIT_LIST_PROMPT = Prompt(
     name="edit_list",
-    version="1",
+    version="3",
     instructions="""
-The user is answering a question in a short setup chat. <current_list> is the list shown to them (it may be
-empty). <user_answer> is what they replied. Work out the complete list they want now.
+The user is answering a question in a short setup chat. <current_list> is the list shown to them, one item per
+line (it may be empty). <user_answer> is what they replied. Work out what they want.
 
-Rules:
-- Apply every change they ask for: remove items (even if named loosely, e.g. "fintech" or "the node one"),
-  add new items, replace items, keep only some, or give a whole new list.
-- Items they did not mention stay, unless they gave a whole new list or said to keep only some.
-- Fix obvious typos in what they wrote (e.g. "expect" meaning "except"), and write each item properly
-  capitalised, e.g. "ML Engineer".
-- Never put instruction words (remove, add, ok, keep, except) inside an item.
-- If you really cannot tell what they want, return the current list unchanged with "unclear": true.
-
-Return JSON: {"items": [...], "unclear": false}
+Return JSON with:
+- "keep": the items of <current_list> to keep, copied EXACTLY as written there. Drop every item they asked
+  to remove, even when they named it loosely, by abbreviation or with typos ("ML engineer" = "Machine
+  Learning Engineer", "the node one" = "Node.js Developer", "expect fintech" = except fintech). If they gave
+  a whole new list or said "only X", keep only what they asked for. An answer that is only a list of
+  names, with no word like add, also, keep, ok or remove, is a whole new list: keep nothing from
+  <current_list> unless it is named in it. Otherwise, items they did not mention stay.
+- "add": new items they asked for that are not already in <current_list>, written properly capitalised.
+  Never put instruction words (remove, add, ok, keep, except) in an item.
+- "unclear": true only if you really cannot tell what they want (then keep everything and add nothing).
 """,
 )
+
+
+def _exact(items: list[str], current: list[str]) -> list[str]:
+    """Kept items mapped back to the current list's own spelling; anything not in the list is dropped."""
+    wanted = {item.lower() for item in items}
+    return [item for item in current if item.lower() in wanted]
 
 
 async def interpret_list(
@@ -60,10 +69,10 @@ async def interpret_list(
     try:
         result = await client.structured(
             EDIT_LIST_PROMPT,
-            ListAnswer,
+            ListEditAnswer,
             urgent=True,
             question=question,
-            current_list="\n".join(f"- {item}" for item in current) or "(empty)",
+            current_list="\n".join(current) or "(empty)",
             user_answer=answer[:MAX_ANSWER_CHARS],
         )
     except AiError as error:
@@ -71,7 +80,11 @@ async def interpret_list(
         return None
     if result.unclear:
         return None
-    unique: dict[str, str] = {}
-    for item in result.items:
-        unique.setdefault(item.lower(), item)
-    return list(unique.values())
+    kept = _exact(result.keep, current)
+    known = {item.lower() for item in kept}
+    added: list[str] = []
+    for item in result.add:
+        if item.lower() not in known:
+            known.add(item.lower())
+            added.append(item)
+    return kept + added
