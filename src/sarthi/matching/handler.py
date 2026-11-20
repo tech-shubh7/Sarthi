@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from sarthi.ai.scoring import AiScorer
 from sarthi.clock import Clock, utcnow
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchRecord, MatchStore
 from sarthi.db.tasks import TaskRecord
 from sarthi.matching.decide import Decision, Thresholds
-from sarthi.matching.funnel import AiScorer, evaluate
+from sarthi.matching.funnel import evaluate
 from sarthi.profile.models import Profile
 from sarthi.queue.tasks import DeferError, PermanentError, Priority, TaskQueue
 
@@ -51,6 +52,9 @@ class Matcher:
         job = self.jobs.get(task.key)
         if job is None:
             raise PermanentError(f"job {task.key} no longer exists")
+        if full_text := self.jobs.full_text(task.key):
+            # model_copy skips validation; safe here because the value is a plain str.
+            job = job.model_copy(update={"description": full_text, "description_complete": True})
 
         result = await evaluate(job, profile, self._clock(), self.thresholds, self.ai)
         self.matches.save(

@@ -28,10 +28,22 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     telegram_bot_token: SecretStr | None = None
-    llm_fast_model: str = Field(default="ollama/llama3.1", description="LiteLLM model id for matching.")
-    llm_quality_model: str = Field(default="ollama/llama3.1", description="LiteLLM model id for writing.")
-    llm_api_key: SecretStr | None = None
-    llm_daily_budget_usd: float = Field(default=1.0, ge=0)
+
+    # AI models, tried in order until one answers: "<provider>/<model>", e.g. "gemini/gemini-2.5-flash".
+    # Providers: ollama, gemini, openai, anthropic, groq, openrouter, deepseek (see sarthi.ai.providers).
+    llm_fast_models: list[str] = Field(default=["ollama/llama3.1"], description="For matching.")
+    llm_quality_models: list[str] = Field(default=["ollama/llama3.1"], description="For writing.")
+    llm_daily_token_budget: int = Field(
+        default=500_000, ge=0, description="Paid providers only. 0: no limit."
+    )
+    llm_requests_per_minute: int = Field(default=30, ge=1)
+    ollama_url: str = "http://localhost:11434/v1"
+    gemini_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    groq_api_key: SecretStr | None = None
+    openrouter_api_key: SecretStr | None = None
+    deepseek_api_key: SecretStr | None = None
 
     @property
     def db_path(self) -> Path:

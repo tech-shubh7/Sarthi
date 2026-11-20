@@ -2,12 +2,13 @@ from typing import Any
 
 import pytest
 
+from sarthi.ai.scoring import AiScore
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
 from sarthi.db.tasks import TaskRecord
 from sarthi.jobs.models import JobPosting
 from sarthi.matching.decide import Decision, Thresholds, decide
-from sarthi.matching.funnel import AiScore, evaluate
+from sarthi.matching.funnel import evaluate
 from sarthi.matching.handler import ALERT_TASK, Matcher
 from sarthi.matching.rules import RulesResult
 from sarthi.profile.models import Profile
@@ -122,3 +123,15 @@ async def test_handler_waits_for_a_profile_and_fails_for_missing_jobs(matcher: A
         await matcher(None).handle(TaskRecord(1, "match", "any", {}, 1))
     with pytest.raises(PermanentError):
         await matcher(make_profile()).handle(TaskRecord(1, "match", "missing", {}, 1))
+
+
+async def test_handler_judges_the_full_text_not_the_snippet(matcher: Any, job_store: JobStore) -> None:
+    snippet_only = make_job(description="Build payment APIs.")
+    saved = job_store.save(
+        snippet_only, full_text="Build payment APIs. Requires 9+ years of backend experience."
+    )
+    m: Matcher = matcher(make_profile())
+    await m.handle(TaskRecord(1, "match", saved.job_id, {}, 1))
+    record = m.matches.get(saved.job_id)
+    assert record is not None
+    assert (record.decision, record.hidden_because) == ("hide", "Asks for 9+ years of experience")

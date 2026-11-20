@@ -38,7 +38,7 @@ Principles:
 ## 3. Architecture rules (enforced by import-linter)
 
 - **Pipeline steps never import each other:** `sources`, `matching`, `documents`, `answers`, `apply`, `tracking`, `chat` are independent. They talk only through `db` + `queue`.
-- **Layers import downwards only:** `cli` → steps → `queue / ai / profile` → `db` → `jobs` → `clock / config / log`.
+- **Layers import downwards only:** `cli` → steps → `queue / ai` → `profile` → `db` → `jobs` → `clock / config / log`.
 - **`jobs` is pure domain code:** the job model, geo, dedupe and normalisation. No network, no database.
 - **Only `db` writes SQL.** Parameterised queries only, never string-built SQL.
 - **Only `ai` talks to LLMs.**
@@ -67,7 +67,9 @@ Principles:
 
 ### Privacy
 - All data stays on the user's machine. No telemetry.
-- The AI gets a **compact profile** (skills, experience, preferences), never name/email/phone unless the step needs them (form filling).
+- The AI gets a **compact profile** (skills, experience, preferences). Resume text sent for matching has emails,
+  phone numbers and links removed (`sarthi.ai.privacy.scrub`); names cannot be removed reliably and are not.
+  Contact details are sent only where a step needs them (form filling).
 - The user can export and delete everything (`sarthi export`, `sarthi wipe`).
 
 ### Being a good citizen to job sites

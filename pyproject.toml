@@ -112,7 +112,8 @@ type = "layers"
 layers = [
     "sarthi.cli",
     "sarthi.sources | sarthi.matching | sarthi.documents | sarthi.answers | sarthi.apply | sarthi.tracking | sarthi.chat",
-    "sarthi.queue | sarthi.ai | sarthi.profile",
+    "sarthi.queue | sarthi.ai",
+    "sarthi.profile",
     "sarthi.db",
     "sarthi.jobs",
     "sarthi.clock | sarthi.config | sarthi.log",

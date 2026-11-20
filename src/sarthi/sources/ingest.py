@@ -80,7 +80,7 @@ class Ingestor:
         # model_copy skips validation; safe here because both values are plain str/bool of the right type.
         stored = filled.model_copy(update={"description": text, "description_complete": whole})
         try:
-            result = self.jobs.save(stored)
+            result = self.jobs.save(stored, full_text=filled.description)
         except ValueError as error:  # one unusable posting must not drop the batch
             log.debug("%s: skipped %s: %s", source_name, posting.url, error)
             return None

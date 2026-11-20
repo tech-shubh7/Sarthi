@@ -170,10 +170,16 @@ Plus, copied:
 - **+1:** IMAP option with app password (works with any email, not only Gmail OAuth); every reply → Telegram message.
 
 ### 2.14 AI layer [MVP]
-- **LiteLLM** (JobRadar, Resume-Matcher): one interface for Ollama, Gemini, OpenAI, Groq, Claude, OpenRouter.
+- **Plain `httpx` against OpenAI-compatible endpoints** (decided 2026-11-20, replacing LiteLLM): Ollama, Gemini,
+  OpenAI, Anthropic, Groq, OpenRouter and DeepSeek all speak that API, so one small client covers them with far
+  fewer dependencies in a tool that holds resumes and keys. Users list `<provider>/<model>` in the order to try.
 - **Copy ApplyPilot** fallback chain (provider down → next one).
 - **Copy JobRadar:** cache AI answers per job, daily AI budget, job text passed only as data (prompt-injection safe), only a compact profile sent (no name/email/phone).
 - Two model slots: **fast** (matching) and **quality** (resume, cover letter, forms).
+- Daily budget counts **tokens** of paid providers (local Ollama is exempt); full job text is stored compressed
+  (`job_text`, 12k chars) so the AI judges the whole posting, not the snippet.
+- **Implemented (MVP):** `ai/providers.py`, `ai/client.py`, `ai/prompts.py` (fenced untrusted data),
+  `ai/privacy.py` (emails, phones, links removed from the resume), `ai/scoring.py` (L2 of the match funnel).
 
 ### 2.15 Storage [MVP]
 One SQLite file. Tables: `sources`, `jobs`, `job_sources`, `matches`, `applications`, `answers` (Q&A bank), `accounts` (encrypted), `apply_paths`, `emails`, `tasks`, `llm_cache`, `events`.
@@ -268,7 +274,7 @@ sarthi/
 
 Full list in [STANDARDS.md](STANDARDS.md). The architecture-level ones, enforced by `import-linter` in CI:
 - Pipeline steps (`sources`, `matching`, `documents`, `answers`, `apply`, `tracking`, `chat`) never import each other; they talk only through `db` + `queue`.
-- Layers import downwards only: `cli` → steps → `queue / ai / profile` → `db` → `jobs` (pure job model, no I/O) → `clock / config / log`.
+- Layers import downwards only: `cli` → steps → `queue / ai` → `profile` → `db` → `jobs` (pure job model, no I/O) → `clock / config / log`.
 - Only `db` writes SQL; only `ai` calls LLMs.
 
 ## 7. Not yet proven

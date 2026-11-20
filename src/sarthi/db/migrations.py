@@ -80,6 +80,29 @@ MIGRATIONS: tuple[str, ...] = (
     ) STRICT;
     CREATE INDEX job_match_decision ON job_match (decision, matched_at);
     """,
+    # 4: full job text for the AI (compressed), AI answer cache, AI token usage for the daily budget
+    """
+    CREATE TABLE job_text (
+        job_id               TEXT PRIMARY KEY REFERENCES job (id) ON DELETE CASCADE,
+        text_zlib            BLOB NOT NULL
+    ) STRICT;
+
+    CREATE TABLE llm_cache (
+        key                  TEXT PRIMARY KEY,          -- sha256 of model, prompt version and input
+        value                TEXT NOT NULL,
+        created_at           TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE llm_usage (
+        id                   INTEGER PRIMARY KEY,
+        provider             TEXT NOT NULL,
+        model                TEXT NOT NULL,
+        prompt_tokens        INTEGER NOT NULL DEFAULT 0,
+        completion_tokens    INTEGER NOT NULL DEFAULT 0,
+        at                   TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX llm_usage_at ON llm_usage (at);
+    """,
 )
 
 

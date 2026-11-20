@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
 
+from sarthi.ai.scoring import AiScore, AiScorer
 from sarthi.jobs.models import JobPosting
 from sarthi.matching.decide import Decision, Outcome, Thresholds, decide
 from sarthi.matching.prefilter import prefilter
@@ -18,23 +18,6 @@ from sarthi.profile.models import Profile
 
 AI_WEIGHT = 0.6  # the AI's read of the full job counts more than keyword overlap
 MAX_REASONS = 4
-
-
-@dataclass(frozen=True, slots=True)
-class AiScore:
-    """The AI layer's verdict: 0-100 fit, how sure it is (0-1), and its reasons."""
-
-    score: int
-    confidence: float
-    reasons: tuple[str, ...] = ()
-
-
-class AiScorer(Protocol):
-    """Layer 2. Returns None when it cannot answer (no model set up, budget spent, provider down)."""
-
-    async def score(self, job: JobPosting, profile: Profile) -> AiScore | None:
-        """Judge how well ``job`` fits ``profile``."""
-        ...
 
 
 @dataclass(frozen=True, slots=True)

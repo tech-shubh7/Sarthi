@@ -1,0 +1,211 @@
+# Structured-call flow adapted from JobRadar (MIT), src/jobradar/llm.py (LLM.structured) @ fdd739b, and the
+# model fallback chain from ApplyPilot (AGPL-3.0), src/applypilot/llm.py @ ibarrajo fork.
+# Copyright (c) ThePlator; ApplyPilot contributors. Modifications (c) Sarthi contributors.
+# Changes: plain httpx against OpenAI-compatible endpoints instead of LiteLLM; user-ordered model chain;
+# token budget instead of a price table; local providers exempt from the budget.
+"""One way to ask an AI model for a validated JSON answer: cached, budgeted, paced, with fallbacks."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import re
+import time
+from collections.abc import Sequence
+from datetime import timedelta
+from typing import Any, TypeVar
+
+import httpx
+from pydantic import BaseModel, ValidationError
+
+from sarthi.ai.prompts import SYSTEM_RULES, Prompt
+from sarthi.ai.providers import FREE_PROVIDERS, Endpoint
+from sarthi.clock import Clock, to_iso, utcnow
+from sarthi.db.ai_store import AiStore
+
+log = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
+
+REQUEST_TIMEOUT_S = 90.0
+MAX_ERROR_CHARS = 800
+_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
+_HTTP_OK = 200
+_SERVER_ERROR = 500
+_RETRY_STATUSES = frozenset({408, 409, 429})
+
+
+class AiError(Exception):
+    """Base for AI-layer failures callers may want to handle."""
+
+
+class BudgetExhaustedError(AiError):
+    """The daily token budget is spent; ``retry_after`` seconds until it resets."""
+
+    def __init__(self, retry_after: float) -> None:
+        """Remember when the budget resets."""
+        super().__init__(f"daily AI token budget reached; resets in {retry_after / 3600:.1f} h")
+        self.retry_after = retry_after
+
+
+class AiUnavailableError(AiError):
+    """No configured model gave a valid answer."""
+
+
+def _parse_json(content: str) -> Any:
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        match = _JSON_OBJECT.search(content)  # tolerate ```json fences or a stray sentence
+        if match:
+            return json.loads(match.group(0))
+        raise
+
+
+class _CallFailedError(Exception):
+    """One endpoint failed; try the next."""
+
+
+class AiClient:
+    """Asks models for JSON validated against a pydantic schema."""
+
+    def __init__(  # noqa: PLR0913  (explicit, injectable dependencies)
+        self,
+        endpoints: Sequence[Endpoint],
+        store: AiStore,
+        *,
+        daily_token_budget: int = 0,
+        requests_per_minute: int = 30,
+        http: httpx.AsyncClient | None = None,
+        clock: Clock = utcnow,
+    ) -> None:
+        """Try ``endpoints`` in order. ``daily_token_budget`` 0 means no limit."""
+        self.endpoints = tuple(endpoints)
+        self._store = store
+        self._budget = daily_token_budget
+        self._interval = 60.0 / requests_per_minute
+        self._http = http or httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S)
+        self._clock = clock
+        self._lock = asyncio.Lock()
+        self._next_call = 0.0
+
+    @property
+    def available(self) -> bool:
+        """True when at least one model is configured."""
+        return bool(self.endpoints)
+
+    async def aclose(self) -> None:
+        """Close the HTTP connection pool."""
+        await self._http.aclose()
+
+    async def structured(self, prompt: Prompt, schema: type[T], **data: str) -> T:
+        """Run ``prompt`` with ``data`` and return the validated answer (cached by model, version and input).
+
+        Raises ``BudgetExhaustedError`` when only paid models are left and the budget is spent, and
+        ``AiUnavailableError`` when no model answers validly.
+        """
+        if not self.endpoints:
+            raise AiUnavailableError("no AI model is configured")
+        text = prompt.render(**data)
+        budget_hit: BudgetExhaustedError | None = None
+        for endpoint in self.endpoints:
+            key = hashlib.sha256(
+                f"{endpoint.label}|{prompt.name}|{prompt.version}|{text}".encode()
+            ).hexdigest()
+            if (cached := self._store.cache_get(key)) is not None:
+                try:
+                    return schema.model_validate_json(cached)
+                except ValidationError:
+                    pass  # schema changed since it was cached: ask again
+            if not endpoint.free:
+                try:
+                    self._check_budget()
+                except BudgetExhaustedError as error:
+                    budget_hit = error
+                    continue
+            try:
+                result = await self._ask(endpoint, text, schema)
+            except _CallFailedError as error:
+                log.warning("AI model %s failed: %s", endpoint.label, error)
+                continue
+            self._store.cache_put(key, result.model_dump_json())
+            return result
+        if budget_hit is not None:
+            raise budget_hit
+        raise AiUnavailableError("no configured AI model gave a valid answer")
+
+    def _check_budget(self) -> None:
+        if self._budget <= 0:
+            return
+        now = self._clock()
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        used = self._store.tokens_since(to_iso(midnight), exclude_providers=FREE_PROVIDERS)
+        if used >= self._budget:
+            raise BudgetExhaustedError(max(60.0, (midnight + timedelta(days=1) - now).total_seconds()))
+
+    async def _ask(self, endpoint: Endpoint, text: str, schema: type[T]) -> T:
+        messages = [{"role": "system", "content": SYSTEM_RULES}, {"role": "user", "content": text}]
+        content = await self._call(endpoint, messages)
+        try:
+            return schema.model_validate(_parse_json(content))
+        except (json.JSONDecodeError, ValidationError) as first_error:
+            messages += [
+                {"role": "assistant", "content": content},
+                {
+                    "role": "user",
+                    "content": "That did not match the requested JSON shape: "
+                    f"{str(first_error)[:MAX_ERROR_CHARS]}\nReturn only the corrected JSON object.",
+                },
+            ]
+        content = await self._call(endpoint, messages)
+        try:
+            return schema.model_validate(_parse_json(content))
+        except (json.JSONDecodeError, ValidationError) as error:
+            raise _CallFailedError(f"invalid JSON after one repair: {str(error)[:200]}") from error
+
+    async def _pace(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            if self._next_call > now:
+                await asyncio.sleep(self._next_call - now)
+            self._next_call = max(now, self._next_call) + self._interval
+
+    async def _call(self, endpoint: Endpoint, messages: list[dict[str, str]]) -> str:
+        await self._pace()
+        headers = (
+            {"Authorization": f"Bearer {endpoint.api_key.get_secret_value()}"} if endpoint.api_key else {}
+        )
+        body = {
+            "model": endpoint.model,
+            "messages": messages,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        }
+        try:
+            response = await self._http.post(
+                f"{endpoint.base_url}/chat/completions", json=body, headers=headers
+            )
+        except httpx.HTTPError as error:
+            raise _CallFailedError(type(error).__name__) from error
+        if response.status_code != _HTTP_OK:
+            kind = (
+                "temporary"
+                if response.status_code >= _SERVER_ERROR or response.status_code in _RETRY_STATUSES
+                else "rejected"
+            )
+            raise _CallFailedError(f"HTTP {response.status_code} ({kind})")
+        try:
+            payload = response.json()
+            content = payload["choices"][0]["message"]["content"] or ""
+        except (ValueError, KeyError, IndexError, TypeError) as error:
+            raise _CallFailedError("unexpected response shape") from error
+        usage = payload.get("usage") or {}
+        self._store.record_usage(
+            endpoint.provider,
+            endpoint.model,
+            int(usage.get("prompt_tokens") or 0),
+            int(usage.get("completion_tokens") or 0),
+        )
+        return str(content)

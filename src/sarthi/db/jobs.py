@@ -9,6 +9,7 @@ JobRadar, which merges a role across all locations, Sarthi keeps one role in dif
 from __future__ import annotations
 
 import sqlite3
+import zlib
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -17,6 +18,8 @@ from sarthi.db.connection import transaction
 from sarthi.jobs.dedupe import job_id_for_url, normalise_url, role_key
 from sarthi.jobs.models import JobPosting
 
+FULL_TEXT_MAX_CHARS = 12_000
+"""Full descriptions kept for the AI, compressed; longer ones are cut (benefits and legal text come last)."""
 REPOST_WINDOW = timedelta(days=30)
 """How long a company + role stays "the same job" when seen again on another board."""
 
@@ -42,8 +45,11 @@ class JobStore:
         self._conn = conn
         self._clock = clock
 
-    def save(self, posting: JobPosting) -> SaveResult:
-        """Store a posting, or attach it to the job it duplicates. ``is_new`` is True only for a new job."""
+    def save(self, posting: JobPosting, full_text: str = "") -> SaveResult:
+        """Store a posting, or attach it to the job it duplicates. ``is_new`` is True only for a new job.
+
+        ``full_text`` is the complete description when ``posting`` holds only a snippet.
+        """
         canonical = normalise_url(str(posting.url))
         if canonical is None:
             raise ValueError(f"job URL is not a usable http(s) link: {posting.url}")
@@ -91,12 +97,23 @@ class JobStore:
                 "VALUES (?, ?, ?, ?, ?)",
                 (job_id, posting.source, canonical, now, now),
             )
+            text = (full_text or posting.description)[:FULL_TEXT_MAX_CHARS]
+            if text:
+                c.execute(
+                    "INSERT INTO job_text (job_id, text_zlib) VALUES (?, ?)",
+                    (job_id, zlib.compress(text.encode("utf-8"))),
+                )
             return SaveResult(job_id, is_new=True)
 
     def get(self, job_id: str) -> JobPosting | None:
         """The stored posting, or None."""
         row = self._conn.execute("SELECT posting FROM job WHERE id = ?", (job_id,)).fetchone()
         return JobPosting.model_validate_json(row["posting"]) if row else None
+
+    def full_text(self, job_id: str) -> str:
+        """The complete description saved with the job ("" when none was saved)."""
+        row = self._conn.execute("SELECT text_zlib FROM job_text WHERE job_id = ?", (job_id,)).fetchone()
+        return zlib.decompress(row["text_zlib"]).decode("utf-8") if row else ""
 
     def sources(self, job_id: str) -> list[str]:
         """Canonical links this job was seen at, first sighting first."""

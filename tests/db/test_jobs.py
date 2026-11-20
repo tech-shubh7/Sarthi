@@ -68,3 +68,16 @@ def test_an_old_role_reposted_after_the_window_is_new(job_store: JobStore, clock
 def test_unusable_link_is_refused(job_store: JobStore) -> None:
     with pytest.raises(ValueError, match="not a usable"):
         job_store.save(make(url="https://localhost/jobs/1"))
+
+
+def test_full_text_is_kept_compressed_and_capped(job_store: JobStore) -> None:
+    long_text = "Build payment APIs. " * 2000
+    result = job_store.save(make(description="Build payment APIs."), full_text=long_text)
+    stored = job_store.full_text(result.job_id)
+    assert stored == long_text[:12_000]
+    assert job_store.get(result.job_id) is not None
+    assert job_store.full_text("missing") == ""
+    without = job_store.save(
+        make(url="https://boards.greenhouse.io/razorpay/jobs/99", title="Other", description="")
+    )
+    assert job_store.full_text(without.job_id) == ""
