@@ -1,0 +1,109 @@
+[project]
+name = "sarthi"
+version = "0.1.0"
+description = "Open-source, self-hosted AI agent that finds, matches and applies to jobs for you."
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "typer>=0.12",
+]
+
+[project.scripts]
+sarthi = "sarthi.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+    "pip-audit>=2.7",
+    "pre-commit>=4.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sarthi"]
+
+# ---------- Lint + format ----------
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["data"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",   # pycodestyle, pyflakes
+    "I",             # import order
+    "N",             # naming
+    "UP",            # modern syntax
+    "B",             # likely bugs
+    "S",             # security (bandit rules)
+    "A",             # shadowing builtins
+    "C4", "SIM", "RET", "PIE",
+    "PTH",           # pathlib over os.path
+    "PL",            # pylint
+    "D",             # docstrings
+    "RUF",
+    "T20",           # no print()
+    "ERA",           # no commented-out code
+    "BLE",           # no blind except
+    "TRY",           # exception best practices
+    "DTZ",           # timezone-aware datetimes
+]
+ignore = ["D203", "D213", "TRY003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "D", "PLR2004"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# ---------- Types ----------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+
+# ---------- Tests ----------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --cov=sarthi --cov-report=term-missing --cov-fail-under=80"
+markers = ["live: hits real external services (skipped by default, run with -m live)"]
+
+[tool.coverage.run]
+branch = true
+source = ["sarthi"]
+
+# ---------- Architecture rules (docs/ARCHITECTURE.md §6) ----------
+[tool.importlinter]
+root_package = "sarthi"
+
+[[tool.importlinter.contracts]]
+name = "Pipeline steps never import each other (they talk through db + queue)"
+type = "independence"
+modules = [
+    "sarthi.sources", "sarthi.matching", "sarthi.documents", "sarthi.answers",
+    "sarthi.apply", "sarthi.tracking", "sarthi.chat",
+]
+
+[[tool.importlinter.contracts]]
+name = "Layers only import downwards"
+type = "layers"
+layers = [
+    "sarthi.cli",
+    "sarthi.sources | sarthi.matching | sarthi.documents | sarthi.answers | sarthi.apply | sarthi.tracking | sarthi.chat",
+    "sarthi.queue | sarthi.ai | sarthi.jobs | sarthi.profile",
+    "sarthi.db",
+    "sarthi.config | sarthi.log",
+]
