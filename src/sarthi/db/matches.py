@@ -81,3 +81,17 @@ class MatchStore:
         """How many jobs got each decision."""
         rows = self._conn.execute("SELECT decision, count(*) AS n FROM job_match GROUP BY decision")
         return {row["decision"]: row["n"] for row in rows}
+
+    def recent_choices(self, limit: int) -> list[tuple[bool, int]]:
+        """The user's last ``limit`` Apply / Skip taps: (applied, the job's score), newest first.
+
+        "Later" is not a choice either way, and a job today's rules hide says nothing about the jobs that
+        still qualify, so both are left out.
+        """
+        rows = self._conn.execute(
+            "SELECT u.status, m.score FROM job_user u JOIN job_match m ON m.job_id = u.job_id"
+            " WHERE u.status IN ('apply', 'applied', 'skipped') AND m.decision != 'hide'"
+            " ORDER BY u.updated_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [(row["status"] != "skipped", int(row["score"])) for row in rows]

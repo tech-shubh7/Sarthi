@@ -35,7 +35,10 @@ from sarthi.db.replies import ReplyStore
 from sarthi.db.source_state import SourceStateStore
 from sarthi.db.tasks import TaskRecord, TaskStore
 from sarthi.documents.handler import DocumentMaker
+from sarthi.matching.decide import Thresholds
 from sarthi.matching.handler import LOGIC_VERSION, Matcher, match_version
+from sarthi.matching.learning import RECENT as LEARN_FROM
+from sarthi.matching.learning import learned_thresholds
 from sarthi.profile.master import load_master, master_path
 from sarthi.profile.models import Profile
 from sarthi.profile.repair import repair
@@ -337,8 +340,18 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
     def chat_busy() -> bool:
         return bot.inbox is not None and bot.inbox.busy
 
+    def learned() -> Thresholds:
+        return learned_thresholds(Thresholds(), matches.recent_choices(LEARN_FROM)).thresholds
+
     matcher = Matcher(
-        jobs, matches, queue, profile, ai=LlmMatchScorer(matching_ai), ai_paused=chat_busy, clock=clock
+        jobs,
+        matches,
+        queue,
+        profile,
+        ai=LlmMatchScorer(matching_ai),
+        ai_paused=chat_busy,
+        learned=learned,
+        clock=clock,
     )
     planned = plan_sources(
         settings.job_boards,

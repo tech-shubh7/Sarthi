@@ -45,9 +45,14 @@ class Matcher:
         thresholds: Thresholds = Thresholds(),  # noqa: B008  (frozen dataclass, safe default)
         ai: AiScorer | None = None,
         ai_paused: Callable[[], bool] = lambda: False,
+        learned: Callable[[], Thresholds] | None = None,
         clock: Clock = utcnow,
     ) -> None:
-        """Read jobs from ``jobs``, write results to ``matches``, queue alerts on ``queue``."""
+        """Read jobs from ``jobs``, write results to ``matches``, queue alerts on ``queue``.
+
+        ``learned`` gives the thresholds as moved by the user's recent taps; without it, ``thresholds``.
+        """
+        self._learned = learned
         self.jobs = jobs
         self.matches = matches
         self.queue = queue
@@ -71,7 +76,8 @@ class Matcher:
             # model_copy skips validation; safe here because the value is a plain str.
             job = job.model_copy(update={"description": full_text, "description_complete": True})
 
-        result = await evaluate(job, profile, self._clock(), self.thresholds, self.ai)
+        thresholds = self._learned() if self._learned is not None else self.thresholds
+        result = await evaluate(job, profile, self._clock(), thresholds, self.ai)
         self.matches.save(
             MatchRecord(
                 job_id=task.key,
