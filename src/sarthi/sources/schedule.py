@@ -129,6 +129,10 @@ class SourceScheduler:
         current = load_profile()
         self._profile_version = current.version if current else None  # a restart alone forces nothing
 
+    def profile(self) -> Profile | None:
+        """The user's current profile, or None before setup."""
+        return self._load_profile()
+
     def _due(self, planned: Planned, state: SourceState | None, now: datetime) -> bool:
         if state is None or state.last_checked_at is None:
             return True

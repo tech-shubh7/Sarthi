@@ -38,6 +38,17 @@ ASK = "🔎 <b>Catch-up</b>: I'll search every job source for what was posted in
 SendJob = Callable[[int, str, JobStatus], Awaitable[bool]]
 
 
+MAX_HOURS = 168
+
+
+def window_label(hours: int) -> str:
+    """A window for people: "2 days", "24 hours", "36 hours"."""
+    if hours in WINDOWS:
+        return WINDOWS[hours]
+    days, rest = divmod(hours, 24)
+    return f"{days} day{'s' if days != 1 else ''}" if days and not rest else f"{hours} hours"
+
+
 def window_buttons() -> Markup:
     """One button per catch-up window."""
     labels = list(WINDOWS.items())
@@ -87,7 +98,8 @@ class CatchUp:
             return False
 
     def start(self, hours: int) -> bool:
-        """Queue a catch-up over the last ``hours``. False when one is already running."""
+        """Queue a catch-up over the last ``hours`` (1-168). False when one is already running."""
+        hours = max(1, min(MAX_HOURS, hours))
         if self.running():
             return False
         now = self._clock()
@@ -107,9 +119,20 @@ class CatchUp:
             return
         await self.api.send_message(
             chat_id,
-            f"🔎 Searching every source for jobs from the last {WINDOWS[hours]}. "
+            f"🔎 Searching every source for jobs from the last {window_label(hours)}. "
             "I'll send the results together in a few minutes.",
         )
+
+    async def start_after_absence(self, chat_id: int, hours: int) -> bool:
+        """Sarthi was off for ``hours``: collect what was missed into one batch instead of many alerts."""
+        if not self.start(hours):
+            return False
+        await self.api.send_message(
+            chat_id,
+            f"👋 Welcome back. Sarthi was off for about {window_label(min(hours, MAX_HOURS))}; "
+            "I'm checking every source for what you missed and will send it together.",
+        )
+        return True
 
     def _rows(self, since: datetime) -> list[Row]:
         rows: list[Row] = []
@@ -141,7 +164,7 @@ class CatchUp:
     async def _send(
         self, chat_id: int, hours: int, task: TaskRecord, rows: list[Row], unfinished: int
     ) -> None:
-        label = WINDOWS.get(hours, f"{hours} hours")
+        label = window_label(hours)
         strong = sum(1 for row in rows if row.match.decision == "alert")
         lines = [f"<b>Catch-up: last {label}</b>"]
         sources, failed = int(task.payload.get("sources") or 0), list(task.payload.get("failed") or [])

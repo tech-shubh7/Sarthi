@@ -56,3 +56,29 @@ def run() -> None:
     typer.echo("Sarthi is running. Press Ctrl+C to stop.")
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(sarthi.run())
+
+
+@app.command()
+def catchup(
+    days: int = typer.Option(1, min=1, max=7, help="How many days back to search (1-7)."),
+) -> None:
+    """Search every source for the last N days, send the results to Telegram in one batch, then exit.
+
+    For a computer that is on only part of the day: run it from cron or a startup task.
+    """
+    try:
+        sarthi = build(get_settings())
+    except SetupError as error:
+        typer.echo(f"Cannot start: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    problem = sarthi.catchup_problem()
+    if problem:
+        sarthi.conn.close()
+        typer.echo(f"Cannot catch up: {problem}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"Searching every source for the last {days} day(s)… results will arrive in Telegram.")
+    with contextlib.suppress(KeyboardInterrupt):
+        sent = asyncio.run(sarthi.run_catchup(days * 24))
+        typer.echo(
+            "Done: results sent to Telegram." if sent else "Stopped: results took too long (try again)."
+        )
