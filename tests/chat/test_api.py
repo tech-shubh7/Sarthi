@@ -104,3 +104,22 @@ async def test_a_second_running_sarthi_waits_instead_of_stopping() -> None:
     with pytest.raises(RetryableError, match="another Sarthi is already running") as caught:
         await conflict.get_updates(None)
     assert caught.value.retry_after == 15.0
+
+
+async def test_set_commands_and_send_document() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200, json={"ok": True, "result": {"message_id": 9} if "Document" in request.url.path else True}
+        )
+
+    client = api(handler)
+    await client.set_commands((("today", "Best matches"),))
+    assert seen[0].url.path.endswith("/setMyCommands")
+    assert json.loads(seen[0].content) == {"commands": [{"command": "today", "description": "Best matches"}]}
+    assert await client.send_document(7, "matches.csv", b"a,b\r\n", caption="All") == 9
+    upload = seen[1].content
+    assert b'filename="matches.csv"' in upload
+    assert b"a,b" in upload

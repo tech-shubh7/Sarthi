@@ -5,12 +5,12 @@ import pytest
 
 from sarthi.chat.pairing import new_code
 from sarthi.chat.telegram.api import Markup
-from sarthi.chat.telegram.bot import APPLY_TASK, PAUSED_KEY, TelegramBot
+from sarthi.chat.telegram.bot import APPLY_TASK, HELP, PAUSED_KEY, TelegramBot
 from sarthi.db.chat import ChatStore, JobStatus
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchRecord, MatchStore
 from sarthi.db.tasks import TaskRecord
-from sarthi.queue.tasks import DeferError, TaskQueue
+from sarthi.queue.tasks import DeferError, PermanentError, TaskQueue
 from tests.conftest import FakeClock
 from tests.matching.conftest import make_job
 
@@ -34,6 +34,9 @@ class FakeApi:
 
     async def answer_callback(self, callback_id: str, text: str = "") -> None:
         self.toasts.append(text)
+
+    async def set_commands(self, commands: tuple[tuple[str, str], ...]) -> None:
+        self.commands = commands
 
     async def get_updates(self, offset: int | None, timeout: int = 30) -> list[dict[str, Any]]:
         return self.updates.pop(0) if self.updates else []
@@ -278,3 +281,24 @@ async def test_poll_handles_updates_and_remembers_the_offset(
     await bot.poll()
     assert chats.get_state("telegram.offset") == "8"
     assert len(api.sent) == 1
+
+
+async def test_poll_sets_the_slash_command_menu(bot: TelegramBot, api: FakeApi) -> None:
+    bot.stop()
+    await bot.poll()
+    names = [name for name, _ in api.commands]
+    assert names == ["setup", "profile", "today", "catchup", "status", "pause", "resume", "cancel", "help"]
+    assert all(
+        n.islower() and 1 <= len(n) <= 32 and len(d) <= 256 for n, d in api.commands
+    )  # Telegram's limits
+    for name in names:
+        assert f"/{name} – " in HELP
+
+
+async def test_menu_failure_does_not_stop_the_bot(bot: TelegramBot, api: FakeApi) -> None:
+    async def refuse(commands: tuple[tuple[str, str], ...]) -> None:
+        raise PermanentError("telegram setMyCommands: Bad Request")
+
+    api.set_commands = refuse  # type: ignore[method-assign]
+    bot.stop()
+    await bot.poll()

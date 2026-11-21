@@ -83,17 +83,22 @@ def reply_for(decided: Route, text: str, *, in_setup: bool) -> str:
     return "🙂 I can only help with your job search." + ("" if in_setup else " /help shows what I can do.")
 
 
-HELP = (
-    "<b>Sarthi</b> finds jobs that fit you and messages you here.\n\n"
-    "/setup – create or change your profile (resume + a few questions)\n"
-    "/profile – show your profile (change anything by just telling me)\n"
-    "/today – best matches you have not seen yet\n"
-    "/catchup – everything posted in the last 24 hours to 7 days, in one batch\n"
-    "/status – what Sarthi has found so far\n"
-    "/pause – stop instant alerts (matches wait for you)\n"
-    "/resume – start instant alerts again\n"
-    "/help – this message"
+# The one list of commands: shown in /help and in Telegram's "/" menu (setMyCommands).
+COMMANDS: tuple[tuple[str, str], ...] = (
+    ("setup", "Create or change your profile (resume + a few questions)"),
+    ("profile", "Show your profile (change anything by just telling me)"),
+    ("today", "Best matches you have not seen yet"),
+    ("catchup", "Everything posted in the last 24 hours to 7 days, in one batch"),
+    ("status", "What Sarthi has found so far"),
+    ("pause", "Stop instant alerts (matches wait for you)"),
+    ("resume", "Start instant alerts again"),
+    ("cancel", "Stop the profile setup you are in"),
+    ("help", "What Sarthi does and these commands"),
 )
+HELP = "<b>Sarthi</b> finds jobs that fit you and messages you here.\n\n" + "\n".join(
+    f"/{name} – {about[0].lower()}{about[1:]}" for name, about in COMMANDS
+)
+
 
 _ACTIONS: dict[str, JobStatus] = {
     "apply": JobStatus.APPLY,
@@ -417,6 +422,10 @@ class TelegramBot:
 
     async def poll(self) -> None:
         """Receive updates until ``stop()``. A bad token stops the bot; network trouble is waited out."""
+        try:
+            await self.api.set_commands(COMMANDS)  # the menu that opens when the user types "/"
+        except (RetryableError, PermanentError) as error:
+            log.warning("telegram: could not set the command menu: %s", error)
         offset_text = self.chats.get_state(OFFSET_KEY)
         offset = int(offset_text) if offset_text else None
         while not self._stopping.is_set():

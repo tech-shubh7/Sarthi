@@ -105,7 +105,6 @@ city Sarthi cannot place is shown as "check it includes you" instead of being re
 | Still open? | **JobRadar** `liveness.py` (asks Greenhouse/Lever/SmartRecruiters/Workday directly) | Copy |
 | Scam? | **JobRadar** `scam.py` (no deps) | Copy as-is |
 | Repost / ghost job? | **Career-Ops** `detect-reposts.mjs` | Port |
-| Visa sponsor (UK) | **Career-Ops** `sponsor-check.mjs` | Port [v1] |
 
 ### 2.7 Match funnel [v1] — cheapest first
 | Layer | Cost | Best code |
@@ -298,6 +297,9 @@ After the batch is ready, user chooses on Telegram:
 - AI layer: any OpenAI-compatible provider, fallback chain, cache, token budget, local-model gate
 - Catch-up mode in chat: /catchup 24 h–7 days → one batch with cards and a CSV
 
+Dropped (2026-11-21): the UK licensed-sponsor register check: it only helps people who need a UK visa; the
+job's own "we sponsor / no sponsorship" text and the user's visa answers already decide eligibility.
+
 **Remaining for the launch:**
 1. Sources: Telegram job channels (live), India mass-hiring pages, "paste any careers link", focus list from the
    173k-company file, Adzuna/Jooble (free keys), source-health message to the user
@@ -310,7 +312,7 @@ After the batch is ready, user chooses on Telegram:
    LinkedIn Easy Apply, Workday, Naukri; full auto-apply mode (user opt-in)
 6. Tracking: Gmail and IMAP reading, reply sorting (confirmation / rejection / interview / offer), ghosted after
    N days, every reply on Telegram, follow-up drafts
-7. Learning from Apply/Skip taps; UK visa-sponsor check
+7. Learning from Apply/Skip taps
 8. Local web dashboard (pipeline, applied, replies, stats)
 9. Install: `docker compose up`, README, first-run guide
 

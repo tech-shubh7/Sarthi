@@ -146,6 +146,11 @@ class TelegramApi:
         result = await self._upload("sendDocument", data, {"document": (filename, content, mime)})
         return int(result["message_id"])
 
+    async def set_commands(self, commands: tuple[tuple[str, str], ...]) -> None:
+        """The command menu Telegram shows when the user types "/" (name without the slash, description)."""
+        payload = {"commands": [{"command": name, "description": about[:256]} for name, about in commands]}
+        await self._call("setMyCommands", payload)
+
     async def answer_callback(self, callback_id: str, text: str = "") -> None:
         """Acknowledge a button tap (stops the spinner), with an optional short toast."""
         await self._call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text[:200]})
