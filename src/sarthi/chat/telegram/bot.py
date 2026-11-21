@@ -20,10 +20,12 @@ from sarthi.chat.catchup import CatchUp, window_buttons
 from sarthi.chat.document_report import report_text
 from sarthi.chat.inbox import Inbox
 from sarthi.chat.pairing import owner_chat, redeem
+from sarthi.chat.questions import QuestionFlow
 from sarthi.chat.setup import WHY, SetupFlow
 from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
 from sarthi.chat.understand import Route, route, route_by_rules
 from sarthi.clock import Clock, utcnow
+from sarthi.db.answers import AnswerStore
 from sarthi.db.chat import ANSWERED, ChatStore, JobStatus
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
@@ -144,6 +146,7 @@ class TelegramBot:
         group_messages: bool = False,
         profile_version: Callable[[], str | None] = lambda: None,
         documents: DocumentStore | None = None,
+        answers: AnswerStore | None = None,
         data_dir: Path | None = None,
         clock: Clock = utcnow,
     ) -> None:
@@ -159,6 +162,7 @@ class TelegramBot:
         self._profile_version = profile_version
         self.documents = documents
         self.data_dir = data_dir
+        self.questions = QuestionFlow(api, chats, jobs, answers, queue) if answers is not None else None
         self._stopping = asyncio.Event()
         self.catchup = CatchUp(api, chats, jobs, matches, queue, send_job=self.send_job, clock=clock)
 
@@ -219,8 +223,16 @@ class TelegramBot:
                 return
             await self.api.send_document(chat_id, file.name, content, mime="application/pdf")
         await self.api.send_message(chat_id, report_text(record.report))
-        if task.payload.get("apply"):
-            self.queue.enqueue(APPLY_TASK, task.key, priority=Priority.NORMAL)
+        if task.payload.get("apply"):  # next: the form's questions, then the application itself
+            self.queue.enqueue(names.FORM_CHECK, task.key, priority=Priority.NORMAL)
+
+    async def handle_ask_questions(self, task: TaskRecord) -> None:
+        """``ask_questions`` task: ask the next question a job's form needs."""
+        chat_id = owner_chat(self.chats)
+        if chat_id is None:
+            raise DeferError(WAIT_FOR_PAIRING_S)
+        if self.questions is not None:
+            await self.questions.handle(task, chat_id)
 
     async def handle_catchup_report(self, task: TaskRecord) -> None:
         """``catchup_report`` task: send the catch-up batch."""
@@ -330,8 +342,13 @@ class TelegramBot:
                 await self.setup.on_document(chat_id, message["document"])
             elif text := str(message.get("text") or "").strip():
                 texts.append(text)
-        if texts:
-            await self._converse(chat_id, "\n".join(texts))
+        if not texts:
+            return
+        joined = "\n".join(texts)
+        setup_active = self.setup is not None and self.setup.active
+        if not setup_active and self.questions is not None and await self.questions.on_text(chat_id, joined):
+            return  # an answer to an application question
+        await self._converse(chat_id, joined)
 
     async def _converse(self, chat_id: int, text: str) -> None:
         """Work out what the message is, then answer, correct, explain or chat back."""
@@ -420,6 +437,10 @@ class TelegramBot:
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)  # one tap per question
             await self.setup.on_button(chat_id, data, message_id)
+        elif data.startswith("ans:") and self.questions is not None:
+            await self.api.answer_callback(callback_id)
+            await self.api.edit_buttons(chat_id, message_id, None)
+            await self.questions.on_button(chat_id, data)
         elif data.startswith("catchup:"):
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)

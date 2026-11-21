@@ -14,6 +14,7 @@ from pathlib import Path
 from sarthi.ai.client import AiClient
 from sarthi.ai.providers import resolve
 from sarthi.ai.scoring import LlmMatchScorer
+from sarthi.answers.handler import FormChecker
 from sarthi.chat.pairing import owner_chat
 from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import TelegramApi
@@ -21,6 +22,7 @@ from sarthi.chat.telegram.bot import TelegramBot
 from sarthi.clock import Clock, from_iso, to_iso, utcnow
 from sarthi.config import Settings
 from sarthi.db.ai_store import AiStore
+from sarthi.db.answers import AnswerStore
 from sarthi.db.chat import ChatStore
 from sarthi.db.connection import connect
 from sarthi.db.documents import DocumentStore
@@ -72,6 +74,7 @@ class App:
     matcher: Matcher
     sources: SourceScheduler
     documents: DocumentMaker
+    forms: FormChecker
     ai_clients: tuple[AiClient, ...]
     clock: Clock
 
@@ -96,6 +99,8 @@ class App:
             names.CATCHUP_REPORT: self.bot.handle_catchup_report,
             names.DOCUMENTS: self.documents.handle,
             names.DOCUMENTS_READY: self.bot.handle_documents_ready,
+            names.FORM_CHECK: self.forms.handle,
+            names.ASK_QUESTIONS: self.bot.handle_ask_questions,
         }
         return Worker(self.queue, handlers, concurrency=WORKER_CONCURRENCY, name="sarthi")
 
@@ -252,6 +257,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         group_messages=True,
         profile_version=profile_version,
         documents=DocumentStore(conn, clock=clock),
+        answers=AnswerStore(conn, clock=clock),
         data_dir=settings.data_dir,
         clock=clock,
     )
@@ -281,4 +287,12 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         data_dir=settings.data_dir,
         clock=clock,
     )
-    return App(settings, conn, queue, bot, matcher, sources, documents, (fast, quality), clock)
+    forms = FormChecker(
+        jobs,
+        DocumentStore(conn, clock=clock),
+        AnswerStore(conn, clock=clock),
+        queue,
+        profile,
+        data_dir=settings.data_dir,
+    )
+    return App(settings, conn, queue, bot, matcher, sources, documents, forms, (fast, quality), clock)

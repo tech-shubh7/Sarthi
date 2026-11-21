@@ -237,7 +237,7 @@ async def test_ready_documents_are_sent_then_the_application_is_queued(
         "Asha_Rao_Gamma_AI_Cover_Letter.pdf",
     ]
     assert "Tailored for" in api.texts()[-1]
-    assert queue.active(names.APPLY) == 1
+    assert queue.active(names.FORM_CHECK) == 1
 
 
 async def test_errors_and_missing_files_are_explained(
@@ -266,7 +266,7 @@ async def test_errors_and_missing_files_are_explained(
         TaskRecord(1, names.DOCUMENTS_READY, job_id, {"apply": True, "error": None}, 1)
     )
     assert "missing" in api.texts()[-1]
-    assert queue.active(names.APPLY) == 0
+    assert queue.active(names.FORM_CHECK) == 0
 
 
 async def test_docs_button_makes_documents_without_applying(

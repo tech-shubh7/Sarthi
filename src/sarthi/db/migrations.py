@@ -131,6 +131,24 @@ MIGRATIONS: tuple[str, ...] = (
         made_at              TEXT NOT NULL
     ) STRICT;
     """,
+    # 7: the answer bank (every form answer the user gave, reused) and questions waiting for the user
+    """
+    CREATE TABLE saved_answer (
+        question             TEXT PRIMARY KEY,          -- the form's label, as asked
+        answer               TEXT NOT NULL,
+        updated_at           TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE pending_question (
+        job_id               TEXT NOT NULL REFERENCES job (id) ON DELETE CASCADE,
+        field_key            TEXT NOT NULL,
+        label                TEXT NOT NULL,
+        field_type           TEXT NOT NULL,
+        options              TEXT NOT NULL DEFAULT '[]', -- JSON list
+        position             INTEGER NOT NULL,          -- form order
+        PRIMARY KEY (job_id, field_key)
+    ) STRICT;
+    """,
 )
 
 

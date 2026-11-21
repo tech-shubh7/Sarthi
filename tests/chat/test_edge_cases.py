@@ -1,4 +1,3 @@
-# ruff: noqa: E501  (tables of test inputs read best one case per line)
 """Hostile and messy answers for every setup question.
 
 Each question is tested with normal, sloppy, wrong and hostile input. Besides the expected result for each

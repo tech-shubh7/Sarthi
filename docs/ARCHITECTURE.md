@@ -195,6 +195,12 @@ except on the last try). Tapping Apply or "📄 Tailored resume" sends both PDFs
 ### 2.11 Form answers [v1]
 - **Copy OpenApply `questions.ts` (port):** read the form's real questions from Greenhouse/Ashby/Lever **before** opening a browser.
 - **Copy ApplyPilot `qa_knowledge` table:** every answer saved and reused, with outcome.
+- **Implemented:** `answers/questions.py` (Greenhouse and Ashby APIs, Lever's apply page; any link of the job, so a
+  LinkedIn job with a Greenhouse form is read too), `jobs/forms.py` (OpenApply field mapping: options, dates,
+  place-bound relocation questions, decline for demographic questions; work authorisation and sponsorship per job
+  country, and per home country when a question asks about the country of residence; "are you a human or an AI"
+  questions are only ever answered by the user), `profile/applicant.py`, `db/answers.py` (answer bank + pending
+  questions), `chat/questions.py` (one question at a time, buttons or typed, answers checked against the options).
 - **+1:** unknown questions are asked on Telegram **together with the job alert**, so when you tap Apply nothing blocks the application.
 
 ### 2.12 Apply engine [v1] — four-step ladder
