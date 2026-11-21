@@ -168,6 +168,7 @@ async def test_alert_sends_a_card_once(
         f"skip:{job_id}",
         f"later:{job_id}",
         f"more:{job_id}",
+        f"docs:{job_id}",
     ]
     assert chats.job_status(job_id) is JobStatus.ALERTED
     assert chats.message_id(job_id) == 1001
@@ -205,10 +206,10 @@ async def test_apply_queues_once_and_first_answer_wins(
         1001,
         {"inline_keyboard": [[{"text": "✅ Apply queued", "callback_data": "noop"}]]},
     )
-    task = bot.queue.claim([APPLY_TASK])
+    task = bot.queue.claim(["documents"])  # the tailored resume first, then the application
     assert task is not None
-    assert task.key == job_id
-    assert bot.queue.claim([APPLY_TASK]) is None
+    assert (task.key, task.payload) == (job_id, {"apply": True})
+    assert bot.queue.claim(["documents"]) is None
 
 
 @pytest.mark.parametrize(("action", "status"), [("skip", JobStatus.SKIPPED), ("later", JobStatus.LATER)])

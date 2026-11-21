@@ -23,10 +23,12 @@ from sarthi.config import Settings
 from sarthi.db.ai_store import AiStore
 from sarthi.db.chat import ChatStore
 from sarthi.db.connection import connect
+from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
 from sarthi.db.source_state import SourceStateStore
 from sarthi.db.tasks import TaskRecord, TaskStore
+from sarthi.documents.handler import DocumentMaker
 from sarthi.matching.handler import LOGIC_VERSION, Matcher, match_version
 from sarthi.profile.models import Profile
 from sarthi.profile.repair import repair
@@ -69,6 +71,7 @@ class App:
     bot: TelegramBot
     matcher: Matcher
     sources: SourceScheduler
+    documents: DocumentMaker
     ai_clients: tuple[AiClient, ...]
     clock: Clock
 
@@ -91,6 +94,8 @@ class App:
             names.DIGEST: self._digest,
             names.CATCHUP: self.sources.handle_catchup,
             names.CATCHUP_REPORT: self.bot.handle_catchup_report,
+            names.DOCUMENTS: self.documents.handle,
+            names.DOCUMENTS_READY: self.bot.handle_documents_ready,
         }
         return Worker(self.queue, handlers, concurrency=WORKER_CONCURRENCY, name="sarthi")
 
@@ -246,6 +251,8 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         setup=setup,
         group_messages=True,
         profile_version=profile_version,
+        documents=DocumentStore(conn, clock=clock),
+        data_dir=settings.data_dir,
         clock=clock,
     )
 
@@ -265,4 +272,13 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         freehire=settings.freehire,
     )
     sources = SourceScheduler(planned, Ingestor(jobs, queue, states), states, queue, profile, clock=clock)
-    return App(settings, conn, queue, bot, matcher, sources, (fast, quality), clock)
+    documents = DocumentMaker(
+        jobs,
+        DocumentStore(conn, clock=clock),
+        queue,
+        profile,
+        ai=quality,
+        data_dir=settings.data_dir,
+        clock=clock,
+    )
+    return App(settings, conn, queue, bot, matcher, sources, documents, (fast, quality), clock)

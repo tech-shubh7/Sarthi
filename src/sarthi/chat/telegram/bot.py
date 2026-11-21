@@ -10,12 +10,14 @@ import asyncio
 import logging
 from collections.abc import Callable
 from html import escape
+from pathlib import Path
 from typing import Any
 
 from sarthi.ai.intent import Kind
 from sarthi.chat.cards import display_company, job_card
 from sarthi.chat.catchup import ASK as ASK_CATCHUP
 from sarthi.chat.catchup import CatchUp, window_buttons
+from sarthi.chat.document_report import report_text
 from sarthi.chat.inbox import Inbox
 from sarthi.chat.pairing import owner_chat, redeem
 from sarthi.chat.setup import WHY, SetupFlow
@@ -23,6 +25,7 @@ from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
 from sarthi.chat.understand import Route, route, route_by_rules
 from sarthi.clock import Clock, utcnow
 from sarthi.db.chat import ANSWERED, ChatStore, JobStatus
+from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
 from sarthi.db.tasks import TaskRecord
@@ -114,10 +117,11 @@ _LABELS: dict[JobStatus, str] = {
 
 
 def job_buttons(job_id: str) -> Markup:
-    """Apply / Skip / Later / Details for one job (callback data stays under Telegram's 64 bytes)."""
+    """Apply / Skip / Later / Details / Resume for one job (callback data stays under Telegram's 64 bytes)."""
     return buttons(
         [("✅ Apply", f"apply:{job_id}"), ("⏭ Skip", f"skip:{job_id}")],
         [("🕓 Later", f"later:{job_id}"), ("ℹ️ Details", f"more:{job_id}")],
+        [("📄 Tailored resume", f"docs:{job_id}")],
     )
 
 
@@ -139,6 +143,8 @@ class TelegramBot:
         setup: SetupFlow | None = None,
         group_messages: bool = False,
         profile_version: Callable[[], str | None] = lambda: None,
+        documents: DocumentStore | None = None,
+        data_dir: Path | None = None,
         clock: Clock = utcnow,
     ) -> None:
         """Send with ``api``; read jobs and matches; record choices in ``chats``; queue applications."""
@@ -151,6 +157,8 @@ class TelegramBot:
         self.queue = queue
         self._clock = clock
         self._profile_version = profile_version
+        self.documents = documents
+        self.data_dir = data_dir
         self._stopping = asyncio.Event()
         self.catchup = CatchUp(api, chats, jobs, matches, queue, send_job=self.send_job, clock=clock)
 
@@ -187,6 +195,32 @@ class TelegramBot:
             return False
         current = self._profile_version()
         return current is None or match.profile_version == current
+
+    async def handle_documents_ready(self, task: TaskRecord) -> None:
+        """``documents_ready`` task: send the tailored resume, cover letter and keyword report."""
+        chat_id = owner_chat(self.chats)
+        if chat_id is None:
+            raise DeferError(WAIT_FOR_PAIRING_S)
+        error = task.payload.get("error")
+        record = self.documents.get(task.key) if self.documents is not None else None
+        if error or record is None or self.data_dir is None:
+            await self.api.send_message(
+                chat_id, f"📄 {escape(str(error or 'The documents could not be made.'))}"
+            )
+            return
+        for path in (record.resume_file, record.letter_file):
+            file = self.data_dir / path
+            try:
+                content = file.read_bytes()
+            except OSError:
+                await self.api.send_message(
+                    chat_id, "📄 The document files are missing; tap the button again."
+                )
+                return
+            await self.api.send_document(chat_id, file.name, content, mime="application/pdf")
+        await self.api.send_message(chat_id, report_text(record.report))
+        if task.payload.get("apply"):
+            self.queue.enqueue(APPLY_TASK, task.key, priority=Priority.NORMAL)
 
     async def handle_catchup_report(self, task: TaskRecord) -> None:
         """``catchup_report`` task: send the catch-up batch."""
@@ -352,6 +386,10 @@ class TelegramBot:
         if await self._on_flow_button(callback_id, chat_id, message_id, data):
             return
         action, _, job_id = data.partition(":")
+        if action == "docs":
+            await self.api.answer_callback(callback_id, "📄 Making your tailored resume…")
+            self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": False}, priority=Priority.ALERT)
+            return
         if action == "more":
             await self.api.answer_callback(callback_id)
             await self._send_details(chat_id, job_id)
@@ -363,8 +401,8 @@ class TelegramBot:
         if current not in ANSWERED:  # the first answer counts; a second tap changes nothing
             current = _ACTIONS[action]
             self.chats.set_job_status(job_id, current)
-            if current is JobStatus.APPLY:
-                self.queue.enqueue(APPLY_TASK, job_id, priority=Priority.NORMAL)
+            if current is JobStatus.APPLY:  # documents first; the application follows them
+                self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
         label = _LABELS[current]
         await self.api.answer_callback(callback_id, label)
         await self.api.edit_buttons(chat_id, message_id, _done(label))

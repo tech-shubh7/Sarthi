@@ -67,17 +67,20 @@ def _parse_json(content: str) -> Any:
 
 
 _TOO_MANY_REQUESTS = 429
-MAX_RETRY_WAIT_S = 10.0
+MAX_RETRY_WAIT_S = 10.0  # the user is waiting on a reply: fall back to the next model quickly
+MAX_BACKGROUND_WAIT_S = (
+    60.0  # background work (scoring, documents): a fast model after a minute beats a slow one
+)
 
 
-def _retry_after(response: httpx.Response) -> float | None:
+def _retry_after(response: httpx.Response, limit: float = MAX_RETRY_WAIT_S) -> float | None:
     """Seconds a rate-limited provider asks us to wait, when short enough to wait for; else None."""
     raw = response.headers.get("retry-after", "")
     try:
         seconds = float(raw)
     except ValueError:
         return None
-    return seconds if 0 <= seconds <= MAX_RETRY_WAIT_S else None
+    return seconds if 0 <= seconds <= limit else None
 
 
 class _CallFailedError(Exception):
@@ -144,9 +147,9 @@ class AiClient:
             try:
                 if endpoint.free:  # a local model: one request at a time, the user's chat first
                     async with local_gate(endpoint.base_url).hold(urgent=urgent):
-                        result = await self._ask(endpoint, text, schema)
+                        result = await self._ask(endpoint, text, schema, urgent=urgent)
                 else:
-                    result = await self._ask(endpoint, text, schema)
+                    result = await self._ask(endpoint, text, schema, urgent=urgent)
             except _CallFailedError as error:
                 log.warning("AI model %s failed: %s", endpoint.label, error)
                 continue
@@ -165,9 +168,9 @@ class AiClient:
         if used >= self._budget:
             raise BudgetExhaustedError(max(60.0, (midnight + timedelta(days=1) - now).total_seconds()))
 
-    async def _ask(self, endpoint: Endpoint, text: str, schema: type[T]) -> T:
+    async def _ask(self, endpoint: Endpoint, text: str, schema: type[T], *, urgent: bool = False) -> T:
         messages = [{"role": "system", "content": SYSTEM_RULES}, {"role": "user", "content": text}]
-        content = await self._call(endpoint, messages)
+        content = await self._call(endpoint, messages, urgent=urgent)
         try:
             return schema.model_validate(_parse_json(content))
         except (json.JSONDecodeError, ValidationError) as first_error:
@@ -179,7 +182,7 @@ class AiClient:
                     f"{str(first_error)[:MAX_ERROR_CHARS]}\nReturn only the corrected JSON object.",
                 },
             ]
-        content = await self._call(endpoint, messages)
+        content = await self._call(endpoint, messages, urgent=urgent)
         try:
             return schema.model_validate(_parse_json(content))
         except (json.JSONDecodeError, ValidationError) as error:
@@ -205,7 +208,7 @@ class AiClient:
         except httpx.HTTPError as error:
             raise _CallFailedError(type(error).__name__) from error
 
-    async def _call(self, endpoint: Endpoint, messages: list[dict[str, str]]) -> str:
+    async def _call(self, endpoint: Endpoint, messages: list[dict[str, str]], *, urgent: bool = False) -> str:
         await self._pace()
         headers = (
             {"Authorization": f"Bearer {endpoint.api_key.get_secret_value()}"} if endpoint.api_key else {}
@@ -217,8 +220,9 @@ class AiClient:
             "response_format": {"type": "json_object"},
         }
         response = await self._post(endpoint, body, headers)
-        if response.status_code == _TOO_MANY_REQUESTS and (wait := _retry_after(response)) is not None:
-            await asyncio.sleep(wait)  # a short "slow down" from a fast provider: worth one wait
+        limit = MAX_RETRY_WAIT_S if urgent else MAX_BACKGROUND_WAIT_S
+        if response.status_code == _TOO_MANY_REQUESTS and (wait := _retry_after(response, limit)) is not None:
+            await asyncio.sleep(wait)  # a "slow down" from a fast provider: worth one wait
             response = await self._post(endpoint, body, headers)
         if response.status_code != _HTTP_OK:
             kind = (

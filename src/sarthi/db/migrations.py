@@ -120,6 +120,17 @@ MIGRATIONS: tuple[str, ...] = (
     ) STRICT;
     CREATE INDEX job_user_status ON job_user (status, updated_at);
     """,
+    # 6: tailored documents per job
+    """
+    CREATE TABLE job_document (
+        job_id               TEXT PRIMARY KEY REFERENCES job (id) ON DELETE CASCADE,
+        profile_version      TEXT NOT NULL,             -- the profile the documents were made for
+        resume_file          TEXT NOT NULL,             -- path inside the data directory
+        letter_file          TEXT NOT NULL,
+        report               TEXT NOT NULL,             -- JSON: keywords, warnings, what was kept from the AI
+        made_at              TEXT NOT NULL
+    ) STRICT;
+    """,
 )
 
 

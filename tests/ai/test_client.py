@@ -186,3 +186,25 @@ async def test_a_long_rate_limit_moves_on_to_the_next_model(store: AiStore, cloc
     )
     result = await client(store, providers, [GEMINI, OLLAMA], clock).structured(PROMPT, Answer)
     assert result.greeting == "local"
+
+
+@pytest.mark.parametrize(("urgent", "waited"), [(False, True), (True, False)])
+async def test_background_work_waits_longer_for_a_fast_model(
+    store: AiStore, clock: FakeClock, monkeypatch: pytest.MonkeyPatch, urgent: bool, waited: bool
+) -> None:
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("sarthi.ai.client.asyncio.sleep", fake_sleep)
+    half_minute = httpx.Response(429, headers={"retry-after": "30"})
+    providers = FakeProviders(
+        {
+            "gemini.test": [half_minute, reply('{"greeting": "fast", "count": 1}')],
+            "localhost": [reply('{"greeting": "local", "count": 1}')],
+        }
+    )
+    result = await client(store, providers, [GEMINI, OLLAMA], clock).structured(PROMPT, Answer, urgent=urgent)
+    assert result.greeting == ("fast" if waited else "local")
+    assert (30.0 in sleeps) is waited

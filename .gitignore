@@ -16,6 +16,8 @@ data/*
 *.sqlite3
 profile.json
 resume*.*
+# ...except Sarthi's own resume template (code, not anyone's resume)
+!src/sarthi/documents/templates/resume.typ
 *.pdf
 *.docx
 *.bundle

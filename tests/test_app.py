@@ -49,6 +49,8 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
             "digest",
             "catchup",
             "catchup_report",
+            "documents",
+            "documents_ready",
         }
         assert sarthi.bot.setup is not None
         planned = set(sarthi.sources.planned)

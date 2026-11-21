@@ -9,3 +9,5 @@ DIGEST = "digest"  # send the day's best unseen matches
 APPLY = "apply"  # the user tapped Apply
 CATCHUP = "catchup"  # search every source over a past window (catch-up mode)
 CATCHUP_REPORT = "catchup_report"  # send the catch-up results as one batch
+DOCUMENTS = "documents"  # make the tailored resume and cover letter for one job
+DOCUMENTS_READY = "documents_ready"  # send the documents (or why they could not be made) to the user

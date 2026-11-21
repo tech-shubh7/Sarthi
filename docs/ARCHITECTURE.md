@@ -181,6 +181,15 @@ with the profile's roles/countries, company boards every 30 min); each check loo
 | No invented facts | **OpenApply** `truth.ts` (port) + **Resume-Matcher** `resume_preservation.py` | Combine |
 | ATS can read the PDF | **Resume-Matcher** `ats_parse/checks.py` | Copy [v1] |
 
+**Implemented:** `profile/master.py` (structured master resume; contact details read locally, never from or to
+the AI; entries kept only when the resume text confirms them), `ai/documents.py` (read into sections, tailor,
+cover letter, claim reviewer), `documents/build.py` (code copies every fact; each AI line is used only if it adds
+no number or skill; strict second try for clichés), `documents/truth.py` (OpenApply truth check + ApplyPilot lists),
+`documents/render.py` + `templates/*.typ` (Typst PDFs; data passed as JSON, never as markup; read back to check an
+ATS sees name, email, sections, employers, titles, schools), `documents/keywords.py` (on resume / you have but not
+shown / missing), `documents/handler.py` (waits for a rate-limited AI instead of settling for the plain fallback,
+except on the last try). Tapping Apply or "📄 Tailored resume" sends both PDFs and the keyword report on Telegram.
+
 **+1:** documents are made only for jobs you tap Apply on (or auto-apply jobs), not every match → far fewer AI calls.
 
 ### 2.11 Form answers [v1]

@@ -29,6 +29,11 @@ copied into [`licenses/`](licenses/) and listed below. Every adapted file also c
 | Project | Licence file | Sarthi files |
 |---|---|---|
 | JobRadar | [licenses/JobRadar-MIT.txt](licenses/JobRadar-MIT.txt) | `src/sarthi/jobs/dedupe.py`, `src/sarthi/jobs/scam.py`, `src/sarthi/db/tasks.py`, `src/sarthi/queue/tasks.py`, `src/sarthi/queue/worker.py`, `src/sarthi/matching/decide.py`, `src/sarthi/ai/client.py` (structured-call flow), `src/sarthi/ai/prompts.py`, `src/sarthi/sources/freehire.py` |
-| ApplyPilot | [licenses/ApplyPilot-AGPL-3.0.txt](licenses/ApplyPilot-AGPL-3.0.txt) | `src/sarthi/ai/client.py` (model fallback chain) |
-| OpenApply | [licenses/OpenApply-MIT.txt](licenses/OpenApply-MIT.txt) | `src/sarthi/matching/prefilter.py` (ported from TypeScript) |
+| ApplyPilot | [licenses/ApplyPilot-AGPL-3.0.txt](licenses/ApplyPilot-AGPL-3.0.txt) | `src/sarthi/ai/client.py` (model fallback chain), `src/sarthi/documents/truth.py` (banned-phrase and AI-leak lists) |
+| OpenApply | [licenses/OpenApply-MIT.txt](licenses/OpenApply-MIT.txt) | `src/sarthi/matching/prefilter.py` (ported from TypeScript), `src/sarthi/documents/truth.py` (truth check) |
 | StillOpen | [licenses/StillOpen-Apache-2.0.txt](licenses/StillOpen-Apache-2.0.txt), NOTICE: [licenses/StillOpen-NOTICE.txt](licenses/StillOpen-NOTICE.txt) | `src/sarthi/jobs/geo.py`, `src/sarthi/jobs/countries.py`, `src/sarthi/jobs/requirements.py` (pattern), `src/sarthi/sources/feeds.py`, `src/sarthi/sources/hackernews.py`, `src/sarthi/sources/web.py` (`plain_text`) |
+
+## Libraries used at run time (not copied)
+
+- [typst-py](https://github.com/messense/typst-py) (Apache-2.0): PDF rendering of resumes and cover letters.
+- [defusedxml](https://github.com/tiran/defusedxml) (PSF-2.0): safe parsing of RSS feeds.
