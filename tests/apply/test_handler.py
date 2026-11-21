@@ -13,7 +13,7 @@ from sarthi.chat.applying import ApplyingFlow, preview_text
 from sarthi.db.answers import AnswerStore
 from sarthi.db.applications import ApplicationStatus, ApplicationStore
 from sarthi.db.chat import ChatStore, JobStatus
-from sarthi.db.documents import DocumentStore
+from sarthi.db.documents import DocumentRecord, DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
 from sarthi.jobs.forms import FormField
@@ -72,10 +72,20 @@ def applier(
 
 
 def job_at(
-    jobs: JobStore, url: str, title: str = "Backend Engineer", company: str = "Acme", country: str = "IN"
+    jobs: JobStore,
+    url: str,
+    title: str = "Backend Engineer",
+    company: str = "Acme",
+    country: str = "IN",
+    *,
+    docs: bool = True,
 ) -> str:
     posting = make_job(url=url, apply_url=url, title=title, company=company, country_codes=[country])
-    return jobs.save(posting).job_id
+    job_id = jobs.save(posting).job_id
+    if docs:  # the tailored resume is made before applying
+        record = DocumentRecord(job_id, "v", f"documents/{job_id}/r.pdf", f"documents/{job_id}/c.pdf")
+        DocumentStore(jobs._conn).save(record)
+    return job_id
 
 
 def payload(queue: TaskQueue, kind: str) -> dict[str, Any]:
@@ -367,3 +377,15 @@ def test_preview_text_is_short_and_escaped() -> None:
     assert "A &amp; B" in text and "Dev &lt;1&gt;" in text
     assert "and 8 more" in text
     assert "<script>" not in text
+
+
+async def test_the_tailored_resume_comes_before_applying(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, LEVER, docs=False)  # e.g. Apply tapped before documents existed
+    engine = FakeEngine(FILLED)
+    await applier(conn, job_store, queue, tmp_path, engine, clock).handle_apply(
+        TaskRecord(1, names.APPLY, job_id, {}, 1)
+    )
+    assert payload(queue, names.DOCUMENTS) == {"apply": True}
+    assert engine.filled == []

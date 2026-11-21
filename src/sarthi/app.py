@@ -40,13 +40,15 @@ from sarthi.profile.repair import repair
 from sarthi.profile.store import load_profile, profile_path, save_profile
 from sarthi.queue import names
 from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQueue
-from sarthi.queue.worker import Worker
+from sarthi.queue.worker import Handler, Worker
 from sarthi.sources.ingest import Ingestor
 from sarthi.sources.schedule import SourceScheduler, plan_sources
 
 log = logging.getLogger(__name__)
 
 WORKER_CONCURRENCY = 3
+USER_CONCURRENCY = 2
+BACKGROUND_TASKS = frozenset({names.SOURCE_CHECK, names.MATCH, names.CATCHUP})
 MATCH_LOGIC_KEY = "matching.logic"
 ALIVE_KEY = "app.alive"  # last time a running Sarthi was seen (ISO), for catch-up after the computer was off
 AUTO_CATCHUP_AFTER = timedelta(hours=6)
@@ -92,14 +94,14 @@ class App:
         await self.bot.handle_digest(task)
         self.schedule_digest()
 
-    def worker(self) -> Worker:
-        """A worker for source checks, matching, alerts and digests."""
-        handlers = {
+    def handlers(self) -> dict[str, Handler]:
+        """Every task type and what runs it."""
+        return {
             names.SOURCE_CHECK: self.sources.handle,
             names.MATCH: self.matcher.handle,
+            names.CATCHUP: self.sources.handle_catchup,
             names.ALERT: self.bot.handle_alert,
             names.DIGEST: self._digest,
-            names.CATCHUP: self.sources.handle_catchup,
             names.CATCHUP_REPORT: self.bot.handle_catchup_report,
             names.DOCUMENTS: self.documents.handle,
             names.DOCUMENTS_READY: self.bot.handle_documents_ready,
@@ -110,7 +112,16 @@ class App:
             names.APPLY_PREVIEW: self.bot.handle_apply_preview,
             names.APPLY_RESULT: self.bot.handle_apply_result,
         }
-        return Worker(self.queue, handlers, concurrency=WORKER_CONCURRENCY, name="sarthi")
+
+    def worker(self) -> Worker:
+        """Background work: reading sources and matching (slow, AI-heavy, never what the user waits on)."""
+        handlers = {t: h for t, h in self.handlers().items() if t in BACKGROUND_TASKS}
+        return Worker(self.queue, handlers, concurrency=WORKER_CONCURRENCY, name="background")
+
+    def user_worker(self) -> Worker:
+        """What the user asked for or waits on (alerts, documents, applying): never behind matching."""
+        handlers = {t: h for t, h in self.handlers().items() if t not in BACKGROUND_TASKS}
+        return Worker(self.queue, handlers, concurrency=USER_CONCURRENCY, name="user")
 
     async def _tick_sources(self, worker: Worker) -> None:
         while True:
@@ -155,16 +166,17 @@ class App:
             await self.catch_up_after_absence()
         except (RetryableError, PermanentError) as error:
             log.warning("could not start the catch-up after a break: %s", error)
-        worker = self.worker()
+        worker, user = self.worker(), self.user_worker()
         tasks = [
             asyncio.create_task(self.bot.poll()),
             asyncio.create_task(worker.run()),
+            asyncio.create_task(user.run()),
             asyncio.create_task(self._tick_sources(worker)),
         ]
         try:
             await asyncio.gather(*tasks)
         finally:
-            await self._shutdown(worker, tasks)
+            await self._shutdown((worker, user), tasks)
 
     def catchup_problem(self) -> str | None:
         """Why a catch-up cannot run now (not paired, no profile), or None."""
@@ -183,8 +195,8 @@ class App:
         self.rematch_after_upgrade()
         if not self.bot.catchup.start(hours):
             log.info("a catch-up is already running; waiting for it")
-        worker = self.worker()
-        tasks = [asyncio.create_task(worker.run())]
+        worker, user = self.worker(), self.user_worker()
+        tasks = [asyncio.create_task(worker.run()), asyncio.create_task(user.run())]
         deadline = self.clock() + timeout
         try:
             while self.clock() < deadline:
@@ -193,11 +205,12 @@ class App:
                     return True
             return False
         finally:
-            await self._shutdown(worker, tasks)
+            await self._shutdown((worker, user), tasks)
 
-    async def _shutdown(self, worker: Worker, tasks: list[asyncio.Task[None]]) -> None:
+    async def _shutdown(self, workers: tuple[Worker, ...], tasks: list[asyncio.Task[None]]) -> None:
         self.bot.stop()
-        worker.stop()
+        for worker in workers:
+            worker.stop()
         for task in tasks:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):

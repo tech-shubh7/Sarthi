@@ -119,6 +119,9 @@ class Applier:
         if job is None or ctx is None:
             return
         url = str(job.apply_url or job.url)
+        if self.documents.get(task.key) is None:  # the tailored resume and letter come first
+            self.queue.enqueue(names.DOCUMENTS, task.key, {"apply": True}, priority=Priority.ALERT)
+            return
         if (key := self.jobs.role_key_of(task.key)) and self.applications.sent_for_role(key, task.key):
             self._result(task.key, "duplicate", f"You already applied to {job.title} at {job.company}.")
             return
