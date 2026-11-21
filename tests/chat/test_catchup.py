@@ -212,7 +212,7 @@ async def test_report_sends_summary_cards_and_spreadsheet(
     assert "Searched 12 source(s), 30 new job(s)." in summary
     assert "feed:remoteok" in summary
     assert "<b>13</b> match your profile (4 strong)" in summary
-    assert len(api.sent) == 1 + 10  # summary + best 10 cards
+    assert len(api.sent) == 1 + 10 + 1  # summary + best 10 cards + "apply to the best?"
     ((name, content, _),) = api.files
     assert name.startswith("sarthi-matches-last-2-days-") and name.endswith(".csv")
     rows = list(csv.reader(io.StringIO(content.decode("utf-8-sig"))))
@@ -220,6 +220,81 @@ async def test_report_sends_summary_cards_and_spreadsheet(
     assert len(rows) == 14
     assert rows[1][0] == "64"  # best first
     assert not bot.catchup.running()
+
+
+def batch_labels(api: FileApi) -> list[str]:
+    markup = api.sent[-1][2]
+    assert markup is not None
+    return [b["text"] for row in markup["inline_keyboard"] for b in row]
+
+
+async def report_with(
+    bot: TelegramBot, api: FileApi, chats: ChatStore, clock: FakeClock, count: int
+) -> list[str]:
+    pair(bot, chats, clock)
+    bot.catchup.start(48)
+    ids = [job(bot, n, 90 - n) for n in range(1, count + 1)]  # best first
+    await bot.handle_catchup_report(report())
+    return ids
+
+
+async def test_batch_apply_queues_the_best_spaced_out(
+    bot: TelegramBot, api: FileApi, chats: ChatStore, clock: FakeClock, queue: TaskQueue
+) -> None:
+    ids = await report_with(bot, api, chats, clock, 12)
+    assert batch_labels(api) == ["✅ Apply to the best 5", "✅ Apply to the best 10", "No thanks"]
+    chats.set_job_status(ids[1], JobStatus.SKIPPED)  # answered meanwhile: not applied to
+    await bot.handle_update(tap(OWNER, "batch:5"))
+    assert "Applying to 5 jobs" in api.texts()[-1]
+    assert "Nothing is sent until you tap Submit." in api.texts()[-1]
+    clock.advance(3600)  # long enough for every spaced-out application to be due
+    queued = []
+    while (task := queue.claim([names.DOCUMENTS])) is not None:
+        queued.append(task)
+    assert {t.key for t in queued} == {ids[0], *ids[2:6]}
+    assert all(t.payload == {"apply": True, "batch": True} for t in queued)
+    assert all(chats.job_status(job_id) is JobStatus.APPLY for job_id in (ids[0], *ids[2:6]))
+
+
+async def test_batch_applications_are_minutes_apart(
+    bot: TelegramBot, api: FileApi, chats: ChatStore, clock: FakeClock, queue: TaskQueue
+) -> None:
+    await report_with(bot, api, chats, clock, 6)
+    await bot.handle_update(tap(OWNER, "batch:5"))
+    assert queue.claim([names.DOCUMENTS]) is not None  # the first one now
+    assert queue.claim([names.DOCUMENTS]) is None  # the next ones later
+    clock.advance(4 * 60 + 2 * 60)  # gap + the most jitter
+    assert queue.claim([names.DOCUMENTS]) is not None
+    assert queue.claim([names.DOCUMENTS]) is None
+
+
+async def test_batch_is_one_tap_and_no_thanks_applies_nothing(
+    bot: TelegramBot, api: FileApi, chats: ChatStore, clock: FakeClock, queue: TaskQueue
+) -> None:
+    await report_with(bot, api, chats, clock, 3)
+    assert batch_labels(api) == ["✅ Apply to the best 3", "No thanks"]  # fewer jobs than the smallest size
+    await bot.handle_update(tap(OWNER, "batch:0"))
+    assert "won't apply" in api.texts()[-1]
+    await bot.handle_update(tap(OWNER, "batch:3"))  # an old button tapped again
+    assert "expired" in api.texts()[-1]
+    assert queue.claim([names.DOCUMENTS]) is None
+
+
+@pytest.mark.parametrize("data", ["batch:", "batch:abc", "batch:-1", "batch:99", "batch:5:extra"])
+async def test_odd_batch_buttons_apply_nothing(
+    bot: TelegramBot, api: FileApi, chats: ChatStore, clock: FakeClock, queue: TaskQueue, data: str
+) -> None:
+    await report_with(bot, api, chats, clock, 6)
+    await bot.handle_update(tap(OWNER, data))
+    assert queue.claim([names.DOCUMENTS]) is None
+
+
+async def test_strangers_cannot_batch_apply(
+    bot: TelegramBot, api: FileApi, chats: ChatStore, clock: FakeClock, queue: TaskQueue
+) -> None:
+    await report_with(bot, api, chats, clock, 6)
+    await bot.handle_update(tap(666, "batch:5"))
+    assert queue.claim([names.DOCUMENTS]) is None
 
 
 async def test_report_with_nothing_found(

@@ -9,6 +9,7 @@ match as a spreadsheet file. While a catch-up runs, single alerts are held so th
 from __future__ import annotations
 
 import logging
+import random
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from html import escape
@@ -34,6 +35,11 @@ STALE_AFTER = timedelta(hours=2)  # a catch-up that crashed stops holding alerts
 _DONE_STATUSES = frozenset({JobStatus.SKIPPED, JobStatus.APPLY, JobStatus.APPLIED})
 
 ASK = "🔎 <b>Catch-up</b>: I'll search every job source for what was posted in the window you pick."
+BATCH_KEY = "catchup.batch"  # the best jobs of the last catch-up, for "apply to the best N"
+BATCH_SIZES = (5, 10)
+BATCH_GAP_S = 240  # applications are spread out: minutes apart, not seconds (and the AI keeps up)
+BATCH_JITTER_S = 120
+BATCH_ASK = "Want me to apply to the best of these for you? Every form still waits for your Submit."
 
 SendJob = Callable[[int, str, JobStatus], Awaitable[bool]]
 
@@ -77,8 +83,10 @@ class CatchUp:
         *,
         send_job: SendJob,
         clock: Clock = utcnow,
+        rng: random.Random | None = None,
     ) -> None:
-        """Send with ``api``; ``send_job`` sends one job card with its buttons."""
+        """Send with ``api``; ``send_job`` sends a job card with buttons; ``rng`` spaces batch applies."""
+        self._rng = rng or random.Random()  # noqa: S311  (spacing, not security)
         self.api = api
         self.chats = chats
         self.jobs = jobs
@@ -189,3 +197,60 @@ class CatchUp:
         await self.api.send_document(
             chat_id, name, matches_csv(rows), caption=f"All {len(rows)} matches as a spreadsheet."
         )
+        best = [row.match.job_id for row in rows[:CARDS]]
+        self.chats.set_state(BATCH_KEY, ",".join(best))
+        await self.api.send_message(chat_id, BATCH_ASK, batch_buttons(len(best)))
+
+    async def on_batch(self, chat_id: int, data: str) -> None:
+        """A ``batch:<n>`` button: apply to the best ``n`` jobs of the last catch-up, spaced out.
+
+        Each goes through the normal Apply flow (tailored documents, the form's questions, then the filled
+        form with a Submit button), so nothing is sent without the user's tap. One tap per catch-up.
+        """
+        size = parse_batch(data)
+        saved = self.chats.get_state(BATCH_KEY)
+        self.chats.set_state(BATCH_KEY, None)
+        if size is None or not saved:
+            await self.api.send_message(chat_id, "That list has expired; run /catchup again.")
+            return
+        if size == 0:
+            await self.api.send_message(chat_id, "OK, I won't apply. Tap Apply on any card when you like.")
+            return
+        queued = 0
+        for job_id in saved.split(","):
+            if queued >= size:
+                break
+            if self.chats.job_status(job_id) in _DONE_STATUSES or self.jobs.get(job_id) is None:
+                continue
+            self.chats.set_job_status(job_id, JobStatus.APPLY)
+            delay = queued * BATCH_GAP_S + (self._rng.uniform(0, BATCH_JITTER_S) if queued else 0)
+            self.queue.enqueue(
+                names.DOCUMENTS, job_id, {"apply": True, "batch": True}, delay=delay, priority=Priority.NORMAL
+            )
+            queued += 1
+        if not queued:
+            await self.api.send_message(chat_id, "You've already answered all of those.")
+            return
+        minutes = (BATCH_GAP_S + BATCH_JITTER_S) // 60
+        await self.api.send_message(
+            chat_id,
+            f"✅ Applying to {queued} job{'s' if queued != 1 else ''}, "
+            f"one every few minutes (up to {minutes}). "
+            "For each you get the tailored resume and letter, any questions the form asks, then the filled "
+            "form with a Submit button. Nothing is sent until you tap Submit.",
+        )
+
+
+def batch_buttons(available: int) -> Markup:
+    """Buttons: apply to the best 5 or 10 (sizes there are enough jobs for), and "No thanks"."""
+    sizes = [n for n in BATCH_SIZES if n <= available] or [available]
+    return buttons(
+        [(f"✅ Apply to the best {n}", f"batch:{n}") for n in sizes],
+        [("No thanks", "batch:0")],
+    )
+
+
+def parse_batch(data: str) -> int | None:
+    """``n`` from a ``batch:<n>`` button (0 is "No thanks"); None when it is not a sensible size."""
+    _, _, value = data.partition(":")
+    return int(value) if value.isdigit() and int(value) <= CARDS else None

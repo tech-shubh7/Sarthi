@@ -498,6 +498,10 @@ class TelegramBot:
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)
             await self.catchup.on_button(chat_id, data)
+        elif data.startswith("batch:"):
+            await self.api.answer_callback(callback_id)
+            await self.api.edit_buttons(chat_id, message_id, None)  # one tap per catch-up
+            await self.catchup.on_batch(chat_id, data)
         else:
             return False
         return True
