@@ -71,7 +71,7 @@ def dashboard() -> None:
         typer.echo("No data yet: run `uv run sarthi run` first.", err=True)
         raise typer.Exit(code=1)
     try:
-        server = make_server(settings.db_path, settings.dashboard_port)
+        server = make_server(settings.db_path, settings.dashboard_port, host=settings.dashboard_host)
     except NoFreePortError as error:
         typer.echo(f"Cannot start the dashboard: {error}", err=True)
         raise typer.Exit(code=1) from None

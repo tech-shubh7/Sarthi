@@ -20,6 +20,7 @@ from sarthi.web.app import create_app, read_only
 log = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"  # this computer only; the dashboard has no login
+ALL_INTERFACES = "0.0.0.0"  # noqa: S104  (inside a container only: compose publishes it to the host's 127.0.0.1)
 PORT_TRIES = 10  # 8765 busy: try 8766 ... 8774
 
 
@@ -27,10 +28,10 @@ class NoFreePortError(Exception):
     """Every port tried is in use."""
 
 
-def _bindable(port: int) -> bool:
+def _bindable(port: int, host: str = HOST) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
-            s.bind((HOST, port))
+            s.bind((host, port))
         except OSError as e:
             if e.errno in (errno.EADDRINUSE, errno.EACCES):
                 return False
@@ -38,21 +39,23 @@ def _bindable(port: int) -> bool:
     return True
 
 
-def free_port(port: int) -> int:
+def free_port(port: int, host: str = HOST) -> int:
     """``port`` if nothing uses it, else the next free one within ``PORT_TRIES``."""
     for candidate in range(port, min(port + PORT_TRIES, 65536)):
-        if _bindable(candidate):
+        if _bindable(candidate, host):
             return candidate
     raise NoFreePortError(
         f"ports {port}-{port + PORT_TRIES - 1} are all in use; set SARTHI_DASHBOARD_PORT to a free one"
     )
 
 
-def make_server(db_path: Path, port: int, *, own_signals: bool = True) -> Any:
-    """A Uvicorn server for the dashboard.
+def make_server(db_path: Path, port: int, *, host: str = HOST, own_signals: bool = True) -> Any:
+    """A Uvicorn server for the dashboard on ``host`` (127.0.0.1, or all interfaces inside a container).
 
     ``own_signals=False`` (inside ``sarthi run``) leaves Ctrl+C to Sarthi, which stops it via ``should_exit``.
     """
+    if host not in (HOST, ALL_INTERFACES):
+        raise ValueError(f"dashboard host must be {HOST} or {ALL_INTERFACES}, not {host!r}")
     import uvicorn  # noqa: PLC0415  (only when the dashboard runs)
 
     class Server(uvicorn.Server):
@@ -64,13 +67,13 @@ def make_server(db_path: Path, port: int, *, own_signals: bool = True) -> Any:
             else:
                 yield
 
-    chosen = free_port(port)
+    chosen = free_port(port, host)
     if chosen != port:
         log.warning("Port %d is in use; the dashboard took %d instead", port, chosen)
     log.info("Dashboard: http://%s:%d", HOST, chosen)
     config = uvicorn.Config(
         create_app(read_only(db_path)),
-        host=HOST,
+        host=host,
         port=chosen,
         log_level="warning",
         access_log=False,

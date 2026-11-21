@@ -159,7 +159,12 @@ def test_a_busy_port_moves_to_the_next_free_one() -> None:
         assert server.free_port(port) != port
 
 
+def test_only_this_computer_or_a_container_can_be_the_host(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="dashboard host"):
+        server.make_server(tmp_path / "x.db", 8765, host="192.168.1.10")
+
+
 def test_no_free_port_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server, "_bindable", lambda port: False)
+    monkeypatch.setattr(server, "_bindable", lambda port, host="": False)
     with pytest.raises(server.NoFreePortError, match="SARTHI_DASHBOARD_PORT"):
         server.free_port(8765)

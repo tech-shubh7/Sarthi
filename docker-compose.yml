@@ -1,0 +1,49 @@
+# Adapted from JobRadar (MIT), docker-compose.yml @ fdd739b. Copyright (c) ThePlator.
+# Modifications (c) Sarthi contributors.
+#
+#   cp .env.example .env        # then fill in your Telegram bot token and AI keys
+#   docker compose up -d        # Sarthi; the dashboard is at http://127.0.0.1:8765
+#   docker compose run --rm sarthi pair      # link your Telegram chat (once)
+#   docker compose logs -f sarthi
+#
+# A local AI model, optional (needs ~2 GB of free memory):
+#   docker compose --profile ollama up -d
+#   docker compose exec ollama ollama pull qwen2.5:1.5b
+#   and list "ollama/qwen2.5:1.5b" in SARTHI_LLM_QUALITY_MODELS in .env
+services:
+  sarthi:
+    build: .
+    image: sarthi:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SARTHI_DATA_DIR: /app/data
+      SARTHI_DASHBOARD_HOST: "0.0.0.0" # inside the container; published below to this computer only
+      SARTHI_OLLAMA_URL: http://ollama:11434/v1 # used only when an ollama/... model is listed
+    volumes:
+      - ./data:/app/data # database, resume, documents, logins: everything that is yours
+    ports:
+      - "127.0.0.1:8765:8765" # the dashboard, reachable from this computer only
+    read_only: true # only /app/data (and the scratch folders below) can be written
+    tmpfs:
+      - /tmp
+      - /home/sarthi
+    shm_size: 256mb # Chromium needs more shared memory than Docker's default 64 MB
+    security_opt:
+      - no-new-privileges:true
+
+  ollama:
+    image: ollama/ollama:0.40.17
+    profiles: [ollama]
+    restart: unless-stopped
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1" # one model in memory at a time
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_KEEP_ALIVE: 2m # freed two minutes after its last answer
+      OLLAMA_CONTEXT_LENGTH: "4096"
+    volumes:
+      - ollama:/root/.ollama
+    mem_limit: 3g # never more than this, whatever the model
+
+volumes:
+  ollama:

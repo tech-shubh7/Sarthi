@@ -214,7 +214,12 @@ class App:
         if not self.settings.dashboard:
             return None
         try:
-            return make_server(self.settings.db_path, self.settings.dashboard_port, own_signals=False)
+            return make_server(
+                self.settings.db_path,
+                self.settings.dashboard_port,
+                host=self.settings.dashboard_host,
+                own_signals=False,
+            )
         except NoFreePortError as error:
             log.warning("dashboard not started: %s", error)
             return None
