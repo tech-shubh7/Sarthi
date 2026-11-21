@@ -1,0 +1,135 @@
+"""The application steps in the chat: the filled form for approval, and how each application ended."""
+
+from __future__ import annotations
+
+import logging
+from html import escape
+from pathlib import Path
+from typing import Any
+
+from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
+from sarthi.db.applications import ApplicationStatus, ApplicationStore
+from sarthi.db.chat import ChatStore, JobStatus
+from sarthi.db.jobs import JobStore
+from sarthi.db.tasks import TaskRecord
+from sarthi.queue import names
+from sarthi.queue.tasks import Priority, TaskQueue
+
+log = logging.getLogger(__name__)
+
+MAX_FILLED_SHOWN = 12
+MAX_PHOTO_BYTES = 9_000_000  # Telegram's photo limit is 10 MB
+
+
+def preview_text(company: str, title: str, filled: list[Any]) -> str:
+    """The caption under the filled form's screenshot."""
+    lines = [f"📝 <b>Ready to apply: {escape(title)}</b> at {escape(company)}", "Filled:"]
+    for item in filled[:MAX_FILLED_SHOWN]:
+        if isinstance(item, (list, tuple)) and len(item) == 2:  # noqa: PLR2004
+            lines.append(f"• {escape(str(item[0])[:60])}: {escape(str(item[1])[:80])}")
+    if len(filled) > MAX_FILLED_SHOWN:
+        lines.append(f"…and {len(filled) - MAX_FILLED_SHOWN} more")
+    lines.append("\nCheck the screenshot, then tap <b>Submit</b>. Nothing is sent until you do.")
+    return "\n".join(lines)
+
+
+class ApplyingFlow:
+    """Sends previews and results; turns taps into ``submit`` tasks and status changes."""
+
+    def __init__(  # noqa: PLR0913  (explicit dependencies)
+        self,
+        api: TelegramApi,
+        chats: ChatStore,
+        jobs: JobStore,
+        applications: ApplicationStore,
+        queue: TaskQueue,
+        *,
+        data_dir: Path,
+    ) -> None:
+        """Send with ``api``; screenshots are read from ``data_dir``."""
+        self.api = api
+        self.chats = chats
+        self.jobs = jobs
+        self.applications = applications
+        self.queue = queue
+        self.data_dir = data_dir
+
+    def _photo(self, relative: str) -> bytes | None:
+        if not relative:
+            return None
+        path = (self.data_dir / relative).resolve()
+        if self.data_dir.resolve() not in path.parents:
+            return None  # only files Sarthi wrote into its own data folder
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return None
+        return data if len(data) <= MAX_PHOTO_BYTES else None
+
+    async def preview(self, task: TaskRecord, chat_id: int) -> None:
+        """``apply_preview`` task: the filled form with Submit / Cancel."""
+        job = self.jobs.get(task.key)
+        code = str(task.payload.get("code") or "")
+        if job is None or not code:
+            return
+        caption = preview_text(job.company, job.title, list(task.payload.get("filled") or []))
+        markup = buttons([("✅ Submit", f"submit:{task.key}:{code}"), ("❌ Cancel", f"cancel:{task.key}")])
+        photo = self._photo(str(task.payload.get("screenshot") or ""))
+        if photo is None or not await self._send_photo(chat_id, photo, caption, markup):
+            await self.api.send_message(chat_id, caption, markup)
+
+    async def _send_photo(self, chat_id: int, photo: bytes, caption: str, markup: Markup | None) -> bool:
+        """True when Telegram took the picture (a refused photo must not lose the message)."""
+        try:
+            await self.api.send_photo(chat_id, photo, caption, markup)
+        except Exception as error:  # noqa: BLE001
+            log.warning("could not send a screenshot: %s", error)
+            return False
+        return True
+
+    async def on_button(self, chat_id: int, data: str) -> str:
+        """A Submit / Cancel / "I applied" tap. Returns the short reply shown on the button."""
+        action, _, rest = data.partition(":")
+        job_id, _, code = rest.partition(":")
+        if not job_id or self.jobs.get(job_id) is None:
+            return "That job is no longer stored."
+        if action == "submit" and code:
+            self.queue.enqueue(names.SUBMIT, job_id, {"code": code}, priority=Priority.ALERT)
+            return "⏳ Submitting…"
+        if action == "cancel":
+            self.applications.record(job_id, ApplicationStatus.FAILED, detail="cancelled by the user")
+            self.chats.set_job_status(job_id, JobStatus.SKIPPED)
+            return "Cancelled: nothing was sent."
+        if action == "applied":
+            self.applications.record(job_id, ApplicationStatus.APPLIED_BY_USER, detail="applied by the user")
+            self.chats.set_job_status(job_id, JobStatus.APPLIED)
+            return "✅ Marked as applied"
+        return ""
+
+    async def result(self, task: TaskRecord, chat_id: int) -> None:
+        """``apply_result`` task: how the application ended, with what to do next."""
+        job = self.jobs.get(task.key)
+        if job is None:
+            return
+        outcome = str(task.payload.get("outcome") or "")
+        detail = escape(str(task.payload.get("detail") or "")[:500])
+        what = f"<b>{escape(job.title)}</b> at {escape(job.company)}"
+        url = escape(str(task.payload.get("url") or job.apply_url or job.url), quote=True)
+        markup: Markup | None = None
+        if outcome == "submitted":
+            self.chats.set_job_status(task.key, JobStatus.APPLIED)
+            text = f"✅ Applied: {what}\n{detail}"
+        elif outcome == "duplicate":
+            text = f"ℹ️ {detail}"
+        elif outcome == "expired":
+            text = f"⏳ {what}: {detail} Filling it again for a fresh approval…"
+        else:
+            text = (
+                f"🙋 {what} needs you: {detail}\n\n"
+                f'<a href="{url}">Open the application</a>, attach the resume I sent, and submit. '
+                "Then tap the button so I can track it."
+            )
+            markup = buttons([("✅ I applied", f"applied:{task.key}")])
+        photo = self._photo(str(task.payload.get("screenshot") or "")) if outcome == "submitted" else None
+        if photo is None or not await self._send_photo(chat_id, photo, text, markup):
+            await self.api.send_message(chat_id, text, markup)

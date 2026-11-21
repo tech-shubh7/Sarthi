@@ -15,6 +15,8 @@ from sarthi.ai.client import AiClient
 from sarthi.ai.providers import resolve
 from sarthi.ai.scoring import LlmMatchScorer
 from sarthi.answers.handler import FormChecker
+from sarthi.apply.engine import ApplyEngine
+from sarthi.apply.handler import Applier
 from sarthi.chat.pairing import owner_chat
 from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import TelegramApi
@@ -23,6 +25,7 @@ from sarthi.clock import Clock, from_iso, to_iso, utcnow
 from sarthi.config import Settings
 from sarthi.db.ai_store import AiStore
 from sarthi.db.answers import AnswerStore
+from sarthi.db.applications import ApplicationStore
 from sarthi.db.chat import ChatStore
 from sarthi.db.connection import connect
 from sarthi.db.documents import DocumentStore
@@ -75,6 +78,7 @@ class App:
     sources: SourceScheduler
     documents: DocumentMaker
     forms: FormChecker
+    applier: Applier
     ai_clients: tuple[AiClient, ...]
     clock: Clock
 
@@ -101,12 +105,17 @@ class App:
             names.DOCUMENTS_READY: self.bot.handle_documents_ready,
             names.FORM_CHECK: self.forms.handle,
             names.ASK_QUESTIONS: self.bot.handle_ask_questions,
+            names.APPLY: self.applier.handle_apply,
+            names.SUBMIT: self.applier.handle_submit,
+            names.APPLY_PREVIEW: self.bot.handle_apply_preview,
+            names.APPLY_RESULT: self.bot.handle_apply_result,
         }
         return Worker(self.queue, handlers, concurrency=WORKER_CONCURRENCY, name="sarthi")
 
     async def _tick_sources(self, worker: Worker) -> None:
         while True:
             self.bot.chats.set_state(ALIVE_KEY, to_iso(self.clock()))
+            await self.applier.engine.close_idle()  # forms nobody approved in time
             if self.sources.tick():
                 worker.wake()
             await asyncio.sleep(TICK_SECONDS)
@@ -196,6 +205,7 @@ class App:
         if self.bot.inbox is not None:
             await self.bot.inbox.close()
         await self.bot.api.aclose()
+        await self.applier.engine.aclose()
         for client in self.ai_clients:
             await client.aclose()
         self.conn.close()
@@ -258,6 +268,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         profile_version=profile_version,
         documents=DocumentStore(conn, clock=clock),
         answers=AnswerStore(conn, clock=clock),
+        applications=ApplicationStore(conn, clock=clock),
         data_dir=settings.data_dir,
         clock=clock,
     )
@@ -295,4 +306,18 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         profile,
         data_dir=settings.data_dir,
     )
-    return App(settings, conn, queue, bot, matcher, sources, documents, forms, (fast, quality), clock)
+    applier = Applier(
+        ApplyEngine(settings.data_dir / "screenshots", headless=settings.apply_headless),
+        jobs,
+        DocumentStore(conn, clock=clock),
+        AnswerStore(conn, clock=clock),
+        ApplicationStore(conn, clock=clock),
+        queue=queue,
+        load_profile=profile,
+        data_dir=settings.data_dir,
+        daily_limit=settings.apply_daily_limit,
+        clock=clock,
+    )
+    return App(
+        settings, conn, queue, bot, matcher, sources, documents, forms, applier, (fast, quality), clock
+    )

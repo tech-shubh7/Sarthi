@@ -149,6 +149,21 @@ MIGRATIONS: tuple[str, ...] = (
         PRIMARY KEY (job_id, field_key)
     ) STRICT;
     """,
+    # 8: applications: how each one went (also what reply tracking matches emails against)
+    """
+    CREATE TABLE application (
+        job_id               TEXT PRIMARY KEY REFERENCES job (id) ON DELETE CASCADE,
+        status               TEXT NOT NULL
+                             CHECK (status IN
+                                 ('filled', 'submitted', 'needs_human', 'failed', 'applied_by_user')),
+        site                 TEXT NOT NULL DEFAULT '',  -- the form's host, for daily per-site limits
+        detail               TEXT NOT NULL DEFAULT '',
+        screenshot           TEXT NOT NULL DEFAULT '',  -- path inside the data directory
+        updated_at           TEXT NOT NULL,
+        submitted_at         TEXT
+    ) STRICT;
+    CREATE INDEX application_site ON application (site, submitted_at);
+    """,
 )
 
 

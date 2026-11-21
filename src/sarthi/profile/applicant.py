@@ -10,11 +10,15 @@ the user; nothing is guessed.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
+from sarthi.db.answers import AnswerStore
+from sarthi.db.documents import DocumentStore
+from sarthi.db.jobs import JobStore
 from sarthi.jobs.countries import name as country_name
-from sarthi.jobs.forms import Applicant
+from sarthi.jobs.forms import Applicant, FormContext
 from sarthi.jobs.models import JobPosting, RemoteType
-from sarthi.profile.master import MasterResume
+from sarthi.profile.master import MasterResume, load_master, master_path
 from sarthi.profile.models import Profile
 
 _PRESENT = re.compile(r"(?i)present|current|now|ongoing|today")
@@ -106,4 +110,37 @@ def applicant(
         start_year=_year(school.start) if school else "",
         end_year=_year(school.end) if school else "",
         saved_answers=dict(saved),
+    )
+
+
+LETTER_FILE = "cover_letter.txt"
+
+
+def form_context(  # noqa: PLR0913  (everything a form is filled from)
+    job_id: str,
+    profile: Profile,
+    *,
+    jobs: JobStore,
+    documents: DocumentStore,
+    answers: AnswerStore,
+    data_dir: Path,
+) -> FormContext | None:
+    """What this job's form may be filled with (facts, files, letter, answers); None when the job is gone."""
+    job = jobs.get(job_id)
+    if job is None:
+        return None
+    record = documents.get(job_id)
+    resume = cover = letter = ""
+    if record is not None:
+        resume, cover = str(data_dir / record.resume_file), str(data_dir / record.letter_file)
+        letter_path = data_dir / Path(record.resume_file).parent / LETTER_FILE
+        letter = letter_path.read_text(encoding="utf-8") if letter_path.is_file() else ""
+    master = load_master(master_path(data_dir))
+    return FormContext(
+        applicant=applicant(profile, master, job, answers.saved()),
+        resume_file=resume,
+        cover_file=cover,
+        cover_letter=letter,
+        job_location=job.location_text,
+        job_remote=job.is_remote_anywhere,
     )

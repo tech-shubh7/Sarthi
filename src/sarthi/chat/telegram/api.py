@@ -7,6 +7,7 @@ request logging is silenced, and errors here mention only the method name and st
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 from typing import Any
 
@@ -150,6 +151,16 @@ class TelegramApi:
         """The command menu Telegram shows when the user types "/" (name without the slash, description)."""
         payload = {"commands": [{"command": name, "description": about[:256]} for name, about in commands]}
         await self._call("setMyCommands", payload)
+
+    async def send_photo(
+        self, chat_id: int, photo: bytes, caption: str = "", markup: Markup | None = None
+    ) -> int:
+        """Send a picture (PNG/JPEG) with an HTML caption and optional buttons; returns the message id."""
+        data = {"chat_id": str(chat_id), "caption": caption[:1024], "parse_mode": "HTML"}
+        if markup is not None:
+            data["reply_markup"] = json.dumps(markup)
+        result = await self._upload("sendPhoto", data, {"photo": ("form.png", photo, "image/png")})
+        return int(result["message_id"])
 
     async def answer_callback(self, callback_id: str, text: str = "") -> None:
         """Acknowledge a button tap (stops the spinner), with an optional short toast."""

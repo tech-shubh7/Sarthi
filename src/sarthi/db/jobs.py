@@ -124,6 +124,11 @@ class JobStore:
         )
         return [str(row["id"]) for row in rows]
 
+    def role_key_of(self, job_id: str) -> str | None:
+        """The job's company+role key (the same role posted twice shares it), or None."""
+        row = self._conn.execute("SELECT role_key FROM job WHERE id = ?", (job_id,)).fetchone()
+        return str(row["role_key"]) if row and row["role_key"] else None
+
     def full_text(self, job_id: str) -> str:
         """The complete description saved with the job ("" when none was saved)."""
         row = self._conn.execute("SELECT text_zlib FROM job_text WHERE job_id = ?", (job_id,)).fetchone()

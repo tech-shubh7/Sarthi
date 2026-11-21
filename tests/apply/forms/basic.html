@@ -1,0 +1,16 @@
+<!doctype html><html><head><title>Apply</title></head><body>
+<form id="f" onsubmit="event.preventDefault(); location.href='thanks.html';">
+  <div class="field"><label for="first">First name *</label><input id="first" name="first" required></div>
+  <div class="field"><label for="last">Last name *</label><input id="last" name="last" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" type="email" name="email" required></div>
+  <div class="field"><label for="resume">Resume/CV *</label><input id="resume" type="file" name="resume" required></div>
+  <div class="field"><label for="auth">Are you legally authorized to work in India? *</label>
+    <select id="auth" name="auth" required><option value="">Select...</option><option>Yes</option><option>No</option></select></div>
+  <fieldset><legend>Gender</legend>
+    <label><input type="radio" name="g" value="m"> Male</label>
+    <label><input type="radio" name="g" value="f"> Female</label>
+    <label><input type="radio" name="g" value="d"> I don't wish to answer</label></fieldset>
+  <div class="field"><label for="why">Why do you want to work here? *</label><textarea id="why" name="why" required></textarea></div>
+  <div class="field"><label for="hidden">Hidden</label><input id="hidden" type="hidden" name="h"></div>
+  <button type="submit">Submit</button>
+</form></body></html>

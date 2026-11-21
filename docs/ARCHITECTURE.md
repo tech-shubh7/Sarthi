@@ -218,6 +218,15 @@ Plus, copied:
 - **Proof:** screenshot of the confirmation page (AIHawk).
 - **Daily limit per site** (user-set) to protect the user's LinkedIn/Naukri accounts.
 
+**Implemented (rule-based step + hand-off):** `apply/adapters.py` + `scan.js` + `captcha.js` (OpenApply port:
+Greenhouse incl. embedded iframes, Lever, Ashby, any plain form; waits until React dropdowns are live before
+typing), `apply/engine.py` (headless fill, files first, form screenshot, one-time code; submit only with that code
+on the same open page, never with blanks, never past a CAPTCHA; "submitted" only on the hiring system's own success
+mark), `apply/handler.py` (one application per role, daily per-site limit, Workday / login-only boards / CAPTCHA /
+unfillable fields handed to the user with the link and an "I applied" button), `chat/applying.py` (screenshot with
+Submit / Cancel). Verified on a live Greenhouse form (dry run, never submitted): 17 fields filled in 3 of 3 runs.
+Remaining for v1: replay of saved paths, AI browser for unknown forms, LinkedIn Easy Apply / Workday / Naukri.
+
 **+1:** steps 1–2 cost zero AI; AI is only used when the cheap ways fail, and every AI success is saved as a replay path → each job system gets cheaper over time.
 
 ### 2.13 Tracking replies [v1]

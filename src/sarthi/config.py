@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     feeds_every_minutes: int = Field(default=60, ge=15)
     freehire: bool = Field(default=True, description="Search Freehire (~90 hiring systems) for your roles.")
 
+    # Applying: forms are filled in a browser without a window; nothing is submitted without your approval.
+    apply_headless: bool = True
+    apply_daily_limit: int = Field(default=30, ge=1, le=500, description="Applications per site per day.")
+
     # AI models, tried in order until one answers: "<provider>/<model>", e.g. "gemini/gemini-2.5-flash".
     # Providers: ollama, gemini, openai, anthropic, groq, openrouter, deepseek (see sarthi.ai.providers).
     llm_fast_models: list[str] = Field(default=["ollama/llama3.1"], description="For matching.")

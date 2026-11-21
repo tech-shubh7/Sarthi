@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from sarthi.ai.intent import Kind
+from sarthi.chat.applying import ApplyingFlow
 from sarthi.chat.cards import display_company, job_card
 from sarthi.chat.catchup import ASK as ASK_CATCHUP
 from sarthi.chat.catchup import CatchUp, window_buttons
@@ -26,6 +27,7 @@ from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
 from sarthi.chat.understand import Route, route, route_by_rules
 from sarthi.clock import Clock, utcnow
 from sarthi.db.answers import AnswerStore
+from sarthi.db.applications import ApplicationStore
 from sarthi.db.chat import ANSWERED, ChatStore, JobStatus
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
@@ -147,6 +149,7 @@ class TelegramBot:
         profile_version: Callable[[], str | None] = lambda: None,
         documents: DocumentStore | None = None,
         answers: AnswerStore | None = None,
+        applications: ApplicationStore | None = None,
         data_dir: Path | None = None,
         clock: Clock = utcnow,
     ) -> None:
@@ -163,6 +166,11 @@ class TelegramBot:
         self.documents = documents
         self.data_dir = data_dir
         self.questions = QuestionFlow(api, chats, jobs, answers, queue) if answers is not None else None
+        self.applying = (
+            ApplyingFlow(api, chats, jobs, applications, queue, data_dir=data_dir)
+            if applications is not None and data_dir is not None
+            else None
+        )
         self._stopping = asyncio.Event()
         self.catchup = CatchUp(api, chats, jobs, matches, queue, send_job=self.send_job, clock=clock)
 
@@ -233,6 +241,22 @@ class TelegramBot:
             raise DeferError(WAIT_FOR_PAIRING_S)
         if self.questions is not None:
             await self.questions.handle(task, chat_id)
+
+    async def handle_apply_preview(self, task: TaskRecord) -> None:
+        """``apply_preview`` task: the filled form, waiting for Submit."""
+        chat_id = owner_chat(self.chats)
+        if chat_id is None:
+            raise DeferError(WAIT_FOR_PAIRING_S)
+        if self.applying is not None:
+            await self.applying.preview(task, chat_id)
+
+    async def handle_apply_result(self, task: TaskRecord) -> None:
+        """``apply_result`` task: how an application ended."""
+        chat_id = owner_chat(self.chats)
+        if chat_id is None:
+            raise DeferError(WAIT_FOR_PAIRING_S)
+        if self.applying is not None:
+            await self.applying.result(task, chat_id)
 
     async def handle_catchup_report(self, task: TaskRecord) -> None:
         """``catchup_report`` task: send the catch-up batch."""
@@ -441,6 +465,10 @@ class TelegramBot:
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)
             await self.questions.on_button(chat_id, data)
+        elif data.split(":", 1)[0] in ("submit", "cancel", "applied") and self.applying is not None:
+            label = await self.applying.on_button(chat_id, data)
+            await self.api.answer_callback(callback_id, label)
+            await self.api.edit_buttons(chat_id, message_id, _done(label) if label else None)
         elif data.startswith("catchup:"):
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)

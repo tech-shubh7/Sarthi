@@ -20,8 +20,7 @@ from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
 from sarthi.jobs.forms import FormContext, unanswered
-from sarthi.profile.applicant import applicant
-from sarthi.profile.master import load_master, master_path
+from sarthi.profile.applicant import form_context
 from sarthi.profile.models import Profile
 from sarthi.queue import names
 from sarthi.queue.tasks import DeferError, Priority, TaskQueue
@@ -29,7 +28,6 @@ from sarthi.queue.tasks import DeferError, Priority, TaskQueue
 log = logging.getLogger(__name__)
 
 WAIT_FOR_PROFILE_S = 3600
-LETTER_FILE = "cover_letter.txt"
 
 
 class FormChecker:
@@ -57,24 +55,13 @@ class FormChecker:
 
     def context(self, job_id: str, profile: Profile) -> FormContext | None:
         """What this job's form may be filled with, or None when the job is gone."""
-        job = self.jobs.get(job_id)
-        if job is None:
-            return None
-        record = self.documents.get(job_id)
-        files = {"resume": "", "cover": "", "letter": ""}
-        if record is not None:
-            files["resume"] = str(self.data_dir / record.resume_file)
-            files["cover"] = str(self.data_dir / record.letter_file)
-            letter = self.data_dir / Path(record.resume_file).parent / LETTER_FILE
-            files["letter"] = letter.read_text(encoding="utf-8") if letter.is_file() else ""
-        master = load_master(master_path(self.data_dir))
-        return FormContext(
-            applicant=applicant(profile, master, job, self.answers.saved()),
-            resume_file=files["resume"],
-            cover_file=files["cover"],
-            cover_letter=files["letter"],
-            job_location=job.location_text,
-            job_remote=job.is_remote_anywhere,
+        return form_context(
+            job_id,
+            profile,
+            jobs=self.jobs,
+            documents=self.documents,
+            answers=self.answers,
+            data_dir=self.data_dir,
         )
 
     async def handle(self, task: TaskRecord) -> None:
