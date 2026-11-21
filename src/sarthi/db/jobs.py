@@ -134,6 +134,18 @@ class JobStore:
         row = self._conn.execute("SELECT text_zlib FROM job_text WHERE job_id = ?", (job_id,)).fetchone()
         return zlib.decompress(row["text_zlib"]).decode("utf-8") if row else ""
 
+    def set_full_text(self, job_id: str, text: str) -> None:
+        """Keep ``text`` as the job's complete description (read from its own page after it was saved)."""
+        cut = text[:FULL_TEXT_MAX_CHARS]
+        if not cut:
+            return
+        with transaction(self._conn) as c:
+            c.execute(
+                "INSERT INTO job_text (job_id, text_zlib) VALUES (?, ?) "
+                "ON CONFLICT (job_id) DO UPDATE SET text_zlib = excluded.text_zlib",
+                (job_id, zlib.compress(cut.encode("utf-8"))),
+            )
+
     def sources(self, job_id: str) -> list[str]:
         """Canonical links this job was seen at, first sighting first."""
         rows = self._conn.execute(

@@ -46,6 +46,8 @@ from sarthi.queue.worker import Handler, Worker
 from sarthi.sources.aggregators import AdzunaSource, JoobleSource
 from sarthi.sources.base import Source
 from sarthi.sources.catalog import CatalogSource
+from sarthi.sources.fill import TextFiller
+from sarthi.sources.fulltext import Fetcher
 from sarthi.sources.ingest import Ingestor
 from sarthi.sources.schedule import SourceScheduler, plan_sources
 from sarthi.tracking.handler import Mailbox, ReplyTracker
@@ -56,7 +58,7 @@ WORKER_CONCURRENCY = 3
 USER_CONCURRENCY = 2
 BROWSER_PROFILE = "browser-profile"  # the user's site logins (LinkedIn, Naukri), kept on their computer
 BACKGROUND_TASKS = frozenset(
-    {names.SOURCE_CHECK, names.MATCH, names.CATCHUP, names.MAIL_CHECK, names.QUIET_CHECK}
+    {names.SOURCE_CHECK, names.FILL_TEXT, names.MATCH, names.CATCHUP, names.MAIL_CHECK, names.QUIET_CHECK}
 )
 MATCH_LOGIC_KEY = "matching.logic"
 ALIVE_KEY = "app.alive"  # last time a running Sarthi was seen (ISO), for catch-up after the computer was off
@@ -91,6 +93,7 @@ class App:
     forms: FormChecker
     applier: Applier
     tracker: ReplyTracker
+    filler: TextFiller
     ai_clients: tuple[AiClient, ...]
     clock: Clock
 
@@ -108,6 +111,7 @@ class App:
         """Every task type and what runs it."""
         return {
             names.SOURCE_CHECK: self.sources.handle,
+            names.FILL_TEXT: self.filler.handle,
             names.MATCH: self.matcher.handle,
             names.CATCHUP: self.sources.handle_catchup,
             names.ALERT: self.bot.handle_alert,
@@ -235,6 +239,7 @@ class App:
             await self.bot.inbox.close()
         await self.bot.api.aclose()
         await self.applier.engine.aclose()
+        await self.filler.aclose()
         for client in self.ai_clients:
             await client.aclose()
         self.conn.close()
@@ -344,7 +349,9 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         freehire=settings.freehire,
         searches=aggregator_sources(settings),
     )
-    sources = SourceScheduler(planned, Ingestor(jobs, queue, states), states, queue, profile, clock=clock)
+    ingestor = Ingestor(jobs, queue, states, fill_text=settings.fill_text)
+    sources = SourceScheduler(planned, ingestor, states, queue, profile, clock=clock)
+    filler = TextFiller(jobs, queue, Fetcher(render_js=settings.fill_render_js))
     documents = DocumentMaker(
         jobs,
         DocumentStore(conn, clock=clock),
@@ -418,6 +425,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         forms,
         applier,
         tracker,
+        filler,
         (fast, quality, matching_ai),
         clock,
     )

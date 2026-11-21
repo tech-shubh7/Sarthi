@@ -44,6 +44,7 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
     try:
         assert set(sarthi.worker().handlers) | set(sarthi.user_worker().handlers) == {
             "source_check",
+            "fill_text",
             "match",
             "alert",
             "digest",
@@ -65,6 +66,7 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
         assert sarthi.bot.setup is not None
         assert set(sarthi.worker().handlers) == {
             "source_check",
+            "fill_text",
             "match",
             "catchup",
             "mail_check",

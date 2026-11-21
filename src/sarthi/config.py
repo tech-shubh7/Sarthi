@@ -54,6 +54,13 @@ class Settings(BaseSettings):
         default=True,
         description="Search ATS-Scrapers' daily snapshot of ~192k company boards (~100 MB a day).",
     )
+    fill_text: bool = Field(
+        default=True,
+        description="Read the full description from the job's own page when a source sends less.",
+    )
+    fill_render_js: bool = Field(
+        default=False, description="Render JavaScript-only job pages in Chromium (uses ~300 MB more memory)."
+    )
     # Big free aggregators, searched for your roles when a key is set (both keys are free).
     adzuna_app_id: str = Field(default="", description="From https://developer.adzuna.com")
     adzuna_app_key: SecretStr | None = None

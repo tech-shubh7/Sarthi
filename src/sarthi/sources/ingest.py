@@ -37,11 +37,18 @@ class IngestReport:
 class Ingestor:
     """Reads sources into the job store and queues new jobs for matching."""
 
-    def __init__(self, jobs: JobStore, queue: TaskQueue, states: SourceStateStore) -> None:
-        """Store jobs in ``jobs``, queue matches on ``queue``, track source health in ``states``."""
+    def __init__(
+        self, jobs: JobStore, queue: TaskQueue, states: SourceStateStore, *, fill_text: bool = False
+    ) -> None:
+        """Store jobs in ``jobs``, queue matches on ``queue``, track source health in ``states``.
+
+        With ``fill_text``, a job that arrived without its full description is queued to have its own page
+        read first (``fill_text`` task), and is matched after that.
+        """
         self.jobs = jobs
         self.queue = queue
         self.states = states
+        self.fill_text = fill_text
 
     async def run(self, source: Source, query: SearchQuery, alert: bool | None = None) -> IngestReport:
         """Fetch ``source`` and store its jobs. ``alert`` overrides the first-run baseline rule when set.
@@ -66,7 +73,8 @@ class Ingestor:
                 continue
             new += 1
             if queue_new:
-                self.queue.enqueue(MATCH_TASK, job_id, priority=Priority.ALERT)
+                task = names.FILL_TEXT if self.fill_text and not posting.description_complete else MATCH_TASK
+                self.queue.enqueue(task, job_id, priority=Priority.ALERT)
                 queued += 1
 
         self.states.record_success(source.name)
@@ -79,7 +87,8 @@ class Ingestor:
         filled = complete(posting)
         text, whole = snippet(filled.description)
         # model_copy skips validation; safe here because both values are plain str/bool of the right type.
-        stored = filled.model_copy(update={"description": text, "description_complete": whole})
+        complete_text = whole and posting.description_complete  # a source's snippet stays a snippet
+        stored = filled.model_copy(update={"description": text, "description_complete": complete_text})
         try:
             result = self.jobs.save(stored, full_text=filled.description)
         except ValueError as error:  # one unusable posting must not drop the batch

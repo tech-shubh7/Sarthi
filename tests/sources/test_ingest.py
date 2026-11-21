@@ -78,6 +78,29 @@ async def test_stored_jobs_are_completed_and_lean(ingestor: Ingestor, job_store:
     assert len(stored.description) <= 701
 
 
+async def test_jobs_without_their_full_text_have_their_page_read_first(
+    job_store: JobStore, queue: TaskQueue, states: SourceStateStore
+) -> None:
+    filling = Ingestor(job_store, queue, states, fill_text=True)
+    source = FakeSource()
+    source.jobs = [posting(1, description="Snippet.", description_complete=False), posting(2)]
+    await filling.run(source, SearchQuery(), alert=True)
+    types = sorted(t.type for t in iter(queue.claim, None))
+    assert types == ["fill_text", MATCH_TASK]  # the full description (posting 2) goes straight to matching
+    snippet_only = job_store.get(job_store.save(posting(1, description="Snippet.")).job_id)
+    assert snippet_only is not None
+    assert not snippet_only.description_complete  # a source's snippet stays marked a snippet
+
+
+async def test_without_filling_every_job_is_matched_directly(ingestor: Ingestor) -> None:
+    source = FakeSource()
+    source.jobs = [posting(1, description="Snippet.", description_complete=False)]
+    await ingestor.run(source, SearchQuery(), alert=True)
+    task = ingestor.queue.claim()
+    assert task is not None
+    assert task.type == MATCH_TASK
+
+
 async def test_catch_up_alerts_even_on_the_first_read(ingestor: Ingestor) -> None:
     source = FakeSource()
     source.jobs = [posting(1)]

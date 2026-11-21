@@ -151,7 +151,8 @@ class CatchUp:
     async def handle_report(self, task: TaskRecord, chat_id: int) -> None:
         """``catchup_report`` task: when matching is done, send the batch and stop holding alerts."""
         started = from_iso(str(task.payload.get("started") or to_iso(self._clock())))
-        waiting = self.queue.active(names.MATCH)
+        # A job whose description is still being read is matched next: wait for both.
+        waiting = self.queue.active(names.MATCH) + self.queue.active(names.FILL_TEXT)
         if waiting and self._clock() - started < MAX_WAIT:
             raise DeferError(WAIT_FOR_MATCHING_S)
         hours = int(task.payload.get("hours") or 24)
