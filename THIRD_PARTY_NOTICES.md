@@ -34,6 +34,7 @@ copied into [`licenses/`](licenses/) and listed below. Every adapted file also c
 | OpenApply | [licenses/OpenApply-MIT.txt](licenses/OpenApply-MIT.txt) | `src/sarthi/matching/prefilter.py` (ported from TypeScript), `src/sarthi/documents/truth.py` (truth check), `src/sarthi/jobs/forms.py` (field mapping), `src/sarthi/answers/questions.py` (form questions), `src/sarthi/apply/adapters.py`, `src/sarthi/apply/engine.py`, `src/sarthi/apply/scan.js`, `src/sarthi/apply/captcha.js` (apply engine) |
 | StillOpen | [licenses/StillOpen-Apache-2.0.txt](licenses/StillOpen-Apache-2.0.txt), NOTICE: [licenses/StillOpen-NOTICE.txt](licenses/StillOpen-NOTICE.txt) | `src/sarthi/jobs/geo.py`, `src/sarthi/jobs/countries.py`, `src/sarthi/jobs/requirements.py` (pattern), `src/sarthi/sources/feeds.py`, `src/sarthi/sources/hackernews.py`, `src/sarthi/sources/web.py` (`plain_text`) |
 | JobDrop | [licenses/JobDrop-MIT.txt](licenses/JobDrop-MIT.txt) | `src/sarthi/sources/aggregators.py` (Adzuna and Jooble) |
+| ATS-Scrapers | [licenses/ATS-Scrapers-MIT.txt](licenses/ATS-Scrapers-MIT.txt) | `src/sarthi/sources/catalog.py` (snapshot query, from its README); also a library dependency |
 
 ## Libraries used at run time (not copied)
 

@@ -9,6 +9,7 @@ requires-python = ">=3.12"
 dependencies = [
     "ats-scrapers>=0.4,<0.5",
     "defusedxml>=0.7.1",
+    "duckdb>=1.1",
     "playwright>=1.48",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",

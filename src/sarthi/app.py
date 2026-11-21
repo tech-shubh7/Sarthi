@@ -45,6 +45,7 @@ from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQue
 from sarthi.queue.worker import Handler, Worker
 from sarthi.sources.aggregators import AdzunaSource, JoobleSource
 from sarthi.sources.base import Source
+from sarthi.sources.catalog import CatalogSource
 from sarthi.sources.ingest import Ingestor
 from sarthi.sources.schedule import SourceScheduler, plan_sources
 from sarthi.tracking.handler import Mailbox, ReplyTracker
@@ -262,8 +263,8 @@ def _ai(
 
 
 def aggregator_sources(settings: Settings) -> list[Source]:
-    """Adzuna and Jooble, for the keys that are set."""
-    found: list[Source] = []
+    """Role searches beyond the job boards: the company-board snapshot, and Adzuna and Jooble when keyed."""
+    found: list[Source] = [CatalogSource()] if settings.catalog else []
     if settings.adzuna_app_id and settings.adzuna_app_key is not None:
         found.append(AdzunaSource(settings.adzuna_app_id, settings.adzuna_app_key))
     if settings.jooble_api_key is not None:

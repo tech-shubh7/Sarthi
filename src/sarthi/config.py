@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     )
     feeds_every_minutes: int = Field(default=60, ge=15)
     freehire: bool = Field(default=True, description="Search Freehire (~90 hiring systems) for your roles.")
+    catalog: bool = Field(
+        default=True,
+        description="Search ATS-Scrapers' daily snapshot of ~192k company boards (~100 MB a day).",
+    )
     # Big free aggregators, searched for your roles when a key is set (both keys are free).
     adzuna_app_id: str = Field(default="", description="From https://developer.adzuna.com")
     adzuna_app_key: SecretStr | None = None

@@ -73,6 +73,7 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
         planned = set(sarthi.sources.planned)
         assert {
             "boards:linkedin+indeed",
+            "catalog:ats-scrapers",  # on by default; Adzuna and Jooble only with keys
             "greenhouse:razorpay",
             "search:freehire",
             "feed:hackernews",
@@ -179,6 +180,7 @@ def quiet_app(tmp_path: Path, clock: Any = None, **settings: Any) -> Any:
         "job_boards": [],
         "feeds": [],
         "freehire": False,
+        "catalog": False,  # no network in tests
     }
     sarthi = build(Settings(**(base | settings)), **({"clock": clock} if clock else {}))
     api = SilentApi()
