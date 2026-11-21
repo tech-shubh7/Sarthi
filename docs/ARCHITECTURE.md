@@ -146,7 +146,7 @@ not eligible / scam → hide · strong + sure → **instant Telegram alert** · 
 - **Before submit:** screenshot of the filled form + **Confirm** button.
 - **Questions:** "This form asks your notice period — what should I answer?" → answer saved forever.
 - **Commands:** `/status`, `/pause`, `/today`, `/prefs`, `/limit`.
-- One `Channel` interface → **WhatsApp** plugs into the same code [v1].
+- One `Channel` interface → **WhatsApp** plugs into the same code [Pro].
 
 **Implemented (2026-11-20):** Bot API over plain `httpx` (`chat/telegram/api.py`, no bot library); one-time
 pairing code from `sarthi pair` (hash stored, 15-minute expiry, cancelled after 5 wrong guesses; strangers get no
@@ -276,7 +276,7 @@ After the batch is ready, user chooses on Telegram:
 | Speed | JobRadar 20–30 min fixed | Per-source smart polling, live Telegram |
 | Matching | One method each | 4-layer funnel, AI only where needed, learns from taps |
 | Applying | Each repo has 1 method | 4-step ladder, gets cheaper over time |
-| Talking to user | Email / web page / terminal | Telegram bot (+ WhatsApp), apply from the phone |
+| Talking to user | Email / web page / terminal | Telegram bot (+ WhatsApp in Pro), apply from the phone |
 | Form questions | Asked mid-application or guessed | Asked up front with the alert, saved forever |
 | Passwords | ApplyPilot plaintext in prompts | Encrypted, never sent to AI |
 | Cost to user | Paid AI plans in several | Free with Ollama, or own key |
