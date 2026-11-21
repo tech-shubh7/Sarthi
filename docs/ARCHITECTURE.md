@@ -225,7 +225,10 @@ on the same open page, never with blanks, never past a CAPTCHA; "submitted" only
 mark), `apply/handler.py` (one application per role, daily per-site limit, Workday / login-only boards / CAPTCHA /
 unfillable fields handed to the user with the link and an "I applied" button), `chat/applying.py` (screenshot with
 Submit / Cancel). Verified on a live Greenhouse form (dry run, never submitted): 17 fields filled in 3 of 3 runs.
-Remaining for v1: replay of saved paths, AI browser for unknown forms, LinkedIn Easy Apply / Workday / Naukri.
+LinkedIn Easy Apply (`apply/linkedin.py`, adapted from LinkedIn-AI-Job-Applier-Ultimate, MIT) and Naukri one-click
+apply (`apply/naukri.py`) use the user's own login, saved once with `sarthi login linkedin|naukri` in a local browser
+profile (the password is typed into the site, never seen by Sarthi); both stop before the final submit for approval.
+Remaining for v1: replay of saved paths, AI browser for unknown forms, Workday.
 
 **+1:** steps 1–2 cost zero AI; AI is only used when the cheap ways fail, and every AI success is saved as a replay path → each job system gets cheaper over time.
 

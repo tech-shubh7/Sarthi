@@ -9,6 +9,7 @@ import pytest
 from sarthi.apply.adapters import FillError
 from sarthi.apply.engine import FillResult, SubmitResult
 from sarthi.apply.handler import Applier, needs_login, site_of
+from sarthi.apply.linkedin import LimitReachedError, LoginNeededError
 from sarthi.chat.applying import ApplyingFlow, preview_text
 from sarthi.db.answers import AnswerStore
 from sarthi.db.applications import ApplicationStatus, ApplicationStore
@@ -117,8 +118,8 @@ async def test_a_clean_fill_waits_for_the_users_approval(
     ("url", "why"),
     [
         ("https://acme.wd5.myworkdayjobs.com/en-US/careers/job/1", "Workday"),
-        ("https://www.linkedin.com/jobs/view/1", "logged-in account"),
         ("https://in.indeed.com/viewjob?jk=1", "logged-in account"),
+        ("https://www.glassdoor.co.in/job-listing/x", "logged-in account"),
     ],
 )
 async def test_forms_needing_a_person_are_handed_over(
@@ -258,8 +259,13 @@ async def test_an_expired_approval_fills_again(
     ("url", "site", "login"),
     [
         ("https://jobs.lever.co/acme/1", "jobs.lever.co", False),
-        ("https://www.linkedin.com/jobs/view/1", "www.linkedin.com", True),
-        ("https://www.naukri.com/job-listings-1", "www.naukri.com", True),
+        (
+            "https://www.linkedin.com/jobs/view/1",
+            "www.linkedin.com",
+            False,
+        ),  # Easy Apply with the saved login
+        ("https://www.naukri.com/job-listings-1", "www.naukri.com", False),
+        ("https://in.indeed.com/viewjob?jk=1", "in.indeed.com", True),
         ("not a url", "", False),
     ],
 )
@@ -389,3 +395,29 @@ async def test_the_tailored_resume_comes_before_applying(
     )
     assert payload(queue, names.DOCUMENTS) == {"apply": True}
     assert engine.filled == []
+
+
+async def test_a_missing_login_tells_the_user_how_to_log_in(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, "https://www.linkedin.com/jobs/view/1")
+    engine = FakeEngine(
+        LoginNeededError("LinkedIn needs you to log in once: run `uv run sarthi login linkedin`")
+    )
+    await applier(conn, job_store, queue, tmp_path, engine, clock).handle_apply(
+        TaskRecord(1, names.APPLY, job_id, {}, 1)
+    )
+    result = payload(queue, names.APPLY_RESULT)
+    assert result["outcome"] == "needs_human"
+    assert "sarthi login linkedin" in result["detail"]
+
+
+async def test_the_sites_own_daily_limit_waits(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, "https://www.linkedin.com/jobs/view/1")
+    engine = FakeEngine(LimitReachedError("LinkedIn's daily Easy Apply limit is reached"))
+    with pytest.raises(DeferError):
+        await applier(conn, job_store, queue, tmp_path, engine, clock).handle_apply(
+            TaskRecord(1, names.APPLY, job_id, {}, 1)
+        )

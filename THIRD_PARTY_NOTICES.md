@@ -15,6 +15,7 @@ adapted code where the licence requires it.
 | [StillOpen](https://github.com/Druvo/stillopen) | Apache-2.0 | Geo resolution, URL guard, feed connectors, match evidence |
 | [Openings](https://github.com/VincenzoImp/openings-job-search) | MIT | Duplicate detection, preferences model |
 | [Resume-Matcher](https://github.com/srbhr/Resume-Matcher) | Apache-2.0 | Resume preservation, ATS parse checks |
+| [LinkedIn-AI-Job-Applier-Ultimate](https://github.com/beatwad/LinkedIn-AI-Job-Applier-Ultimate) | MIT | LinkedIn Easy Apply flow (`src/sarthi/apply/linkedin.py`) |
 | [OpenApply](https://github.com/nturl/openapply) | MIT | Ported: rule-based form adapters, field mapping, truth check, questions, prior-application guard |
 | [Career-Ops](https://github.com/career-ops-hq/career-ops) | MIT | Ported: repost detection, UK sponsor check |
 | [Freehire](https://github.com/strelov1/freehire) | MIT | Public search API (no code copied) |

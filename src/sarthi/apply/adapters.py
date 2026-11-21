@@ -57,6 +57,11 @@ def _host(url: str) -> str:
         return ""
 
 
+def host_of(url: str) -> str:
+    """The URL's host in lower case ("" for anything unreadable)."""
+    return _host(url)
+
+
 def is_greenhouse(url: str) -> bool:
     """A Greenhouse board or a company page carrying a Greenhouse job id."""
     if re.fullmatch(r"(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io", _host(url)):

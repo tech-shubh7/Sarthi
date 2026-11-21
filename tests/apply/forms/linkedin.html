@@ -1,0 +1,26 @@
+<!doctype html><html><body>
+<h1>Backend Engineer</h1>
+<label><input type="checkbox" id="follow-company" checked> Follow Acme to stay up to date</label>
+<button aria-label="Easy Apply to Backend Engineer at Acme" onclick="show(1)">Easy Apply</button>
+<div role="dialog" id="dlg" style="display:none">
+  <div id="s1" class="step">
+    <div class="fb-dash-form-element"><label for="email">Email address *</label><input id="email" type="email" value="asha@example.com" required></div>
+    <div class="fb-dash-form-element"><label for="phone">Mobile phone number *</label><input id="phone" required></div>
+    <button onclick="show(2)">Next</button>
+  </div>
+  <div id="s2" class="step" style="display:none">
+    <div class="fb-dash-form-element"><label for="cv">Upload resume</label><input id="cv" type="file"></div>
+    <fieldset><legend>Are you legally authorized to work in India? *</legend>
+      <label><input type="radio" name="auth" value="Yes" required> Yes</label>
+      <label><input type="radio" name="auth" value="No"> No</label></fieldset>
+    <div class="fb-dash-form-element"><label for="exp">How many years of experience do you have with Python? *</label><input id="exp" required></div>
+    <button onclick="if(!document.getElementById('exp').value){document.getElementById('err').textContent='Enter a whole number'} else show(3)">Review</button>
+    <p class="artdeco-inline-feedback--error" id="err"></p>
+  </div>
+  <div id="s3" class="step" style="display:none">
+    <p>Review your application</p>
+    <button onclick="document.body.innerHTML='<h2>Your application was sent to Acme</h2>'">Submit application</button>
+  </div>
+</div>
+<script>function show(n){document.getElementById('dlg').style.display='block';document.querySelectorAll('.step').forEach(s=>s.style.display='none');document.getElementById('s'+n).style.display='block';}</script>
+</body></html>

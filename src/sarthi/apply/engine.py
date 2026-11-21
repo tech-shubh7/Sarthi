@@ -24,7 +24,7 @@ from pathlib import Path
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 from playwright.async_api import Error as PlaywrightError
 
-from sarthi.apply import adapters
+from sarthi.apply import adapters, linkedin, naukri
 from sarthi.apply.adapters import Adapter, FillError
 from sarthi.jobs.forms import FormContext, FormField, suggest
 
@@ -80,9 +80,10 @@ class _Open:
 class ApplyEngine:
     """One headless browser; one open page per job between fill and submit."""
 
-    def __init__(self, shots_dir: Path, *, headless: bool = True) -> None:
-        """Screenshots go to ``shots_dir``."""
+    def __init__(self, shots_dir: Path, *, profile_dir: Path | None = None, headless: bool = True) -> None:
+        """Screenshots go to ``shots_dir``; ``profile_dir`` keeps the user's site logins between runs."""
         self.shots_dir = shots_dir
+        self.profile_dir = profile_dir
         self.headless = headless
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
@@ -158,6 +159,8 @@ class ApplyEngine:
         async with self._lock(job_id):
             await self.close_job(job_id)
             page = await self._new_page()
+            if linkedin.is_linkedin(url) or naukri.is_naukri(url):
+                return await self._fill_board(job_id, page, url, ctx)
             adapter = adapters.adapter_for(url)
             try:
                 await page.goto(
@@ -180,6 +183,38 @@ class ApplyEngine:
                 page, adapter, result.code, page.url, len(result.blanks) + len(result.failed)
             )
             return result
+
+    async def _fill_board(self, job_id: str, page: Page, url: str, ctx: FormContext) -> FillResult:
+        """LinkedIn Easy Apply or Naukri one-click apply, with the user's saved login."""
+        try:
+            if linkedin.is_linkedin(url):
+                adapter: Adapter = linkedin.LINKEDIN
+                await linkedin.open_easy_apply(page, url)
+                walked = await linkedin.walk(page, ctx, ctx.resume_file)
+                result = FillResult(adapter.name, walked.filled, walked.blanks, walked.failed)
+                if not walked.ready and not walked.blanks and not walked.failed:
+                    result.failed.append(("Easy Apply", walked.note or "the last step was not reached"))
+            else:
+                adapter = naukri.NAUKRI
+                await naukri.open_job(page, url)
+                result = FillResult(adapter.name, [("Apply with", "your Naukri profile")])
+        except FillError:
+            with contextlib.suppress(PlaywrightError):
+                await page.close()
+            raise
+        except PlaywrightError as error:
+            with contextlib.suppress(PlaywrightError):
+                await page.close()
+            raise FillError(
+                f"the page did not work as expected: {str(error).splitlines()[0][:200]}"
+            ) from error
+        result.captcha = bool((await adapters.detect_captcha(page)).get("interactive"))
+        result.screenshot = await self._screenshot(page, job_id, "filled", adapter)
+        result.code = new_code()
+        self._open[job_id] = _Open(
+            page, adapter, result.code, page.url, len(result.blanks) + len(result.failed)
+        )
+        return result
 
     async def _fill_one(
         self, page: Page, adapter: Adapter, form_field: FormField, ctx: FormContext, result: FillResult
@@ -221,6 +256,11 @@ class ApplyEngine:
             except PlaywrightError as error:
                 return SubmitResult("failed", f"Could not click submit: {str(error).splitlines()[0][:200]}")
             outcome, detail = await self._outcome(page, adapter, opened.url)
+            if adapter is naukri.NAUKRI and outcome != "submitted" and await naukri.chatbot_open(page):
+                outcome, detail = (
+                    "needs_human",
+                    "Naukri asked follow-up questions in its chatbot: answer them on Naukri.",
+                )
             shot = await self._screenshot(page, job_id, outcome)
             if outcome == "submitted":
                 await self.close_job(job_id)
@@ -241,3 +281,37 @@ class ApplyEngine:
             if (await adapters.detect_captcha(page)).get("interactive"):
                 return "needs_human", "A CAPTCHA appeared after clicking submit."
         return "failed", "No confirmation within 20 seconds; check the form before trying again."
+
+
+LOGIN_PAGES = {
+    "linkedin": "https://www.linkedin.com/login",
+    "naukri": "https://www.naukri.com/nlogin/login",
+}
+_SIGNED_IN = {
+    "linkedin": re.compile(r"linkedin\.com/(?:feed|jobs|in|mynetwork)/"),
+    "naukri": re.compile(r"naukri\.com/(?:mnjuser|homepage|myapply)"),
+}
+LOGIN_WAIT_S = 600
+
+
+async def login(site: str, profile_dir: Path, *, wait_s: float = LOGIN_WAIT_S) -> bool:
+    """Open a visible browser on the site's login page; the user signs in themselves, the session is kept.
+
+    Sarthi never sees or stores the password: only the browser's own session cookies, in ``profile_dir``.
+    Returns True once the site shows a signed-in page, False when the window was closed or time ran out.
+    """
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    async with async_playwright() as playwright:
+        context = await playwright.chromium.launch_persistent_context(str(profile_dir), headless=False)
+        page = context.pages[0] if context.pages else await context.new_page()
+        await page.goto(LOGIN_PAGES[site])
+        end = time.monotonic() + wait_s
+        signed_in = False
+        while time.monotonic() < end and not page.is_closed():
+            if _SIGNED_IN[site].search(page.url):
+                signed_in = True
+                break
+            await asyncio.sleep(1)
+        with contextlib.suppress(PlaywrightError):
+            await context.close()
+        return signed_in

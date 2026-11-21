@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 
 WORKER_CONCURRENCY = 3
 USER_CONCURRENCY = 2
+BROWSER_PROFILE = "browser-profile"  # the user's site logins (LinkedIn, Naukri), kept on their computer
 BACKGROUND_TASKS = frozenset({names.SOURCE_CHECK, names.MATCH, names.CATCHUP})
 MATCH_LOGIC_KEY = "matching.logic"
 ALIVE_KEY = "app.alive"  # last time a running Sarthi was seen (ISO), for catch-up after the computer was off
@@ -320,7 +321,11 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         data_dir=settings.data_dir,
     )
     applier = Applier(
-        ApplyEngine(settings.data_dir / "screenshots", headless=settings.apply_headless),
+        ApplyEngine(
+            settings.data_dir / "screenshots",
+            profile_dir=settings.data_dir / BROWSER_PROFILE,
+            headless=settings.apply_headless,
+        ),
         jobs,
         DocumentStore(conn, clock=clock),
         AnswerStore(conn, clock=clock),

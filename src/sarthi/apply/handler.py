@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from sarthi.apply import adapters
 from sarthi.apply.adapters import FillError
 from sarthi.apply.engine import ApplyEngine
+from sarthi.apply.linkedin import LimitReachedError, LoginNeededError
 from sarthi.clock import Clock, utcnow
 from sarthi.db.answers import AnswerStore
 from sarthi.db.applications import ApplicationStatus, ApplicationStore
@@ -32,10 +33,13 @@ from sarthi.queue.tasks import DeferError, Priority, TaskQueue
 log = logging.getLogger(__name__)
 
 WAIT_FOR_PROFILE_S = 3600
+# Boards where applying needs the user's own account and Sarthi has no adapter yet. LinkedIn (Easy Apply) and
+# Naukri are filled with the login the user saves once with `sarthi login`.
 LOGIN_BOARDS = (
-    "linkedin.com", "indeed.", "naukri.com", "glassdoor.", "ziprecruiter.", "seek.com", "bayt.com",
-    "foundit.", "monster.", "instahyre.", "wellfound.com", "hirist.",
+    "indeed.", "glassdoor.", "ziprecruiter.", "seek.com", "bayt.com", "foundit.", "monster.", "instahyre.",
+    "wellfound.com", "hirist.",
 )  # fmt: skip
+LIMIT_WAIT_S = 6 * 3600
 DAY = timedelta(days=1)
 
 
@@ -102,7 +106,7 @@ class Applier:
         except ValueError:
             return str(path)
 
-    async def handle_apply(self, task: TaskRecord) -> None:  # noqa: PLR0911  (each way an application can stop)
+    async def handle_apply(self, task: TaskRecord) -> None:  # noqa: PLR0911, PLR0912  (each way an application can stop)
         """Fill the job's form and ask the user to approve it (or hand it over)."""
         profile = self._load_profile()
         if profile is None:
@@ -136,6 +140,11 @@ class Applier:
             raise DeferError(3600)  # the site's daily limit: try again in an hour
         try:
             result = await self.engine.fill(task.key, url, ctx)
+        except LimitReachedError:
+            raise DeferError(LIMIT_WAIT_S) from None  # the site's own daily limit: later, not by hand
+        except LoginNeededError as error:
+            self._hand_over(task.key, url, str(error))
+            return
         except FillError as error:
             self._hand_over(task.key, url, f"The form could not be filled: {error}")
             return

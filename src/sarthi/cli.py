@@ -8,7 +8,9 @@ import contextlib
 import typer
 
 from sarthi import __version__
-from sarthi.app import SetupError, build
+from sarthi.app import BROWSER_PROFILE, SetupError, build
+from sarthi.apply.engine import LOGIN_PAGES
+from sarthi.apply.engine import login as login_to
 from sarthi.chat.pairing import CODE_LIFETIME, new_code
 from sarthi.clock import utcnow
 from sarthi.config import get_settings
@@ -82,3 +84,22 @@ def catchup(
         typer.echo(
             "Done: results sent to Telegram." if sent else "Stopped: results took too long (try again)."
         )
+
+
+@app.command()
+def login(site: str = typer.Argument(..., help="linkedin or naukri")) -> None:
+    """Log in once to a job site in a browser window, so Sarthi can apply there with your account.
+
+    You type your password into the site itself; Sarthi never sees it. Stop `sarthi run` first (the saved
+    browser profile can be used by one program at a time).
+    """
+    site = site.strip().lower()
+    if site not in LOGIN_PAGES:
+        typer.echo(f"Unknown site {site!r}. Choose one of: {', '.join(LOGIN_PAGES)}", err=True)
+        raise typer.Exit(code=2)
+    settings = get_settings()
+    typer.echo(f"A browser window is opening. Log in to {site} there; it closes by itself once you're in.")
+    done = asyncio.run(login_to(site, settings.data_dir / BROWSER_PROFILE))
+    typer.echo(
+        "Logged in: Sarthi can now apply there." if done else "Not logged in (window closed or timed out)."
+    )
