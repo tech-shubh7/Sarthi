@@ -43,6 +43,8 @@ from sarthi.profile.store import load_profile, profile_path, save_profile
 from sarthi.queue import names
 from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQueue
 from sarthi.queue.worker import Handler, Worker
+from sarthi.sources.aggregators import AdzunaSource, JoobleSource
+from sarthi.sources.base import Source
 from sarthi.sources.ingest import Ingestor
 from sarthi.sources.schedule import SourceScheduler, plan_sources
 from sarthi.tracking.handler import Mailbox, ReplyTracker
@@ -259,6 +261,16 @@ def _ai(
     )
 
 
+def aggregator_sources(settings: Settings) -> list[Source]:
+    """Adzuna and Jooble, for the keys that are set."""
+    found: list[Source] = []
+    if settings.adzuna_app_id and settings.adzuna_app_key is not None:
+        found.append(AdzunaSource(settings.adzuna_app_id, settings.adzuna_app_key))
+    if settings.jooble_api_key is not None:
+        found.append(JoobleSource(settings.jooble_api_key))
+    return found
+
+
 def repair_saved_profile(path: Path) -> None:
     """Remove junk that older versions saved into the profile (e.g. "Use skills" as a skill)."""
     saved = load_profile(path)
@@ -329,6 +341,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         feeds=settings.feeds,
         feeds_every=timedelta(minutes=settings.feeds_every_minutes),
         freehire=settings.freehire,
+        searches=aggregator_sources(settings),
     )
     sources = SourceScheduler(planned, Ingestor(jobs, queue, states), states, queue, profile, clock=clock)
     documents = DocumentMaker(

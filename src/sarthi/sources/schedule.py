@@ -54,13 +54,18 @@ def plan_sources(  # noqa: PLR0913  (one argument per source group)
     feeds: Sequence[str] = (),
     feeds_every: timedelta = timedelta(hours=1),
     freehire: bool = False,
+    searches: Sequence[Source] = (),
 ) -> list[Planned]:
-    """The sources to watch. Company entries look like ``"greenhouse/razorpay"``; bad ones are skipped."""
+    """The sources to watch. Company entries look like ``"greenhouse/razorpay"``; bad ones are skipped.
+
+    ``searches`` are more role searches (Adzuna, Jooble), read on the boards' schedule.
+    """
     planned: list[Planned] = []
     if job_boards:
         planned.append(Planned(JobBoardSource(tuple(job_boards)), "boards", boards_every))
     if freehire:
         planned.append(Planned(FreehireSource(), "boards", boards_every))
+    planned += [Planned(search, "boards", boards_every) for search in searches]
     for feed in dict.fromkeys(f.strip().lower() for f in feeds):
         if feed == "hackernews":
             planned.append(Planned(HackerNewsSource(), "feed", feeds_every))

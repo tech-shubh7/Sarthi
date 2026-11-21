@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     )
     feeds_every_minutes: int = Field(default=60, ge=15)
     freehire: bool = Field(default=True, description="Search Freehire (~90 hiring systems) for your roles.")
+    # Big free aggregators, searched for your roles when a key is set (both keys are free).
+    adzuna_app_id: str = Field(default="", description="From https://developer.adzuna.com")
+    adzuna_app_key: SecretStr | None = None
+    jooble_api_key: SecretStr | None = Field(default=None, description="From https://jooble.org/api/about")
 
     # Applying: forms are filled in a browser without a window; nothing is submitted without your approval.
     apply_headless: bool = True

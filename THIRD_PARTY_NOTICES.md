@@ -11,7 +11,7 @@ adapted code where the licence requires it.
 | [AIHawk Jobs Applier AI Agent](https://github.com/feder-cr/Jobs_Applier_AI_Agent) | MIT | AI browser apply engine, secret sealing |
 | [ATS-Scrapers](https://github.com/kalil0321/ats-scrapers) | MIT | Library dependency + company catalog |
 | [JobSpy](https://github.com/speedyapply/JobSpy) | MIT | Library dependency |
-| [JobDrop](https://github.com/kbwhodat/jobdrop) | MIT | Library dependency |
+| [JobDrop](https://github.com/kbwhodat/jobdrop) | MIT | Ported: Adzuna and Jooble connectors |
 | [StillOpen](https://github.com/Druvo/stillopen) | Apache-2.0 | Geo resolution, URL guard, feed connectors, match evidence |
 | [Openings](https://github.com/VincenzoImp/openings-job-search) | MIT | Duplicate detection, preferences model |
 | [Resume-Matcher](https://github.com/srbhr/Resume-Matcher) | Apache-2.0 | Resume preservation, ATS parse checks |
@@ -33,6 +33,7 @@ copied into [`licenses/`](licenses/) and listed below. Every adapted file also c
 | ApplyPilot | [licenses/ApplyPilot-AGPL-3.0.txt](licenses/ApplyPilot-AGPL-3.0.txt) | `src/sarthi/ai/client.py` (model fallback chain), `src/sarthi/documents/truth.py` (banned-phrase and AI-leak lists), `src/sarthi/tracking/triage.py`, `src/sarthi/tracking/matcher.py`, `src/sarthi/ai/replies.py` (prompt) |
 | OpenApply | [licenses/OpenApply-MIT.txt](licenses/OpenApply-MIT.txt) | `src/sarthi/matching/prefilter.py` (ported from TypeScript), `src/sarthi/documents/truth.py` (truth check), `src/sarthi/jobs/forms.py` (field mapping), `src/sarthi/answers/questions.py` (form questions), `src/sarthi/apply/adapters.py`, `src/sarthi/apply/engine.py`, `src/sarthi/apply/scan.js`, `src/sarthi/apply/captcha.js` (apply engine) |
 | StillOpen | [licenses/StillOpen-Apache-2.0.txt](licenses/StillOpen-Apache-2.0.txt), NOTICE: [licenses/StillOpen-NOTICE.txt](licenses/StillOpen-NOTICE.txt) | `src/sarthi/jobs/geo.py`, `src/sarthi/jobs/countries.py`, `src/sarthi/jobs/requirements.py` (pattern), `src/sarthi/sources/feeds.py`, `src/sarthi/sources/hackernews.py`, `src/sarthi/sources/web.py` (`plain_text`) |
+| JobDrop | [licenses/JobDrop-MIT.txt](licenses/JobDrop-MIT.txt) | `src/sarthi/sources/aggregators.py` (Adzuna and Jooble) |
 
 ## Libraries used at run time (not copied)
 
