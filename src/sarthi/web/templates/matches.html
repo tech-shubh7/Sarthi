@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_macros.html" import label, score, job_link %}
+{% block title %}Matches · Sarthi{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block main %}
+<div class="head">
+  <p class="eyebrow">Last {{ days }} days</p>
+  <h1>Matches</h1>
+  <p class="lede">Jobs that fit your profile, best first. Answer them in Telegram.</p>
+</div>
+<nav class="tabs" aria-label="Which matches">
+  <a href="/matches?show=all" {% if show == 'all' %}aria-current="page"{% endif %}>All</a>
+  <a href="/matches?show=alert" {% if show == 'alert' %}aria-current="page"{% endif %}>Strong</a>
+  <a href="/matches?show=digest" {% if show == 'digest' %}aria-current="page"{% endif %}>Fair</a>
+</nav>
+{% if rows %}
+<table class="table">
+  <thead><tr><th>Score</th><th>Role</th><th>Company</th><th>Found</th><th>Source</th><th>Your answer</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ score(r.score) }}</td>
+      <td>{{ job_link(r.title, r.url) }}</td>
+      <td>{{ r.company }}</td>
+      <td class="faint">{{ ago(r.first_seen_at) }}</td>
+      <td class="faint">{{ r.source }}</td>
+      <td>{{ label(r.status) if r.status else '' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty"><h2>No matches in the last {{ days }} days</h2><p>Sarthi keeps looking; new ones arrive in Telegram first.</p></div>
+{% endif %}
+{% endblock %}

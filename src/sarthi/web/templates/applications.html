@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "_macros.html" import label, reply, job_link %}
+{% block title %}Applications · Sarthi{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block main %}
+<div class="head">
+  <p class="eyebrow">Your search</p>
+  <h1>Applications</h1>
+  <p class="lede">Every form Sarthi filled or sent for you, and the latest reply about it.</p>
+</div>
+{% if rows %}
+<table class="table">
+  <thead><tr><th>Role</th><th>Company</th><th>Status</th><th>Reply</th><th>Site</th><th>Updated</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ job_link(r.title, r.url) }}</td>
+      <td>{{ r.company }}</td>
+      <td><span class="pill s-{{ r.status }}">{{ label(r.status) }}</span></td>
+      <td>{{ reply(r.reply_kind) }}</td>
+      <td class="faint">{{ r.site }}</td>
+      <td class="faint">{{ ago(r.updated_at) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty"><h2>No applications yet</h2><p>Tap Apply on a job in Telegram; it shows up here once the form is filled.</p></div>
+{% endif %}
+{% endblock %}

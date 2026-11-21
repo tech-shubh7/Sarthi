@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     adzuna_app_key: SecretStr | None = None
     jooble_api_key: SecretStr | None = Field(default=None, description="From https://jooble.org/api/about")
 
+    # The local dashboard (read-only), at http://127.0.0.1:<port> while `sarthi run` runs. This computer only.
+    dashboard: bool = True
+    dashboard_port: int = Field(default=8765, ge=1024, le=65535)
+
     # Applying: forms are filled in a browser without a window; nothing is submitted without your approval.
     apply_headless: bool = True
     apply_daily_limit: int = Field(default=30, ge=1, le=500, description="Applications per site per day.")

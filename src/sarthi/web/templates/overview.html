@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Overview · Sarthi{% endblock %}
+{% block main %}
+<div class="head">
+  <p class="eyebrow">Your search</p>
+  <h1>Overview</h1>
+  <p class="lede">Everything Sarthi has found, matched and sent for you.</p>
+</div>
+
+{% set shown = ov.shown %}
+{% set apps = ov.applications %}
+<ol class="pipeline" aria-label="From found to applied">
+  <li class="stage"><span class="stage-name">Jobs found</span><b class="stage-n">{{ ov.jobs }}</b></li>
+  <li class="stage"><span class="stage-name">Fit you</span><b class="stage-n">{{ ov.decisions.get('alert', 0) + ov.decisions.get('digest', 0) }}</b></li>
+  <li class="stage"><span class="stage-name">Sent to you</span><b class="stage-n">{{ shown.values()|sum }}</b></li>
+  <li class="stage"><span class="stage-name">Apply tapped</span><b class="stage-n">{{ shown.get('apply', 0) + shown.get('applied', 0) }}</b></li>
+  <li class="stage"><span class="stage-name">Submitted</span><b class="stage-n">{{ apps.get('submitted', 0) + apps.get('applied_by_user', 0) }}</b></li>
+  <li class="stage"><span class="stage-name">Replies</span><b class="stage-n">{{ ov.replies.values()|sum }}</b></li>
+</ol>
+
+<div class="grid">
+  <section class="panel">
+    <h2>Matches</h2>
+    <dl class="facts">
+      <dt>Strong (instant alerts)</dt><dd>{{ ov.decisions.get('alert', 0) }}</dd>
+      <dt>Fair (daily digest)</dt><dd>{{ ov.decisions.get('digest', 0) }}</dd>
+      <dt>Hidden (not a fit)</dt><dd>{{ ov.decisions.get('hide', 0) }}</dd>
+    </dl>
+  </section>
+  <section class="panel">
+    <h2>Your answers</h2>
+    <dl class="facts">
+      <dt>Apply</dt><dd>{{ shown.get('apply', 0) + shown.get('applied', 0) }}</dd>
+      <dt>Skip</dt><dd>{{ shown.get('skipped', 0) }}</dd>
+      <dt>Later</dt><dd>{{ shown.get('later', 0) }}</dd>
+      <dt>Not answered yet</dt><dd>{{ shown.get('alerted', 0) + shown.get('digested', 0) }}</dd>
+    </dl>
+  </section>
+  <section class="panel">
+    <h2>Replies from employers</h2>
+    {% if ov.replies %}
+    <dl class="facts">{% for kind, n in ov.replies|dictsort %}<dt>{{ kind|capitalize }}</dt><dd>{{ n }}</dd>{% endfor %}</dl>
+    {% else %}<p class="faint">None yet. Set up reply tracking (SARTHI_MAIL_* in .env) to see them here.</p>{% endif %}
+  </section>
+  <section class="panel">
+    <h2>Working on</h2>
+    {% if ov.tasks_waiting %}
+    <dl class="facts">{% for kind, n in ov.tasks_waiting|dictsort %}<dt>{{ kind|replace('_', ' ') }}</dt><dd>{{ n }}</dd>{% endfor %}</dl>
+    {% else %}<p class="faint">Nothing waiting.</p>{% endif %}
+  </section>
+  <section class="panel">
+    <h2>AI use today</h2>
+    {% if ov.ai_tokens_today %}
+    <dl class="facts">{% for provider, n in ov.ai_tokens_today|dictsort %}<dt>{{ provider }}</dt><dd>{{ '{:,}'.format(n) }} tokens</dd>{% endfor %}</dl>
+    {% else %}<p class="faint">No AI calls today.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

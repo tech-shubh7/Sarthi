@@ -17,6 +17,7 @@ from sarthi.config import get_settings
 from sarthi.db.chat import ChatStore
 from sarthi.db.connection import connect
 from sarthi.log import setup_logging
+from sarthi.web.server import NoFreePortError, make_server
 
 app = typer.Typer(help="Sarthi: finds, matches and applies to jobs for you.", no_args_is_help=True)
 
@@ -56,8 +57,27 @@ def run() -> None:
         typer.echo(f"Cannot start: {error}", err=True)
         raise typer.Exit(code=1) from None
     typer.echo("Sarthi is running. Press Ctrl+C to stop.")
+    if sarthi.settings.dashboard:
+        typer.echo(f"Dashboard: http://127.0.0.1:{sarthi.settings.dashboard_port} (this computer only)")
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(sarthi.run())
+
+
+@app.command()
+def dashboard() -> None:
+    """Open the read-only dashboard on its own, without running Sarthi (Ctrl+C to stop)."""
+    settings = get_settings()
+    if not settings.db_path.exists():
+        typer.echo("No data yet: run `uv run sarthi run` first.", err=True)
+        raise typer.Exit(code=1)
+    try:
+        server = make_server(settings.db_path, settings.dashboard_port)
+    except NoFreePortError as error:
+        typer.echo(f"Cannot start the dashboard: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Dashboard: http://127.0.0.1:{server.config.port} (this computer only). Ctrl+C to stop.")
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(server.serve())
 
 
 @app.command()

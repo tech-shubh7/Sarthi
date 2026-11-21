@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Sarthi{% endblock %}</title>
+<link rel="stylesheet" href="{{ asset('app.css') }}">
+</head>
+<body>
+<div class="shell">
+<aside class="side">
+  <a class="brand" href="/"><span class="logo" aria-hidden="true">S</span><span>Sarthi</span></a>
+  <nav class="nav" aria-label="Pages">
+    <a href="/" {% if nav == 'overview' %}aria-current="page"{% endif %}><span>Overview</span></a>
+    <a href="/matches" {% if nav == 'matches' %}aria-current="page"{% endif %}><span>Matches</span><b class="badge hot">{{ ov.decisions.get('alert', 0) }}</b></a>
+    <a href="/applications" {% if nav == 'applications' %}aria-current="page"{% endif %}><span>Applications</span><b class="badge">{{ ov.applications.values()|sum }}</b></a>
+    <a href="/sources" {% if nav == 'sources' %}aria-current="page"{% endif %}><span>Sources</span></a>
+  </nav>
+  <p class="side-note">Read-only. Apply, skip and answer in Telegram.</p>
+</aside>
+<div class="content">
+<main class="{% block main_class %}{% endblock %}">
+{% block main %}{% endblock %}
+</main>
+<footer>Sarthi {{ version }} · this page only reads your local data and never leaves this computer.</footer>
+</div>
+</div>
+</body>
+</html>

@@ -10,6 +10,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from sarthi.ai.client import AiClient
 from sarthi.ai.providers import resolve
@@ -54,6 +55,7 @@ from sarthi.sources.fulltext import Fetcher
 from sarthi.sources.ingest import Ingestor
 from sarthi.sources.schedule import SourceScheduler, plan_sources
 from sarthi.tracking.handler import Mailbox, ReplyTracker
+from sarthi.web.server import NoFreePortError, make_server
 
 log = logging.getLogger(__name__)
 
@@ -197,10 +199,25 @@ class App:
             asyncio.create_task(user.run()),
             asyncio.create_task(self._tick_sources(worker)),
         ]
+        dashboard = self._dashboard()
+        if dashboard is not None:
+            tasks.append(asyncio.create_task(dashboard.serve()))
         try:
             await asyncio.gather(*tasks)
         finally:
+            if dashboard is not None:
+                dashboard.should_exit = True
             await self._shutdown((worker, user), tasks)
+
+    def _dashboard(self) -> Any:
+        """The local dashboard's server, or None when it is off or no port is free (Sarthi runs on)."""
+        if not self.settings.dashboard:
+            return None
+        try:
+            return make_server(self.settings.db_path, self.settings.dashboard_port, own_signals=False)
+        except NoFreePortError as error:
+            log.warning("dashboard not started: %s", error)
+            return None
 
     def catchup_problem(self) -> str | None:
         """Why a catch-up cannot run now (not paired, no profile), or None."""

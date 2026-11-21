@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Sources · Sarthi{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block main %}
+<div class="head">
+  <p class="eyebrow">Where jobs come from</p>
+  <h1>Sources</h1>
+  <p class="lede">Each job source and its health. A failing source is tried less often until it works again.</p>
+</div>
+{% if rows %}
+<table class="table">
+  <thead><tr><th>Source</th><th>Health</th><th>Last worked</th><th>Last checked</th><th>Last error</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td class="mono">{{ r.name }}</td>
+      <td>{% if r.failures == 0 %}<span class="pill ok">Working</span>{% elif r.failures < 3 %}<span class="pill warn">{{ r.failures }} failure{{ '' if r.failures == 1 else 's' }}</span>{% else %}<span class="pill bad">Failing ({{ r.failures }} in a row)</span>{% endif %}</td>
+      <td class="faint">{{ ago(r.last_ok_at) or 'never' }}</td>
+      <td class="faint">{{ ago(r.last_checked_at) }}</td>
+      <td class="faint err">{{ (r.last_error or '')[:160] }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty"><h2>No source read yet</h2><p>Start Sarthi with <code>uv run sarthi run</code>.</p></div>
+{% endif %}
+{% endblock %}
