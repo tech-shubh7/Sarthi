@@ -1,4 +1,4 @@
-# Sarthi — Architecture (draft, 2026-11-20)
+# Sarthi — Architecture (draft, updated 2026-11-21)
 
 Sarthi watches every job source all day, finds jobs that fit you, messages you on Telegram,
 applies when you say yes, and tells you when companies reply.
@@ -9,7 +9,8 @@ Built from 13 audited open-source repos (all repos equal weight). Rule for every
 Language: **Python** (most reusable code is Python). TypeScript/JS ideas are ported.
 Storage: **one SQLite file**. Runs on the user's machine in **Docker**. Licence: **AGPL-3.0**.
 
-Tags: **[MVP]** = in MVP · **[Final]** = in Final release.
+Release plan: **one free launch (v1)** with everything tagged below, then **Sarthi Pro** (paid, §4.2) built
+alongside while the free version is marketed. Tags: **[v1]** = in the free launch · **[Pro]** = paid, after launch.
 
 ---
 
@@ -48,7 +49,7 @@ Everything is a task in the SQLite queue, so a crash loses nothing and each step
 
 ## 2. Each part: who does it best, what we copy, what we add
 
-### 2.1 Sources [MVP]
+### 2.1 Sources [v1]
 | Source group | Best existing code | Copy |
 |---|---|---|
 | ~100 company job systems (Workday, Greenhouse, Lever, iCIMS, Taleo, SuccessFactors, Darwinbox, Keka…) + 173k-company list | **ATS-Scrapers** | Use as library + its `ats-companies/*.csv` |
@@ -62,7 +63,7 @@ Everything is a task in the SQLite queue, so a crash loses nothing and each step
 
 Common plug-in shape (JobRadar's design): every source is one module with `fetch() -> list[RawJob]`.
 
-**Implemented (MVP):** `sources/ats.py` (ATS-Scrapers, one source per company board), `sources/boards.py` (JobSpy
+**Implemented:** `sources/ats.py` (ATS-Scrapers, one source per company board), `sources/boards.py` (JobSpy
 public `scrape_jobs`; Naukri added for India, Seek for Australia), `sources/ingest.py` (store, quiet first-run
 baseline, alert-priority `match` tasks). ATS-Scrapers is installed **without** its `[scrapers]` extra: that extra
 downloads a stealth Chromium binary; without it ~93 of 99 hiring systems work and Meta/Tesla boards are unavailable.
@@ -78,35 +79,35 @@ city Sarthi cannot place is shown as "check it includes you" instead of being re
 - **Source health:** a broken source is auto-detected and paused, and the user is told (idea from Career-Ops `dead-boards`).
 - **Paste any careers link** → Sarthi auto-detects its job system (ATS-Scrapers `get_scraper_for_url`) and starts watching. Safe-URL check from StillOpen `netguard.py`.
 
-### 2.2 Scheduler + task queue [MVP]
+### 2.2 Scheduler + task queue [v1]
 - **Copy JobRadar** `queue/tasks.py` + `queue/worker.py`: SQLite task table, retries with backoff (30s → 2m → 10m → 1h), never runs a step twice.
 - **Copy JobRadar** board watcher rule: first check of a new source = save only, no alerts (no 500-message flood).
 - **+1:** priority lanes — "new job alert" tasks always run before slow tasks (tailoring, applying), so alerts are never stuck behind work.
 
-### 2.3 One job format [MVP]
+### 2.3 One job format [v1]
 - **Base model: ATS-Scrapers `Job`** (pydantic): has `country_iso` per location, salary with ISO currency, skills, education.
 - **Add StillOpen `geo.py`** (copy as-is, no internet needed): turns "Bengaluru", "Remote (EU)", "London or remote UK" into country codes.
 - **Add fields:** `remote_type` (onsite/hybrid/remote), `remote_countries` (empty = anywhere), `visa_sponsorship`, `first_seen_at`, `sources[]`.
 - **Copy OpenApply "lean index":** store a 700-char snippet per job, fetch the full text only for jobs that pass matching → DB stays small (150k jobs ≈ 300 MB).
 
-### 2.4 Dedupe [MVP]
+### 2.4 Dedupe [v1]
 - **Copy JobRadar:** clean-URL hash + company/role/location fingerprint; extra sources attach to the same job.
 - **Copy Openings `duplicates.py`** (no dependencies): requisition id + title/company similarity signals.
 - **Copy OpenApply `prior.ts` logic (port):** "you already applied to this company for a similar role" guard.
 
-### 2.5 Fill missing details [MVP]
+### 2.5 Fill missing details [v1]
 - **Copy JobRadar layered extraction:** page's built-in job data (JSON-LD) → labelled lines → AI only if role/company still missing. Saves most AI calls.
 - **ApplyPilot `enrichment/detail.py`** for full description pages.
 
-### 2.6 Quality gate [MVP]
+### 2.6 Quality gate [v1]
 | Check | Best code | Copy |
 |---|---|---|
 | Still open? | **JobRadar** `liveness.py` (asks Greenhouse/Lever/SmartRecruiters/Workday directly) | Copy |
 | Scam? | **JobRadar** `scam.py` (no deps) | Copy as-is |
 | Repost / ghost job? | **Career-Ops** `detect-reposts.mjs` | Port |
-| Visa sponsor (UK) | **Career-Ops** `sponsor-check.mjs` | Port [Final] |
+| Visa sponsor (UK) | **Career-Ops** `sponsor-check.mjs` | Port [v1] |
 
-### 2.7 Match funnel [MVP] — cheapest first
+### 2.7 Match funnel [v1] — cheapest first
 | Layer | Cost | Best code |
 |---|---|---|
 | L0 Fast filter: title, keywords, location, salary, excluded companies | Free | **OpenApply** `match.ts` (port) |
@@ -116,7 +117,7 @@ city Sarthi cannot place is shown as "check it includes you" instead of being re
 
 ApplyPilot (AI 1–10 score for every job) is the most expensive approach — we only use AI at L2, for jobs that already passed L0+L1.
 
-**Implemented (MVP):** `matching/rules.py` (L1, runs first: country / remote / visa from ISO codes, job type,
+**Implemented:** `matching/rules.py` (L1, runs first: country / remote / visa from ISO codes, job type,
 years required, exclusions, JobRadar scam check), `matching/prefilter.py` (L0, OpenApply port; seniority inferred
 from years when unset), `matching/funnel.py` (AI only for jobs that pass both; `AiScorer` slot for L2),
 `matching/decide.py`, `matching/handler.py` (`match` task → `job_match` row → `alert` task). Checked on 1,705 real
@@ -135,24 +136,24 @@ match, synonyms are unified ("AI Developer" = "AI Engineer", "ML" = "Machine Lea
 or 4+ of the user's skills to be shown at all, and only a title match can be an instant alert. Alerts are re-checked
 before sending: a match made with an older profile or older matching logic (``LOGIC_VERSION``) is never sent.
 
-### 2.8 Decide [MVP]
+### 2.8 Decide [v1]
 **Copy JobRadar `decide.py`** rule table, extended:
-not eligible / scam → hide · strong + sure → **instant Telegram alert** · medium → **daily digest** · above auto-apply score + auto mode on → **apply directly** [Final].
+not eligible / scam → hide · strong + sure → **instant Telegram alert** · medium → **daily digest** · above auto-apply score + auto mode on → **apply directly** [v1].
 
-### 2.9 Telegram bot — built by us (no repo has one) [MVP]
+### 2.9 Telegram bot — built by us (no repo has one) [v1]
 - **Onboarding chat:** upload resume, pick roles, countries, remote, visa, salary. (Preference shape from **Openings** `preferences.py`: `looking_for`, `ruled_out`, plus structured fields.)
 - **Job alert:** title, company, place, salary, match %, 3 "why" lines, buttons **Apply · Skip · Later · Details**.
 - **Before submit:** screenshot of the filled form + **Confirm** button.
 - **Questions:** "This form asks your notice period — what should I answer?" → answer saved forever.
 - **Commands:** `/status`, `/pause`, `/today`, `/prefs`, `/limit`.
-- One `Channel` interface → **WhatsApp** plugs into the same code [Final].
+- One `Channel` interface → **WhatsApp** plugs into the same code [v1].
 
-**Implemented (MVP, 2026-11-20):** Bot API over plain `httpx` (`chat/telegram/api.py`, no bot library); one-time
+**Implemented (2026-11-20):** Bot API over plain `httpx` (`chat/telegram/api.py`, no bot library); one-time
 pairing code from `sarthi pair` (hash stored, 15-minute expiry, cancelled after 5 wrong guesses; strangers get no
 reply); job cards with Apply / Skip / Later / Details (job-site text HTML-escaped; first answer wins; Apply queues
 an `apply` task); `/today`, `/status`, `/pause`, `/resume`, `/help`; daily digest at `SARTHI_DIGEST_HOUR` local
 time; `app.py` is the composition root.
-**Setup (MVP):** `/setup` conversation (`chat/setup.py`): resume upload (PDF/.docx/text, read locally by
+**Setup:** `/setup` conversation (`chat/setup.py`): resume upload (PDF/.docx/text, read locally by
 `profile/resume.py`: size cap, type from bytes, no XML parser), AI suggestions from the scrubbed resume
 (`ai/resume.py`), questions parsed by `profile/answers.py` (countries, remote, years, salary such as "12 LPA"),
 summary with Save; saving re-matches jobs from the last 7 days. `/profile`, `/cancel`.
@@ -162,33 +163,33 @@ the AI (`ai/answers.py`), which must answer which *current items* to keep (exact
 match "Machine Learning Engineer") and what to add; code builds the list and checks new items are names.
 Rules never override the AI (an earlier rule "safety net" undid correct AI answers). Rules alone are used only
 when no AI answers. Groq first (about 2 s, 11/11 real phrasings), local model as fallback. Every answeris echoed back ("✓ Roles: …") with a Change button.
-**Conversation (MVP):** every non-command message goes through `chat/inbox.py` (quick bursts grouped into one;
+**Conversation:** every non-command message goes through `chat/inbox.py` (quick bursts grouped into one;
 one batch at a time with a single "still reading" note; polling never waits) and `chat/understand.py`, which
 decides answer / correction / question / small talk / off-topic (rules first, `ai/intent.py` for unclear
 messages, fixed choices only). Corrections work any time ("add UAE to my countries"): during setup they update
 the draft and that question is skipped; afterwards they update the saved profile with an Undo button. While
 the user is waiting on a reply, background match scoring defers so the local model answers the chat first.
-**`sarthi run` (MVP):** bot + worker + `sources/schedule.py`: a 1-minute tick queues due sources (boards hourly
+**`sarthi run`:** bot + worker + `sources/schedule.py`: a 1-minute tick queues due sources (boards hourly
 with the profile's roles/countries, company boards every 30 min); each check looks back to its last success
 (catch-up after the computer was off, §2.18); failing sources back off up to 8x. Every new job is matched
 (JobRadar's quiet first run is not used: matching decides what alerts, and the look-back window drops old jobs).
 
-### 2.10 Documents [MVP]
+### 2.10 Documents [v1]
 | Need | Best code | Copy |
 |---|---|---|
 | Tailored resume + PDF | **ApplyPilot** `scoring/tailor.py`, `pdf.py`, `json_resume.py` | Copy |
 | Cover letter | **ApplyPilot** `scoring/cover_letter.py` | Copy |
 | No invented facts | **OpenApply** `truth.ts` (port) + **Resume-Matcher** `resume_preservation.py` | Combine |
-| ATS can read the PDF | **Resume-Matcher** `ats_parse/checks.py` | Copy [Final] |
+| ATS can read the PDF | **Resume-Matcher** `ats_parse/checks.py` | Copy [v1] |
 
 **+1:** documents are made only for jobs you tap Apply on (or auto-apply jobs), not every match → far fewer AI calls.
 
-### 2.11 Form answers [MVP]
+### 2.11 Form answers [v1]
 - **Copy OpenApply `questions.ts` (port):** read the form's real questions from Greenhouse/Ashby/Lever **before** opening a browser.
 - **Copy ApplyPilot `qa_knowledge` table:** every answer saved and reused, with outcome.
 - **+1:** unknown questions are asked on Telegram **together with the job alert**, so when you tap Apply nothing blocks the application.
 
-### 2.12 Apply engine [MVP] — four-step ladder
+### 2.12 Apply engine [v1] — four-step ladder
 | Step | What | Best code |
 |---|---|---|
 | 1. Rule-based fill | Known job systems filled with plain code, no AI | **OpenApply** `apply/adapters/*` + `fieldmap.ts` (port to Python) |
@@ -205,12 +206,12 @@ Plus, copied:
 
 **+1:** steps 1–2 cost zero AI; AI is only used when the cheap ways fail, and every AI success is saved as a replay path → each job system gets cheaper over time.
 
-### 2.13 Tracking replies [MVP]
+### 2.13 Tracking replies [v1]
 - **Copy ApplyPilot `tracking/*`:** Gmail reading, AI sorting (confirmation / rejection / interview / offer), people + dates, ghosted after N days.
-- **Copy JobRadar `company_replies.py` + `followups.py`:** follow-up reminder with a draft [Final].
+- **Copy JobRadar `company_replies.py` + `followups.py`:** follow-up reminder with a draft [v1].
 - **+1:** IMAP option with app password (works with any email, not only Gmail OAuth); every reply → Telegram message.
 
-### 2.14 AI layer [MVP]
+### 2.14 AI layer [v1]
 - **Plain `httpx` against OpenAI-compatible endpoints** (decided 2026-11-20, replacing LiteLLM): Ollama, Gemini,
   OpenAI, Anthropic, Groq, OpenRouter and DeepSeek all speak that API, so one small client covers them with far
   fewer dependencies in a tool that holds resumes and keys. Users list `<provider>/<model>` in the order to try.
@@ -219,20 +220,20 @@ Plus, copied:
 - Two model slots: **fast** (matching) and **quality** (resume, cover letter, forms).
 - Daily budget counts **tokens** of paid providers (local Ollama is exempt); full job text is stored compressed
   (`job_text`, 12k chars) so the AI judges the whole posting, not the snippet.
-- **Implemented (MVP):** `ai/providers.py`, `ai/client.py`, `ai/prompts.py` (fenced untrusted data),
+- **Implemented:** `ai/providers.py`, `ai/client.py`, `ai/prompts.py` (fenced untrusted data),
   `ai/privacy.py` (emails, phones, links removed from the resume), `ai/scoring.py` (L2 of the match funnel).
 
-### 2.15 Storage [MVP]
+### 2.15 Storage [v1]
 One SQLite file. Tables: `sources`, `jobs`, `job_sources`, `matches`, `applications`, `answers` (Q&A bank), `accounts` (encrypted), `apply_paths`, `emails`, `tasks`, `llm_cache`, `events`.
 **Copy Career-Ops rule:** user data (resume, prefs, DB) separated from app files → updates never touch user data.
 
-### 2.16 Run & install [MVP]
+### 2.16 Run & install [v1]
 `docker compose up` → Sarthi + Playwright browser (+ optional Ollama). Setup finishes inside Telegram.
 
-### 2.17 Dashboard [Final]
+### 2.17 Dashboard [v1]
 Small local web page: pipeline, applied, replies, stats. (Patterns from OpenApply `ui` / JobScan.)
 
-### 2.18 Catch-up mode — for users who can't run Sarthi all day [MVP]
+### 2.18 Catch-up mode — for users who can't run Sarthi all day [v1]
 User picks a time window: **last 24 hours · 2 days · 5 days · 7 days**. Sarthi searches every source for jobs posted in that window, runs the full pipeline (dedupe → quality gate → match), and shows the results as one batch.
 
 How each source searches by date (verified in code):
@@ -260,7 +261,7 @@ After the batch is ready, user chooses on Telegram:
 
 **Scheduled catch-up:** "every day at 9 PM, check last 24 hours" — Sarthi starts, does the batch, sends results. Works with a computer that is on only part of the day. If the computer was off for 3 days, the next start automatically catches up on those 3 days.
 
-**Implemented (MVP):** `/catchup` (24 h, 2, 5, 7 days) → `catchup` task reads every source over the window →
+**Implemented:** `/catchup` (24 h, 2, 5, 7 days) → `catchup` task reads every source over the window →
 `catchup_report` waits for matching, then sends a summary, the best 10 as cards and every match as a CSV
 (formula-injection safe); single alerts are held meanwhile. Batch apply is added with the apply engine.
 
@@ -281,9 +282,60 @@ After the batch is ready, user chooses on Telegram:
 | Cost to user | Paid AI plans in several | Free with Ollama, or own key |
 | Not running all day | Mostly unsupported / jobs missed | Catch-up mode: last 24h–7 days, batch apply with safe pacing, or a ready-to-apply pack |
 
-## 4. MVP vs Final
-**MVP:** 2.1–2.16 + 2.18 (all sources, queue, format, dedupe, quality gate except UK visa, 4-layer match, Telegram bot, documents, answers, 4-step apply, Gmail tracking, LiteLLM, Docker, catch-up mode with batch apply + export).
-**Final:** WhatsApp, full auto-apply mode, UK visa sponsor check, ATS-readable PDF checks, follow-up drafts, IMAP, dashboard, more rule-based apply adapters (LinkedIn Easy Apply, Workday, Naukri).
+## 4. Release plan
+
+### 4.1 Free launch (v1) — open source, self-hosted, every feature in §2
+
+**Done (2026-11-21):**
+- Sources: ~95 company hiring systems (ATS-Scrapers), LinkedIn/Indeed/Naukri/Glassdoor/Seek… (JobSpy), seven free
+  remote feeds, Hacker News "Who is hiring", Freehire; smart polling with back-off; first-run baseline
+- Job model, country detection, dedupe and reposts, scam check, full-text storage
+- Match funnel: hard rules (country, remote, visa, level vs experience, years asked, tech stack, job family,
+  internships), free score, AI score with code-checked years and level; versioned matching logic
+- Telegram bot: pairing, alerts with Apply/Skip/Later/Details, daily digest, /today /status /pause /resume,
+  natural-language chat with corrections and Undo, message batching
+- Profile setup in chat: resume reading, years computed from dates, tap-to-remove buttons, AI list edits
+- AI layer: any OpenAI-compatible provider, fallback chain, cache, token budget, local-model gate
+- Catch-up mode in chat: /catchup 24 h–7 days → one batch with cards and a CSV
+
+**Remaining for the launch:**
+1. Sources: Telegram job channels (live), India mass-hiring pages, "paste any careers link", focus list from the
+   173k-company file, Adzuna/Jooble (free keys), source-health message to the user
+2. Catch-up: `sarthi catchup --days N` command, scheduled daily catch-up, batch apply from the results
+3. Documents: tailored resume PDF, cover letter, no-invented-facts check, ATS keyword-gap report per job,
+   ATS-readable PDF check
+4. Form answers: read a form's questions before applying, ask unknown ones with the alert, answer bank
+5. Apply engine: rule-based Greenhouse/Lever/Ashby → replay saved paths → AI browser for any form → hand to user;
+   approval tied to one preview, encrypted site logins, screenshot proof, daily per-site limits; adapters for
+   LinkedIn Easy Apply, Workday, Naukri; full auto-apply mode (user opt-in)
+6. Tracking: Gmail and IMAP reading, reply sorting (confirmation / rejection / interview / offer), ghosted after
+   N days, every reply on Telegram, follow-up drafts
+7. Learning from Apply/Skip taps; UK visa-sponsor check
+8. Local web dashboard (pipeline, applied, replies, stats)
+9. Install: `docker compose up`, README, first-run guide
+
+WhatsApp moves to Pro (the official WhatsApp API needs a business account and per-message fees).
+
+### 4.2 Sarthi Pro [Pro] — paid, built after launch
+
+Rule: the free version stays complete and genuinely useful. Paid features are only things that need Sarthi's
+servers, shared data or a running cost, so they cannot simply be copied from the open code. They are written
+from scratch in a separate private service (no AGPL third-party code inside), which the open app calls over an
+API; outside contributions to the open repo need a CLA so Sarthi can license its own code.
+
+| # | Feature | What the user gets | Why it is paid |
+|---|---|---|---|
+| 1 | **Sarthi Cloud + Autopilot** | Runs 24/7 without a laptop; applies within the user's limits while they sleep; maintained apply bots for hard sites (Workday, LinkedIn) | Servers and ongoing maintenance |
+| 2 | **First-to-know feed** | One central crawler checks 173k company career pages every few minutes: apply in the first hour | One laptop cannot poll that much without being blocked |
+| 3 | **Crowd intelligence** | Reply rate per company, ghost/repost jobs, typical reply time, real salary ranges | Built from all users' anonymous, opt-in outcomes |
+| 4 | **WhatsApp** | Alerts and Apply/Skip buttons on WhatsApp, no setup | Official API, business number, per-message fees |
+| 5 | **Interview prep + mock interviews** | Per-job prep pack (likely questions, matching stories, questions to ask); text mock interview, then voice (Whisper speech-to-text + text-to-speech) with feedback | AI cost per session, curated question banks |
+| 6 | **Referral finder** (only once revenue allows) | 2–3 people at the company in the user's field, with a short referral request drafted | People-data providers charge per lookup |
+
+Pricing idea (job searches are short and urgent; India and global prices): weekly ~₹199 / $9, monthly ~₹599 /
+$25, 3 months ~₹1,499 / $59; a reminder before every renewal; optional "pay after you get an offer".
+Payments: Razorpay (India), Stripe or Lemon Squeezy (global). Crowd data is anonymous and opt-in; the free
+self-hosted version stays 100 % local.
 
 ## 5. Folder structure
 
@@ -304,7 +356,7 @@ sarthi/
 │   ├── tracking/       # 2.13 replies, ghosting, follow-ups
 │   ├── chat/           # 2.9  Channel protocol
 │   │   ├── telegram/
-│   │   └── whatsapp/       # Final
+│   │   └── whatsapp/       # Pro
 │   ├── ai/             # 2.14 LiteLLM, fallback, cache, budget, prompts
 │   ├── db/             # 2.15 schema + data access (only place with SQL)
 │   ├── profile/        # resume + preferences

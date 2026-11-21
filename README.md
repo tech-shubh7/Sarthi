@@ -5,7 +5,7 @@ messages you on Telegram, applies when you say yes, and tells you when companies
 
 Free and open source. Runs on your own computer. Works with a free local AI (Ollama) or your own API key.
 
-> Status: under active development (MVP).
+> Status: under active development (towards the first free release).
 
 ## Development
 
