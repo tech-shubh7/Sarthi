@@ -57,9 +57,19 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
             "submit",
             "apply_preview",
             "apply_result",
+            "mail_check",
+            "quiet_check",
+            "reply_notice",
+            "followup_notice",
         }
         assert sarthi.bot.setup is not None
-        assert set(sarthi.worker().handlers) == {"source_check", "match", "catchup"}  # never blocks the user
+        assert set(sarthi.worker().handlers) == {
+            "source_check",
+            "match",
+            "catchup",
+            "mail_check",
+            "quiet_check",
+        }  # never blocks the user
         planned = set(sarthi.sources.planned)
         assert {
             "boards:linkedin+indeed",

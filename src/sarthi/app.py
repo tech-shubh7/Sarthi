@@ -31,10 +31,12 @@ from sarthi.db.connection import connect
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
+from sarthi.db.replies import ReplyStore
 from sarthi.db.source_state import SourceStateStore
 from sarthi.db.tasks import TaskRecord, TaskStore
 from sarthi.documents.handler import DocumentMaker
 from sarthi.matching.handler import LOGIC_VERSION, Matcher, match_version
+from sarthi.profile.master import load_master, master_path
 from sarthi.profile.models import Profile
 from sarthi.profile.repair import repair
 from sarthi.profile.store import load_profile, profile_path, save_profile
@@ -43,13 +45,16 @@ from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQue
 from sarthi.queue.worker import Handler, Worker
 from sarthi.sources.ingest import Ingestor
 from sarthi.sources.schedule import SourceScheduler, plan_sources
+from sarthi.tracking.handler import Mailbox, ReplyTracker
 
 log = logging.getLogger(__name__)
 
 WORKER_CONCURRENCY = 3
 USER_CONCURRENCY = 2
 BROWSER_PROFILE = "browser-profile"  # the user's site logins (LinkedIn, Naukri), kept on their computer
-BACKGROUND_TASKS = frozenset({names.SOURCE_CHECK, names.MATCH, names.CATCHUP})
+BACKGROUND_TASKS = frozenset(
+    {names.SOURCE_CHECK, names.MATCH, names.CATCHUP, names.MAIL_CHECK, names.QUIET_CHECK}
+)
 MATCH_LOGIC_KEY = "matching.logic"
 ALIVE_KEY = "app.alive"  # last time a running Sarthi was seen (ISO), for catch-up after the computer was off
 AUTO_CATCHUP_AFTER = timedelta(hours=6)
@@ -82,6 +87,7 @@ class App:
     documents: DocumentMaker
     forms: FormChecker
     applier: Applier
+    tracker: ReplyTracker
     ai_clients: tuple[AiClient, ...]
     clock: Clock
 
@@ -112,6 +118,10 @@ class App:
             names.SUBMIT: self.applier.handle_submit,
             names.APPLY_PREVIEW: self.bot.handle_apply_preview,
             names.APPLY_RESULT: self.bot.handle_apply_result,
+            names.MAIL_CHECK: self.tracker.handle_mail,
+            names.QUIET_CHECK: self.tracker.handle_quiet,
+            names.REPLY_NOTICE: self.bot.handle_reply_notice,
+            names.FOLLOWUP_NOTICE: self.bot.handle_followup_notice,
         }
 
     def worker(self) -> Worker:
@@ -163,6 +173,8 @@ class App:
         self.queue.reclaim_stuck()
         self.rematch_after_upgrade()
         self.schedule_digest()
+        self.tracker.schedule()
+        self.tracker.schedule_quiet()
         try:
             await self.catch_up_after_absence()
         except (RetryableError, PermanentError) as error:
@@ -336,6 +348,46 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         daily_limit=settings.apply_daily_limit,
         clock=clock,
     )
+    mailbox = (
+        Mailbox(
+            settings.mail_imap_host,
+            settings.mail_imap_port,
+            settings.mail_user,
+            settings.mail_password.get_secret_value(),
+            settings.mail_folder,
+        )
+        if settings.mail_enabled and settings.mail_password is not None
+        else None
+    )
+
+    def own_name() -> str:
+        master = load_master(master_path(settings.data_dir))
+        return master.name if master else ""
+
+    tracker = ReplyTracker(
+        ReplyStore(conn, clock=clock),
+        ApplicationStore(conn, clock=clock),
+        jobs,
+        chats,
+        queue,
+        ai=fast,
+        mailbox=mailbox,
+        every=timedelta(minutes=settings.mail_every_minutes),
+        followup_after=timedelta(days=settings.followup_after_days),
+        name=own_name,
+        clock=clock,
+    )
     return App(
-        settings, conn, queue, bot, matcher, sources, documents, forms, applier, (fast, quality), clock
+        settings,
+        conn,
+        queue,
+        bot,
+        matcher,
+        sources,
+        documents,
+        forms,
+        applier,
+        tracker,
+        (fast, quality),
+        clock,
     )

@@ -237,6 +237,13 @@ Remaining for v1: replay of saved paths, AI browser for unknown forms, Workday.
 - **Copy JobRadar `company_replies.py` + `followups.py`:** follow-up reminder with a draft [v1].
 - **+1:** IMAP option with app password (works with any email, not only Gmail OAuth); every reply → Telegram message.
 
+**Implemented:** `tracking/mail.py` (IMAP, read-only EXAMINE, works with Gmail app passwords and any mailbox; first
+read looks back 30 days), `tracking/triage.py` + `matcher.py` (ApplyPilot ports: rules sort most emails, an email
+counts only when its signals add up to one of the user's applications; the job board is never taken for the
+employer), `ai/replies.py` (interviews, offers, tests and unclear emails only), `tracking/followup.py` (draft from
+the user's own facts, never an AI; at most 2, from 10 days, none after 60 days or once the employer wrote),
+`tracking/handler.py`; every reply goes to Telegram with dates and what to do.
+
 ### 2.14 AI layer [v1]
 - **Plain `httpx` against OpenAI-compatible endpoints** (decided 2026-11-20, replacing LiteLLM): Ollama, Gemini,
   OpenAI, Anthropic, Groq, OpenRouter and DeepSeek all speak that API, so one small client covers them with far

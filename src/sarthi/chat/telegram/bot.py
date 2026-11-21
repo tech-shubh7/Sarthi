@@ -24,6 +24,7 @@ from sarthi.chat.pairing import owner_chat, redeem
 from sarthi.chat.questions import QuestionFlow
 from sarthi.chat.setup import WHY, SetupFlow
 from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
+from sarthi.chat.tracking import followup_text, reply_text
 from sarthi.chat.understand import Route, route, route_by_rules
 from sarthi.clock import Clock, utcnow
 from sarthi.db.answers import AnswerStore
@@ -257,6 +258,22 @@ class TelegramBot:
             raise DeferError(WAIT_FOR_PAIRING_S)
         if self.applying is not None:
             await self.applying.result(task, chat_id)
+
+    async def handle_reply_notice(self, task: TaskRecord) -> None:
+        """``reply_notice`` task: an employer replied about an application."""
+        chat_id = owner_chat(self.chats)
+        if chat_id is None:
+            raise DeferError(WAIT_FOR_PAIRING_S)
+        job = self.jobs.get(str(task.payload.get("job") or ""))
+        await self.api.send_message(chat_id, reply_text(job, task.payload))
+
+    async def handle_followup_notice(self, task: TaskRecord) -> None:
+        """``followup_notice`` task: a follow-up draft for a quiet application."""
+        chat_id = owner_chat(self.chats)
+        if chat_id is None:
+            raise DeferError(WAIT_FOR_PAIRING_S)
+        job = self.jobs.get(str(task.payload.get("job") or ""))
+        await self.api.send_message(chat_id, followup_text(job, task.payload))
 
     async def handle_catchup_report(self, task: TaskRecord) -> None:
         """``catchup_report`` task: send the catch-up batch."""

@@ -76,6 +76,7 @@ ignore = ["D203", "D213", "TRY003"]
 # Upstream data tables and regexes kept verbatim (long lines) so future syncs with StillOpen stay easy.
 "src/sarthi/jobs/{geo,countries,forms}.py" = ["E501", "RUF001"]
 "src/sarthi/answers/questions.py" = ["E501"]
+"src/sarthi/tracking/{triage,matcher}.py" = ["E501"]
 # Messages to people use typographic dashes and emoji on purpose.
 "src/sarthi/chat/**" = ["RUF001"]
 

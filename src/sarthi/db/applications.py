@@ -71,8 +71,10 @@ class ApplicationStore:
     def get(self, job_id: str) -> ApplicationRecord | None:
         """The job's application, or None."""
         row = self._conn.execute("SELECT * FROM application WHERE job_id = ?", (job_id,)).fetchone()
-        if row is None:
-            return None
+        return None if row is None else self._record(row)
+
+    @staticmethod
+    def _record(row: sqlite3.Row) -> ApplicationRecord:
         return ApplicationRecord(
             row["job_id"],
             ApplicationStatus(row["status"]),
@@ -82,6 +84,28 @@ class ApplicationStore:
             row["updated_at"],
             row["submitted_at"],
         )
+
+    def sent(self) -> list[ApplicationRecord]:
+        """Every application that went out (Sarthi submitted it or the user applied themselves)."""
+        rows = self._conn.execute(
+            "SELECT * FROM application WHERE status IN ('submitted', 'applied_by_user') ORDER BY submitted_at"
+        )
+        return [self._record(row) for row in rows]
+
+    def reminded(self, job_id: str) -> None:
+        """A follow-up reminder was sent for this application."""
+        with transaction(self._conn) as c:
+            c.execute(
+                "UPDATE application SET reminders = reminders + 1, reminded_at = ? WHERE job_id = ?",
+                (to_iso(self._clock()), job_id),
+            )
+
+    def reminders(self, job_id: str) -> tuple[int, str | None]:
+        """(reminders sent, when the last one was sent)."""
+        row = self._conn.execute(
+            "SELECT reminders, reminded_at FROM application WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        return (int(row["reminders"]), row["reminded_at"]) if row else (0, None)
 
     def sent_to_site_since(self, site: str, since: datetime) -> int:
         """Applications Sarthi submitted to ``site`` since ``since``."""

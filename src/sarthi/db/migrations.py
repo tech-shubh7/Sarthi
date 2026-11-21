@@ -164,6 +164,23 @@ MIGRATIONS: tuple[str, ...] = (
     ) STRICT;
     CREATE INDEX application_site ON application (site, submitted_at);
     """,
+    # 9: replies from employers (read from the user's mailbox) and follow-up reminders
+    """
+    CREATE TABLE reply (
+        message_id           TEXT PRIMARY KEY,          -- the email's Message-ID: each email is read once
+        job_id               TEXT REFERENCES job (id) ON DELETE SET NULL,
+        kind                 TEXT NOT NULL,             -- confirmation, rejection, interview, ...
+        sender               TEXT NOT NULL DEFAULT '',
+        subject              TEXT NOT NULL DEFAULT '',
+        summary              TEXT NOT NULL DEFAULT '',
+        details              TEXT NOT NULL DEFAULT '{}', -- JSON: dates, actions, match signals
+        received_at          TEXT,
+        read_at              TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX reply_job ON reply (job_id, received_at);
+    ALTER TABLE application ADD COLUMN reminders INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE application ADD COLUMN reminded_at TEXT;
+    """,
 )
 
 

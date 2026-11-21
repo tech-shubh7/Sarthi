@@ -16,3 +16,7 @@ ASK_QUESTIONS = "ask_questions"  # ask the user the next question a form needs
 APPLY_PREVIEW = "apply_preview"  # show the filled form and ask for Submit / Cancel
 SUBMIT = "submit"  # the user approved one filled form: submit it
 APPLY_RESULT = "apply_result"  # tell the user how an application ended
+MAIL_CHECK = "mail_check"  # read new emails and find replies about applications
+REPLY_NOTICE = "reply_notice"  # tell the user an employer replied
+QUIET_CHECK = "quiet_check"  # find applications with no reply for a while
+FOLLOWUP_NOTICE = "followup_notice"  # send the user a follow-up draft

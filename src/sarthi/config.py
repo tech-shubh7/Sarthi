@@ -55,6 +55,21 @@ class Settings(BaseSettings):
     apply_headless: bool = True
     apply_daily_limit: int = Field(default=30, ge=1, le=500, description="Applications per site per day.")
 
+    # Reply tracking: Sarthi reads (never changes) your mailbox over IMAP.
+    # Gmail: imap.gmail.com and an app password.
+    mail_imap_host: str = ""
+    mail_imap_port: int = Field(default=993, ge=1, le=65535)
+    mail_user: str = ""
+    mail_password: SecretStr | None = None
+    mail_folder: str = "INBOX"
+    mail_every_minutes: int = Field(default=10, ge=2, le=1440)
+    followup_after_days: int = Field(default=10, ge=3, le=60)
+
+    @property
+    def mail_enabled(self) -> bool:
+        """True when a mailbox is set up for reply tracking."""
+        return bool(self.mail_imap_host and self.mail_user and self.mail_password)
+
     # AI models, tried in order until one answers: "<provider>/<model>", e.g. "gemini/gemini-2.5-flash".
     # Providers: ollama, gemini, openai, anthropic, groq, openrouter, deepseek (see sarthi.ai.providers).
     llm_fast_models: list[str] = Field(default=["ollama/llama3.1"], description="For matching.")
