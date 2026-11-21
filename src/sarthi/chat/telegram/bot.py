@@ -23,6 +23,7 @@ from sarthi.chat.inbox import Inbox
 from sarthi.chat.pairing import owner_chat, redeem
 from sarthi.chat.questions import QuestionFlow
 from sarthi.chat.setup import WHY, SetupFlow
+from sarthi.chat.source_notice import source_notice_text
 from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
 from sarthi.chat.tracking import followup_text, reply_text
 from sarthi.chat.understand import Route, route, route_by_rules
@@ -274,6 +275,13 @@ class TelegramBot:
             raise DeferError(WAIT_FOR_PAIRING_S)
         job = self.jobs.get(str(task.payload.get("job") or ""))
         await self.api.send_message(chat_id, followup_text(job, task.payload))
+
+    async def handle_source_notice(self, task: TaskRecord) -> None:
+        """``source_notice`` task: a job source stopped (or started again) working."""
+        chat_id = owner_chat(self.chats)
+        if chat_id is None:
+            return  # not paired yet: nobody to tell, and it is stale by the time they pair
+        await self.api.send_message(chat_id, source_notice_text(task.payload))
 
     async def handle_catchup_report(self, task: TaskRecord) -> None:
         """``catchup_report`` task: send the catch-up batch."""

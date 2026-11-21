@@ -11,16 +11,25 @@ import logging
 from dataclasses import dataclass
 
 from sarthi.db.jobs import JobStore
-from sarthi.db.source_state import SourceStateStore
+from sarthi.db.source_state import SourceState, SourceStateStore
 from sarthi.jobs.models import JobPosting
 from sarthi.jobs.normalize import complete, snippet
+from sarthi.log import redact
 from sarthi.queue import names
-from sarthi.queue.tasks import Priority, TaskQueue
+from sarthi.queue.tasks import PermanentError, Priority, TaskQueue
 from sarthi.sources.base import SearchQuery, Source
 
 log = logging.getLogger(__name__)
 
 MATCH_TASK = names.MATCH
+DOWN_AFTER = 3  # temporary failures in a row before the user is told (checks back off: hours, not minutes)
+MAX_NOTICE_ERROR = 200
+
+
+def _was_reported(state: SourceState) -> bool:
+    """True when the user was told this source stopped working (so they should hear it works again)."""
+    permanent = (state.last_error or "").startswith(PermanentError.__name__)
+    return state.consecutive_failures >= (1 if permanent else DOWN_AFTER)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +73,12 @@ class Ingestor:
         except Exception as error:
             streak = self.states.record_failure(source.name, f"{type(error).__name__}: {error}")
             log.warning("%s failed (%d in a row): %s", source.name, streak, error)
+            permanent = isinstance(error, PermanentError)
+            if streak == (1 if permanent else DOWN_AFTER):  # once per outage, not at every failed check
+                self._notice(source.name, "down", streak, str(error), permanent=permanent)
             raise
+        if state is not None and _was_reported(state):
+            self._notice(source.name, "up", 0, "")
 
         new = queued = 0
         for posting in postings:
@@ -81,6 +95,17 @@ class Ingestor:
         report = IngestReport(source.name, len(postings), new, queued, baseline and alert is None)
         log.info("%s: %d fetched, %d new, %d queued", source.name, report.fetched, report.new, report.queued)
         return report
+
+    def _notice(self, source: str, status: str, streak: int, error: str, *, permanent: bool = False) -> None:
+        """Queue a message telling the user a source stopped (or started again) working."""
+        payload = {
+            "source": source,
+            "status": status,
+            "streak": streak,
+            "permanent": permanent,
+            "error": redact(error)[:MAX_NOTICE_ERROR],
+        }
+        self.queue.enqueue(names.SOURCE_NOTICE, f"{source}:{status}", payload, priority=Priority.NORMAL)
 
     def _store(self, source_name: str, posting: JobPosting) -> str | None:
         """Save one posting lean; the new job's id, or None when it was already known or unusable."""

@@ -62,6 +62,7 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
             "quiet_check",
             "reply_notice",
             "followup_notice",
+            "source_notice",
         }
         assert sarthi.bot.setup is not None
         assert set(sarthi.worker().handlers) == {

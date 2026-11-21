@@ -129,6 +129,7 @@ class App:
             names.QUIET_CHECK: self.tracker.handle_quiet,
             names.REPLY_NOTICE: self.bot.handle_reply_notice,
             names.FOLLOWUP_NOTICE: self.bot.handle_followup_notice,
+            names.SOURCE_NOTICE: self.bot.handle_source_notice,
         }
 
     def worker(self) -> Worker:

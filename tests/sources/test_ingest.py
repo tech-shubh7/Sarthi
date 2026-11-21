@@ -6,7 +6,7 @@ from sarthi.db.jobs import JobStore
 from sarthi.db.source_state import SourceStateStore
 from sarthi.db.tasks import TaskStore
 from sarthi.jobs.models import JobPosting
-from sarthi.queue.tasks import Priority, RetryableError, TaskQueue
+from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQueue
 from sarthi.sources.base import SearchQuery
 from sarthi.sources.ingest import MATCH_TASK, Ingestor
 from tests.conftest import FakeClock
@@ -137,6 +137,71 @@ async def test_failures_are_tracked_and_re_raised(ingestor: Ingestor, states: So
     state = states.get(source.name)
     assert state is not None
     assert (state.consecutive_failures, state.last_error, state.baseline_done) == (0, None, True)
+
+
+def notices(queue: TaskQueue) -> list[dict[str, Any]]:
+    found = []
+    while (task := queue.claim(["source_notice"])) is not None:
+        found.append(task.payload)
+        queue.complete(task)
+    return found
+
+
+async def test_a_source_down_for_a_while_is_reported_once_then_its_recovery(ingestor: Ingestor) -> None:
+    source = FakeSource()
+    source.error = RetryableError("HTTP 503, token=abc123secret")
+    for _ in range(2):
+        with pytest.raises(RetryableError):
+            await ingestor.run(source, SearchQuery())
+    assert notices(ingestor.queue) == []  # a blip is not worth a message
+    for _ in range(3):  # the third failure in a row is reported; the fourth and fifth are not
+        with pytest.raises(RetryableError):
+            await ingestor.run(source, SearchQuery())
+    [down] = notices(ingestor.queue)
+    assert (down["source"], down["status"], down["streak"], down["permanent"]) == (
+        "greenhouse:acme",
+        "down",
+        3,
+        False,
+    )
+    assert "abc123secret" not in down["error"]
+
+    source.error = None
+    await ingestor.run(source, SearchQuery())
+    assert [n["status"] for n in notices(ingestor.queue)] == ["up"]
+    await ingestor.run(source, SearchQuery())
+    assert notices(ingestor.queue) == []  # working, and nothing to say
+
+    source.error = RetryableError("HTTP 502")  # a second outage is reported again
+    for _ in range(3):
+        with pytest.raises(RetryableError):
+            await ingestor.run(source, SearchQuery())
+    assert [n["status"] for n in notices(ingestor.queue)] == ["down"]
+
+
+async def test_a_short_outage_recovers_quietly(ingestor: Ingestor) -> None:
+    source = FakeSource()
+    source.error = RetryableError("timeout")
+    with pytest.raises(RetryableError):
+        await ingestor.run(source, SearchQuery())
+    source.error = None
+    await ingestor.run(source, SearchQuery())
+    assert notices(ingestor.queue) == []
+
+
+async def test_a_source_that_cannot_work_is_reported_at_once(ingestor: Ingestor) -> None:
+    source = FakeSource()
+    source.error = PermanentError("greenhouse:acme: company board not found")
+    with pytest.raises(PermanentError):
+        await ingestor.run(source, SearchQuery())
+    [down] = notices(ingestor.queue)
+    assert (down["status"], down["permanent"], down["streak"]) == ("down", True, 1)
+    with pytest.raises(PermanentError):
+        await ingestor.run(source, SearchQuery())
+    assert notices(ingestor.queue) == []
+    source.error = None  # e.g. the user fixed the slug
+    await ingestor.run(source, SearchQuery())
+    assert [n["status"] for n in notices(ingestor.queue)] == ["up"]
 
 
 async def test_an_unusable_posting_does_not_drop_the_batch(ingestor: Ingestor) -> None:

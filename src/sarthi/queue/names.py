@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 SOURCE_CHECK = "source_check"  # read one job source
+SOURCE_NOTICE = "source_notice"  # tell the user a job source stopped (or started again) working
 MATCH = "match"  # run the match funnel for one job
 FILL_TEXT = "fill_text"  # read the full description from a job's own page, then match it
 ALERT = "alert"  # send one strong match to the user now
