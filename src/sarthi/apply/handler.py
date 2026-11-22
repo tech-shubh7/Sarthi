@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from sarthi.apply import adapters
 from sarthi.apply.adapters import FillError
+from sarthi.apply.agent import LoginWallError
 from sarthi.apply.engine import ApplyEngine
 from sarthi.apply.linkedin import LimitReachedError, LoginNeededError
 from sarthi.clock import Clock, utcnow
@@ -55,6 +56,19 @@ def needs_login(url: str) -> bool:
     """A job board where applying needs the user's own logged-in account."""
     host = site_of(url)
     return any(board in host for board in LOGIN_BOARDS)
+
+
+def login_help(error: LoginWallError) -> str:
+    """What to tell the user when a site wants a sign-in or a new account before the application."""
+    if error.account:
+        return (
+            f"{error}. Sarthi does not create accounts or keep passwords: create it once on the site, log in "
+            "with /login, then tap Apply again (or apply there yourself)."
+        )
+    return (
+        f"{error}. Log in once with /login (it keeps the site's session, never your password), then tap "
+        "Apply again."
+    )
 
 
 class Applier:
@@ -132,18 +146,22 @@ class Applier:
         if adapters.is_workday(url):
             self._hand_over(task.key, url, "Workday forms need your own Workday account for this employer.")
             return
-        if needs_login(url):
+        board = needs_login(url)
+        if board and not self.engine.walks:
             self._hand_over(task.key, url, f"{site_of(url)} needs your own logged-in account to apply.")
             return
         since = self._clock() - DAY
         if self.applications.sent_to_site_since(site_of(url), since) >= self.daily_limit:
             raise DeferError(3600)  # the site's daily limit: try again in an hour
         try:
-            result = await self.engine.fill(task.key, url, ctx)
+            result = await self.engine.fill(task.key, url, ctx, one_click=board)
         except LimitReachedError:
             raise DeferError(LIMIT_WAIT_S) from None  # the site's own daily limit: later, not by hand
         except LoginNeededError as error:
             self._hand_over(task.key, url, str(error))
+            return
+        except LoginWallError as error:
+            self._hand_over(task.key, url, login_help(error))
             return
         except FillError as error:
             self._hand_over(task.key, url, f"The form could not be filled: {error}")

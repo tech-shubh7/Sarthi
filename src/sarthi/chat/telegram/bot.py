@@ -102,8 +102,19 @@ COMMANDS: tuple[tuple[str, str], ...] = (
     ("pause", "Stop instant alerts (matches wait for you)"),
     ("resume", "Start instant alerts again"),
     ("cancel", "Stop the profile setup you are in"),
-    ("login", "Log in to LinkedIn or Naukri once, so Sarthi can apply there"),
+    ("login", "Log in to a job site once (LinkedIn, Naukri, Indeed, ...), so Sarthi can apply there"),
     ("help", "What Sarthi does and these commands"),
+)
+# Sites /login offers (the apply step has their login pages): (key, name), two to a row.
+LOGIN_SITES: tuple[tuple[str, str], ...] = (
+    ("linkedin", "LinkedIn"),
+    ("naukri", "Naukri"),
+    ("indeed", "Indeed"),
+    ("instahyre", "Instahyre"),
+    ("wellfound", "Wellfound"),
+    ("foundit", "foundit"),
+    ("glassdoor", "Glassdoor"),
+    ("shine", "Shine"),
 )
 HELP = "<b>Sarthi</b> finds jobs that fit you and messages you here.\n\n" + "\n".join(
     f"/{name} – {about[0].lower()}{about[1:]}" for name, about in COMMANDS
@@ -370,7 +381,12 @@ class TelegramBot:
             await self.api.send_message(
                 chat_id,
                 "Which site? You log in on the site itself; Sarthi never sees your password.",
-                buttons([("LinkedIn", "login:linkedin"), ("Naukri", "login:naukri")]),
+                buttons(
+                    *[
+                        [(name, f"login:{key}") for key, name in LOGIN_SITES[i : i + 2]]
+                        for i in range(0, len(LOGIN_SITES), 2)
+                    ]
+                ),
             )
         else:
             await self.api.send_message(chat_id, "I didn't understand that. /help lists what I can do.")
@@ -499,7 +515,7 @@ class TelegramBot:
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)
             await self.questions.on_button(chat_id, data)
-        elif data in ("login:linkedin", "login:naukri"):
+        elif data in {f"login:{key}" for key, _ in LOGIN_SITES}:
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)
             if self.site_login is None:

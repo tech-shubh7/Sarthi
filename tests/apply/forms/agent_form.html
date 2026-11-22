@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply - Acme</title></head>
+<body>
+<h1>Apply: Backend Engineer</h1>
+<form id="apply" onsubmit="return false">
+  <div id="step1">
+    <div class="field"><label for="fn">First name *</label><input id="fn" required></div>
+    <div class="field"><label for="ln">Last name *</label><input id="ln" required></div>
+    <div class="field"><label for="em">Email *</label><input id="em" type="email" required></div>
+    <div class="field"><label for="cv">Resume/CV *</label><input id="cv" type="file" required></div>
+    <button type="button" id="next" onclick="
+      const ok = ['fn','ln','em'].every(i => document.getElementById(i).value) && document.getElementById('cv').files.length;
+      if (ok) { document.getElementById('step1').style.display='none'; document.getElementById('step2').style.display='block'; }
+      else { document.getElementById('err').textContent = 'Please fill in every field.'; }">Next</button>
+    <p id="err"></p>
+  </div>
+  <div id="step2" style="display:none">
+    <fieldset class="field"><legend>Are you legally authorized to work in India? *</legend>
+      <label><input type="radio" name="auth" value="yes" required> Yes</label>
+      <label><input type="radio" name="auth" value="no"> No</label>
+    </fieldset>
+    <div class="field"><label for="why">Why do you want to work here? *</label><textarea id="why" required></textarea></div>
+    <button type="button" id="back">Back</button>
+    <button type="button" id="send" onclick="
+      document.getElementById('apply').outerHTML = '<h2>Thank you for applying! We received your application.</h2>';">Submit application</button>
+  </div>
+</form>
+</body></html>

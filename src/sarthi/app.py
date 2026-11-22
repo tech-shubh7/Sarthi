@@ -12,11 +12,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from sarthi.ai.browser import next_step
 from sarthi.ai.client import AiClient
 from sarthi.ai.providers import resolve
 from sarthi.ai.scoring import LlmMatchScorer
 from sarthi.answers.handler import FormChecker
-from sarthi.apply.engine import ApplyEngine
+from sarthi.apply.agent import ApplicationBrowser
+from sarthi.apply.engine import SITE_NAMES, ApplyEngine
 from sarthi.apply.engine import login as login_to
 from sarthi.apply.handler import Applier
 from sarthi.apply.screen import ScreenError, login_screen
@@ -242,8 +244,11 @@ class App:
         self._login = asyncio.create_task(self._log_in(chat_id, site))
 
     async def _log_in(self, chat_id: int, site: str) -> None:
-        name = {"linkedin": "LinkedIn", "naukri": "Naukri"}.get(site, site)
+        name = SITE_NAMES.get(site, site)
         send = self.bot.api.send_message
+        # The saved logins are one browser profile, which one browser at a time may open: the apply browser
+        # closes (forms waiting for Submit are filled again when tapped) and reopens with the new login.
+        await self.applier.engine.aclose()
         try:
             async with login_screen(self.settings.screen_port, self.settings.dashboard_host) as screen:
                 if screen.url is None:
@@ -376,6 +381,18 @@ def _ai(
         clock=clock,
         background=background,
     )
+
+
+def _browser_ai(client: AiClient) -> Any:
+    """The application browser's AI step on ``client`` (the quality models), or None without any model."""
+    if not client.available:
+        return None
+
+    async def decide(page_text: str, fields: str, buttons: str) -> tuple[str, str, str] | None:
+        step = await next_step(client, page_text, fields, buttons)
+        return (step.state, step.click, step.why) if step is not None else None
+
+    return decide
 
 
 def aggregator_sources(settings: Settings) -> list[Source]:
@@ -512,6 +529,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
             settings.data_dir / "screenshots",
             profile_dir=settings.data_dir / BROWSER_PROFILE,
             headless=settings.apply_headless,
+            browser=ApplicationBrowser(_browser_ai(quality)),
         ),
         jobs,
         DocumentStore(conn, clock=clock),

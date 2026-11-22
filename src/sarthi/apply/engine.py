@@ -20,12 +20,14 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 from playwright.async_api import Error as PlaywrightError
 
 from sarthi.apply import adapters, linkedin, naukri
 from sarthi.apply.adapters import Adapter, FillError
+from sarthi.apply.agent import ApplicationBrowser, Walked
 from sarthi.jobs.forms import FormContext, FormField, suggest
 
 log = logging.getLogger(__name__)
@@ -80,9 +82,21 @@ class _Open:
 class ApplyEngine:
     """One headless browser; one open page per job between fill and submit."""
 
-    def __init__(self, shots_dir: Path, *, profile_dir: Path | None = None, headless: bool = True) -> None:
-        """Screenshots go to ``shots_dir``; ``profile_dir`` keeps the user's site logins between runs."""
+    def __init__(
+        self,
+        shots_dir: Path,
+        *,
+        profile_dir: Path | None = None,
+        headless: bool = True,
+        browser: ApplicationBrowser | None = None,
+    ) -> None:
+        """Screenshots go to ``shots_dir``; ``profile_dir`` keeps the user's site logins between runs.
+
+        ``browser`` walks the sites no adapter knows (and boards with a saved login); None: they are handed
+        over.
+        """
         self.shots_dir = shots_dir
+        self.browser = browser
         self.profile_dir = profile_dir
         self.headless = headless
         self._playwright: Playwright | None = None
@@ -97,10 +111,21 @@ class ApplyEngine:
     async def _new_page(self) -> Page:
         if self._context is None:
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(headless=self.headless)
-            self._context = await self._browser.new_context(
-                locale="en-US", viewport={"width": 1280, "height": 1600}
-            )
+            if self.profile_dir is not None:
+                # The user's saved site logins (`sarthi login`, /login) live in this profile: without it every
+                # board that needs an account would meet its login page.
+                self.profile_dir.mkdir(parents=True, exist_ok=True)
+                self._context = await self._playwright.chromium.launch_persistent_context(
+                    str(self.profile_dir),
+                    headless=self.headless,
+                    locale="en-US",
+                    viewport={"width": 1280, "height": 1600},
+                )
+            else:
+                self._browser = await self._playwright.chromium.launch(headless=self.headless)
+                self._context = await self._browser.new_context(
+                    locale="en-US", viewport={"width": 1280, "height": 1600}
+                )
         page = await self._context.new_page()
         page.set_default_timeout(15_000)
         return page
@@ -154,8 +179,17 @@ class ApplyEngine:
             return None
         return path
 
-    async def fill(self, job_id: str, url: str, ctx: FormContext) -> FillResult:
-        """Open and fill the form; never submits. Re-filling voids any earlier approval."""
+    @property
+    def walks(self) -> bool:
+        """True when sites without an adapter are walked by the application browser."""
+        return self.browser is not None
+
+    async def fill(self, job_id: str, url: str, ctx: FormContext, *, one_click: bool = False) -> FillResult:
+        """Open and fill the form; never submits. Re-filling voids any earlier approval.
+
+        ``one_click``: a job board with the user's login, where its "Apply" may send at once (it is held for
+        approval).
+        """
         async with self._lock(job_id):
             await self.close_job(job_id)
             page = await self._new_page()
@@ -167,22 +201,73 @@ class ApplyEngine:
                     adapters.apply_url(url), wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS
                 )
                 adapter = await adapters.refine_for_page(page, adapter)
-                fields = await adapters.discover(page, adapter)
             except PlaywrightError as error:
                 with contextlib.suppress(PlaywrightError):
                     await page.close()
                 raise FillError(f"the form did not load: {str(error).splitlines()[0][:200]}") from error
-            result = FillResult(adapter=adapter.name)
-            ordered = [f for f in fields if f.type == "file"] + [f for f in fields if f.type != "file"]
-            for form_field in ordered:
-                await self._fill_one(page, adapter, form_field, ctx, result)
-            result.captcha = bool((await adapters.detect_captcha(page)).get("interactive"))
-            result.screenshot = await self._screenshot(page, job_id, "filled", adapter)
-            result.code = new_code()
-            self._open[job_id] = _Open(
-                page, adapter, result.code, page.url, len(result.blanks) + len(result.failed)
-            )
-            return result
+            if adapter is adapters.GENERIC and self.browser is not None:
+                walked = await self._walk(page, url, ctx, one_click=one_click)
+                if not walked.known_form:
+                    return await self._walked(job_id, walked)
+                page = walked.page
+                adapter = await adapters.refine_for_page(page, adapters.adapter_for(walked.known_form))
+            return await self._fill_with(job_id, page, adapter, ctx)
+
+    async def _walk(self, page: Page, url: str, ctx: FormContext, *, one_click: bool) -> Walked:
+        if self.browser is None:
+            raise FillError("no application browser")
+        try:
+            walked = await self.browser.walk(page, url, ctx, one_click=one_click)
+        except FillError:
+            await self._close_tabs(page)
+            raise
+        except PlaywrightError as error:
+            await self._close_tabs(page)
+            raise FillError(
+                f"the page did not work as expected: {str(error).splitlines()[0][:200]}"
+            ) from error
+        if walked.page is not page:
+            with contextlib.suppress(PlaywrightError):
+                await page.close()  # the job page; the form opened in its own tab
+        return walked
+
+    @staticmethod
+    async def _close_tabs(page: Page) -> None:
+        for tab in list(page.context.pages):
+            with contextlib.suppress(PlaywrightError):
+                if tab is page or await tab.opener() is page:
+                    await tab.close()
+
+    async def _walked(self, job_id: str, walked: Walked) -> FillResult:
+        """The application browser's fill, held open for approval like any other."""
+        adapter = walked.adapter()
+        result = FillResult(adapter.name, walked.filled, walked.blanks, walked.failed, walked.captcha)
+        result.screenshot = await self._screenshot(walked.page, job_id, "filled")
+        result.code = new_code()
+        self._open[job_id] = _Open(
+            walked.page, adapter, result.code, walked.page.url, len(result.blanks) + len(result.failed)
+        )
+        return result
+
+    async def _fill_with(self, job_id: str, page: Page, adapter: Adapter, ctx: FormContext) -> FillResult:
+        """A known hiring system's form (or a plain one), filled by its adapter."""
+        try:
+            fields = await adapters.discover(page, adapter)
+        except PlaywrightError as error:
+            with contextlib.suppress(PlaywrightError):
+                await page.close()
+            raise FillError(f"the form did not load: {str(error).splitlines()[0][:200]}") from error
+        result = FillResult(adapter=adapter.name)
+        ordered = [f for f in fields if f.type == "file"] + [f for f in fields if f.type != "file"]
+        for form_field in ordered:
+            await self._fill_one(page, adapter, form_field, ctx, result)
+        result.captcha = bool((await adapters.detect_captcha(page)).get("interactive"))
+        result.screenshot = await self._screenshot(page, job_id, "filled", adapter)
+        result.code = new_code()
+        self._open[job_id] = _Open(
+            page, adapter, result.code, page.url, len(result.blanks) + len(result.failed)
+        )
+        return result
 
     async def _fill_board(self, job_id: str, page: Page, url: str, ctx: FormContext) -> FillResult:
         """LinkedIn Easy Apply or Naukri one-click apply, with the user's saved login."""
@@ -251,11 +336,12 @@ class ApplyEngine:
                 return SubmitResult("expired", "The form page changed after it was filled.")
             if (await adapters.detect_captcha(page)).get("interactive"):
                 return SubmitResult("needs_human", "The form shows a CAPTCHA, which Sarthi never solves.")
+            before = await adapters.body_text(page)
             try:
                 await page.locator(adapter.submit).first.click()
             except PlaywrightError as error:
                 return SubmitResult("failed", f"Could not click submit: {str(error).splitlines()[0][:200]}")
-            outcome, detail = await self._outcome(page, adapter, opened.url)
+            outcome, detail = await self._outcome(page, adapter, opened.url, before)
             if adapter is naukri.NAUKRI and outcome != "submitted" and await naukri.chatbot_open(page):
                 outcome, detail = (
                     "needs_human",
@@ -266,7 +352,9 @@ class ApplyEngine:
                 await self.close_job(job_id)
             return SubmitResult(outcome, detail, shot)
 
-    async def _outcome(self, page: Page, adapter: Adapter, form_url: str) -> tuple[str, str]:
+    async def _outcome(
+        self, page: Page, adapter: Adapter, form_url: str, before: str = ""
+    ) -> tuple[str, str]:
         end = time.monotonic() + SUBMIT_WAIT_S
         while time.monotonic() < end and not page.is_closed():
             await asyncio.sleep(0.5)
@@ -276,8 +364,16 @@ class ApplyEngine:
                 return "verification_failed", why
             if not adapter.strict_success:
                 moved = page.url.split("#")[0] != form_url.split("#", maxsplit=1)[0]
-                if moved and adapters.THANKS.search(await adapters.body_text(page)):
+                now = await adapters.body_text(page)
+                if moved and adapters.THANKS.search(now):
                     return "submitted", f"Thank-you page seen at {page.url}"
+                # Many sites show the thanks in place, at the same address: new thank-you text counts too.
+                if (
+                    adapter.extra.get("agent")
+                    and adapters.THANKS.search(now)
+                    and not adapters.THANKS.search(before)
+                ):
+                    return "submitted", f"Thank-you message shown at {page.url}"
             if (await adapters.detect_captcha(page)).get("interactive"):
                 return "needs_human", "A CAPTCHA appeared after clicking submit."
         return "failed", "No confirmation within 20 seconds; check the form before trying again."
@@ -286,7 +382,24 @@ class ApplyEngine:
 LOGIN_PAGES = {
     "linkedin": "https://www.linkedin.com/login",
     "naukri": "https://www.naukri.com/nlogin/login",
+    "indeed": "https://secure.indeed.com/auth",
+    "instahyre": "https://www.instahyre.com/login/",
+    "wellfound": "https://wellfound.com/login",
+    "foundit": "https://www.foundit.in/rio/login",
+    "glassdoor": "https://www.glassdoor.com/profile/login_input.htm",
+    "shine": "https://www.shine.com/myshine/login/",
 }
+SITE_NAMES = {
+    "linkedin": "LinkedIn",
+    "naukri": "Naukri",
+    "indeed": "Indeed",
+    "instahyre": "Instahyre",
+    "wellfound": "Wellfound",
+    "foundit": "foundit",
+    "glassdoor": "Glassdoor",
+    "shine": "Shine",
+}
+_LOGIN_PATH = re.compile(r"log-?in|sign-?in|auth|sso|account|register", re.IGNORECASE)
 _SIGNED_IN = {
     "linkedin": re.compile(r"linkedin\.com/(?:feed|jobs|in|mynetwork)/"),
     "naukri": re.compile(r"naukri\.com/(?:mnjuser|homepage|myapply)"),
@@ -316,13 +429,34 @@ async def login(
         end = time.monotonic() + wait_s
         signed_in = False
         while time.monotonic() < end and not page.is_closed():
-            if _SIGNED_IN[site].search(page.url):
+            if await _signed_in(page, site):
                 signed_in = True
                 break
             await asyncio.sleep(1)
         with contextlib.suppress(PlaywrightError):
             await context.close()
         return signed_in
+
+
+async def _signed_in(page: Page, site: str) -> bool:
+    """True once the site shows a page of a signed-in user.
+
+    LinkedIn and Naukri have known addresses for that; elsewhere: the site's own pages again, away from any
+    login or sign-up address, with no password field on screen.
+    """
+    if site in _SIGNED_IN:
+        return _SIGNED_IN[site].search(page.url) is not None
+    try:
+        host = (urlparse(page.url).hostname or "").lower()
+        wanted = (urlparse(LOGIN_PAGES[site]).hostname or "").lower().split(".")[-2]
+        if wanted not in host or _LOGIN_PATH.search(urlparse(page.url).path):
+            return False
+        return not await page.evaluate(
+            "() => Array.from(document.querySelectorAll('input[type=password]'))"
+            ".some((e) => e.getClientRects().length > 0)"
+        )
+    except PlaywrightError:
+        return False
 
 
 def _browser_env(env: dict[str, str] | None) -> dict[str, str | float | bool] | None:

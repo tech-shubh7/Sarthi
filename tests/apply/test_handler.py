@@ -32,9 +32,12 @@ class FakeEngine:
         self.outcome = outcome or SubmitResult("submitted", "Confirmation seen")
         self.closed: list[str] = []
         self.filled: list[str] = []
+        self.walks = False  # no application browser: boards are handed over
+        self.one_click: list[bool] = []
 
-    async def fill(self, job_id: str, url: str, ctx: Any) -> FillResult:
+    async def fill(self, job_id: str, url: str, ctx: Any, *, one_click: bool = False) -> FillResult:
         self.filled.append(url)
+        self.one_click.append(one_click)
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
