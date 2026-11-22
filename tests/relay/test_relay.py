@@ -224,7 +224,7 @@ async def test_documents_and_photos_go_to_the_own_chat(world: World) -> None:
     assert len(uploads) == 2
     for upload in uploads:
         assert 'name="chat_id"\r\n\r\n111' in upload
-        assert "999" not in upload
+        assert 'name="chat_id"\r\n\r\n999' not in upload  # not just "999": the random boundary may hold it
 
 
 async def test_moving_to_a_new_computer_releases_the_old_sarthi(world: World) -> None:

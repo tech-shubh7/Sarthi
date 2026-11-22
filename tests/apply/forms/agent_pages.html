@@ -33,4 +33,48 @@
   <button onclick="document.title='sent'">Send</button>
   <button onclick="location.href='agent_form.html'">Go on</button>
 </section>
+<section id="board">
+  <header><a href="#">Jobs</a> <button>Login / Register</button></header>
+  <h1>Java Developer</h1>
+  <button onclick="document.title='applied'">Apply</button>
+</section>
+<section id="shadow">
+  <h1>Frontend Engineer</h1>
+  <apply-widget></apply-widget>
+  <script>
+    customElements.define("apply-widget", class extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: "open" });
+        root.innerHTML = "<button>I'm interested</button>";
+        root.querySelector("button").onclick = () => { location.href = "agent_form.html"; };
+      }
+    });
+  </script>
+</section>
+<section id="empty"></section>
+<section id="covered">
+  <h1>Product Engineer</h1>
+  <a href="agent_form.html">Apply for this job</a>
+  <p id="long"></p>
+  <div id="backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:10"></div>
+  <div id="consent" role="dialog" style="position:fixed;bottom:0;left:0;right:0;z-index:11;background:#fff">
+    Read our <a href="#covered">cookies policy</a>.
+    <button onclick="document.getElementById('backdrop').remove(); document.getElementById('consent').remove()">Accept all</button>
+    <button>Cookies settings</button>
+  </div>
+  <script>document.getElementById("long").textContent = "Lorem ipsum dolor sit amet. ".repeat(250);</script>
+</section>
+<section id="slow"></section>
+<script>
+  if (location.hash === "#slow") setTimeout(() => {
+    document.getElementById("slow").innerHTML = '<h1>Data Analyst</h1><a href="agent_form.html">Apply now</a>';
+  }, 2000);
+</script>
+<section id="unmatched">
+  <h1>Apply</h1>
+  <form onsubmit="return false">
+    <div class="field"><label for="q">Zzq reference code</label><input id="q"></div>
+    <input type="submit" value="Submit Application">
+  </form>
+</section>
 </body></html>

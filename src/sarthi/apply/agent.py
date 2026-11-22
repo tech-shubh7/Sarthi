@@ -30,7 +30,7 @@ from playwright.async_api import Page
 
 from sarthi.apply import adapters
 from sarthi.apply.adapters import Adapter, FillError
-from sarthi.jobs.forms import FormContext, FormField, suggest
+from sarthi.jobs.forms import FormContext, FormField, Suggestion, suggest
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +39,8 @@ MAX_BUTTONS = 40
 BUTTON_ATTR = "data-sarthi-btn"
 SETTLE_MS = 8_000
 NEW_TAB_WAIT_S = 2.5
+CLICK_TIMEOUT_MS = 10_000
+SLOW_PAGE_S = 10.0  # an empty page gets this long to show its content
 
 AGENT = Adapter(
     name="ai",
@@ -54,7 +56,7 @@ NEVER = re.compile(
     r"|create\s+(?:an?\s+)?account|register|\bshare\b|save\s+(?:this\s+)?job|\bsaved?\b$|similar jobs"
     r"|tweet|whatsapp|facebook|twitter|instagram|youtube|privacy|terms|cookie\s+(?:settings|preferences)"
     r"|manage\s+(?:cookies|preferences)|reject|decline|language|english|deutsch|français|español"
-    r"|withdraw|delete|remove|sign\s*out|log\s*out|upload\s+(?:from|via)",
+    r"|withdraw|delete|remove|sign\s*out|log\s*out|\bupload",  # an upload button only opens a file dialog
     re.IGNORECASE,
 )
 FINAL = re.compile(
@@ -69,6 +71,10 @@ NEXT = re.compile(
 APPLY = re.compile(
     r"\bapply\b|i'?m\s+interested|start\s+(?:your\s+|my\s+)?application|apply\s+manually|apply\s+now",
     re.IGNORECASE,
+)
+# A board's header when nobody is signed in ("Login", "Sign in", "Login / Register").
+LOGGED_OUT = re.compile(
+    r"^\s*(?:log\s*-?\s*in|sign\s*-?\s*in)(?:\s*(?:/|or|&)\s*(?:register|sign\s*up))?\s*$", re.I
 )
 COOKIE_OK = re.compile(
     r"^\s*(?:accept|accept\s+all|allow\s+all|i\s+agree|agree|got\s+it|ok(?:ay)?)\b", re.IGNORECASE
@@ -86,11 +92,16 @@ ATS_HOSTS = re.compile(
 BUTTONS_JS = """
 (max) => {
   const clean = (s) => (s || "").replace(/\\s+/g, " ").trim();
-  document.querySelectorAll("[data-sarthi-btn]").forEach((e) => e.removeAttribute("data-sarthi-btn"));
+  // Into open shadow roots too: sites built from web components (SmartRecruiters) keep their buttons there.
+  const deep = (root, sel, found = []) => {
+    root.querySelectorAll(sel).forEach((e) => found.push(e));
+    root.querySelectorAll("*").forEach((e) => { if (e.shadowRoot) deep(e.shadowRoot, sel, found); });
+    return found;
+  };
+  deep(document, "[data-sarthi-btn]").forEach((e) => e.removeAttribute("data-sarthi-btn"));
   const out = [];
   let n = 0;
-  const all = document.querySelectorAll(
-    "button, a[href], [role=button], input[type=submit], input[type=button]");
+  const all = deep(document, "button, a[href], [role=button], input[type=submit], input[type=button]");
   for (const el of all) {
     if (!el.getClientRects().length) continue;
     const st = getComputedStyle(el);
@@ -238,7 +249,8 @@ def rule_step(  # noqa: PLR0911  (one return per kind of page)
         if len({b.text.lower() for b in nexts}) == 1:
             return Step("go", nexts[0], "the form's next page")
         return None
-    if re.search(r"cookie", page_text, re.IGNORECASE):
+    # A banner is told by its buttons too ("Cookies settings"): it often sits past the text read.
+    if re.search(r"cookie", page_text, re.IGNORECASE) or any("cookie" in b.text.lower() for b in buttons):
         oks = [b for b in usable if COOKIE_OK.search(b.text) and b.where in ("dialog", "page")]
         if oks:
             return Step("go", oks[0], "accept the cookie banner")
@@ -248,6 +260,45 @@ def rule_step(  # noqa: PLR0911  (one return per kind of page)
             return Step("ready", applies[0], "the board's apply button (may send at once)")
         return Step("go", applies[0], "the job page's apply button")
     return None
+
+
+# Text a label picks up that is not the question: an icon's fallback, screen-reader hints.
+_LABEL_NOISE = re.compile(
+    r"svgs? (?:are )?not supported by this browser\.?|your browser does not support (?:svg|the video tag)\.?"
+    r"|\(?required\)?$|\(?optional\)?$",
+    re.IGNORECASE,
+)
+
+
+OTHER_UPLOAD = re.compile(r"cover|letter|photo|picture|portfolio|transcript", re.IGNORECASE)
+
+
+def readable(form_field: FormField) -> FormField:
+    """The field with a label a person (and ``suggest``) can read: noise gone, "cLocation" -> "Location"."""
+    label = _LABEL_NOISE.sub(" ", form_field.label).strip(" :-")
+    if label and " " not in label:  # an id or name used as the label: candidateFirstName, c_location
+        label = re.sub(r"(?<=[a-z])(?=[A-Z])|[_\-.]+", " ", label)
+        label = re.sub(r"^(?:[a-z] |txt |fld |input |cand(?:idate)? )", "", label, flags=re.IGNORECASE)
+        label = label.strip().capitalize() if label.islower() else label.strip()
+    if label == form_field.label:
+        return form_field
+    return FormField(
+        form_field.key, label or form_field.label, form_field.type, form_field.required, form_field.options
+    )
+
+
+def dead_end(url: str, fields: list[FormField], buttons: list[Button], text: str, *, one_click: bool) -> None:
+    """Raise when the page cannot lead on.
+
+    A blank page (a site that blocks automated browsers), or a board's "Apply" while its header still offers
+    "Login" (the user is signed out there).
+    """
+    if not fields and not buttons and not text.strip():
+        raise FillError(
+            "the page came up empty (the site may block automated browsers): apply there yourself"
+        )
+    if one_click and not fields and any(LOGGED_OUT.search(b.text) for b in buttons):
+        raise LoginWallError(f"{urlparse(url).hostname or 'the site'} shows you as signed out")
 
 
 def guarded(step: Step, *, one_click: bool) -> Step:
@@ -317,8 +368,7 @@ class ApplicationBrowser:
             await self._fill(page, fields, ctx, walked, filled)
             if walked.blanks or walked.failed:
                 return walked  # a question only the user can answer (or a field that would not take a value)
-            buttons = await self._buttons(page)
-            text = await self._text(page)
+            fields, buttons, text = await self._read(page, fields)
             signature = f"{page.url}|{len(fields)}|{'/'.join(b.text for b in buttons[:20])}"
             seen[signature] = seen.get(signature, 0) + 1
             if seen[signature] > 2:  # noqa: PLR2004  (the same page a third time: the press does nothing)
@@ -326,10 +376,13 @@ class ApplicationBrowser:
                     "the application did not move on after pressing "
                     + (walked.steps[-1] if walked.steps else "anything")
                 )
+            dead_end(page.url, fields, buttons, text, one_click=one_click)
             step = rule_step(buttons, fields, text, one_click=one_click)
             if step is None or (seen[signature] > 1 and step.state == "go"):
                 step = await self._ask(text, fields, filled, buttons, one_click=one_click)
             if step.state == "ready" and step.button is not None:
+                if fields and not walked.filled and not one_click:
+                    raise FillError("none of the form's questions could be matched to your profile")
                 walked.submit = step.button
                 walked.note = step.why
                 return walked
@@ -365,6 +418,24 @@ class ApplicationBrowser:
                 return walked
         raise FillError(f"the form was not reached in {self._max_steps} steps")
 
+    async def _read(self, page: Page, fields: list[FormField]) -> tuple[list[FormField], list[Button], str]:
+        """The page's buttons and text (and fields again when it was still empty: a slow page, BambooHR)."""
+        buttons, text = await self._buttons(page), await self._text(page)
+        if not fields and not buttons and not text.strip():
+            return await self._wait_for_content(page)
+        return fields, buttons, text
+
+    async def _wait_for_content(self, page: Page) -> tuple[list[FormField], list[Button], str]:
+        """An empty page, read again once it shows something (or after ``SLOW_PAGE_S``)."""
+        end = asyncio.get_running_loop().time() + SLOW_PAGE_S
+        while asyncio.get_running_loop().time() < end:
+            await asyncio.sleep(1.0)
+            if (await self._text(page)).strip():
+                await self._settle(page)
+                break
+        fields = [f for f in await adapters.discover(page, AGENT) if await page.evaluate(SHOWN_JS, f.key)]
+        return fields, await self._buttons(page), await self._text(page)
+
     async def _ask(
         self,
         text: str,
@@ -388,9 +459,16 @@ class ApplicationBrowser:
     async def _fill(
         self, page: Page, fields: list[FormField], ctx: FormContext, walked: Walked, filled: dict[str, str]
     ) -> None:
+        fields = [readable(f) for f in fields]
         ordered = [f for f in fields if f.type == "file"] + [f for f in fields if f.type != "file"]
+        files = [f for f in fields if f.type == "file"]
         for form_field in ordered:
             suggestion = suggest(form_field, ctx)
+            if suggestion is None and form_field is (files[0] if files else None) and ctx.resume_file:
+                # The page's first upload, its label saying nothing (an icon's fallback text): the resume.
+                suggestion = (
+                    None if OTHER_UPLOAD.search(form_field.label) else Suggestion(ctx.resume_file, "file")
+                )
             if suggestion is None:
                 if form_field.required:
                     walked.blanks.append(form_field)
@@ -439,10 +517,17 @@ class ApplicationBrowser:
     async def _press(self, page: Page, button: Button) -> Page:
         """Press ``button``; the page it leads to (a new tab when it opened one)."""
         before = list(page.context.pages)
+        target = page.locator(button.selector).first
         try:
-            await page.locator(button.selector).first.click(timeout=10_000)
-        except PlaywrightError as error:
-            raise FillError(f"could not press {button.text!r}: {str(error).splitlines()[0][:150]}") from error
+            await target.click(timeout=CLICK_TIMEOUT_MS)
+        except PlaywrightError:
+            # Covered by an overlay (a consent backdrop, a sticky bar): press the element itself.
+            try:
+                await target.evaluate("(el) => el.click()")
+            except PlaywrightError as error:
+                raise FillError(
+                    f"could not press {button.text!r}: {str(error).splitlines()[0][:150]}"
+                ) from error
         end = asyncio.get_running_loop().time() + NEW_TAB_WAIT_S
         while asyncio.get_running_loop().time() < end:
             opened = [p for p in page.context.pages if p not in before]

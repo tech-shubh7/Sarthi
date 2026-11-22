@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from sarthi.apply import agent
 from sarthi.apply.agent import (
     ApplicationBrowser,
     Button,
@@ -253,3 +254,76 @@ def test_co_in_sites_are_compared_whole() -> None:
     assert not allowed_link(
         "https://other.co.in/apply", "https://acme.co.in/jobs/1", "https://acme.co.in/jobs/1"
     )
+
+
+async def test_a_signed_out_board_asks_for_a_login_instead_of_pressing_apply(
+    engine: ApplyEngine, resume: Path
+) -> None:
+    engine.browser = ApplicationBrowser(None)
+    with pytest.raises(LoginWallError, match="signed out"):
+        await engine.fill("job-12", url("agent_pages.html") + "#board", ctx(resume), one_click=True)
+
+
+async def test_buttons_inside_web_components_are_found(engine: ApplyEngine, resume: Path) -> None:
+    engine.browser = ApplicationBrowser(None)  # SmartRecruiters-style: the apply button in a shadow root
+    result = await engine.fill("job-13", url("agent_pages.html") + "#shadow", ctx(resume))
+    assert engine._open["job-13"].page.url.endswith("agent_form.html")
+    assert not result.blanks and not result.failed
+
+
+@pytest.mark.parametrize("text", ["Upload Your Resume We'll auto-fill your details", "Upload CV", "upload"])
+def test_an_upload_button_is_never_pressed(text: str) -> None:
+    assert guarded(Step("go", b("b1", text)), one_click=False).state == "stuck"
+
+
+async def test_an_empty_page_is_handed_over_without_asking_the_ai(
+    engine: ApplyEngine, resume: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(agent, "SLOW_PAGE_S", 1.0)
+    ai = ScriptedAi(press="Start")
+    engine.browser = ApplicationBrowser(ai)  # a site that serves automated browsers a blank page
+    with pytest.raises(FillError, match="came up empty"):
+        await engine.fill("job-14", url("agent_pages.html") + "#empty", ctx(resume))
+    assert ai.asked == []
+
+
+async def test_a_consent_overlay_covering_apply_is_accepted_first(engine: ApplyEngine, resume: Path) -> None:
+    engine.browser = ApplicationBrowser(
+        None
+    )  # Workable-style: the banner sits after 7,000 characters of text
+    result = await engine.fill("job-15", url("agent_pages.html") + "#covered", ctx(resume))
+    assert engine._open["job-15"].page.url.endswith("agent_form.html")
+    assert not result.blanks and not result.failed
+
+
+async def test_a_slow_page_is_waited_for(engine: ApplyEngine, resume: Path) -> None:
+    engine.browser = ApplicationBrowser(None)  # BambooHR-style: empty at first, the job after two seconds
+    result = await engine.fill("job-16", url("agent_pages.html") + "#slow", ctx(resume))
+    assert engine._open["job-16"].page.url.endswith("agent_form.html")
+    assert result.code
+
+
+async def test_a_form_with_nothing_matched_is_not_offered_for_approval(
+    engine: ApplyEngine, resume: Path
+) -> None:
+    engine.browser = ApplicationBrowser(None)
+    with pytest.raises(FillError, match="could be matched"):
+        await engine.fill("job-17", url("agent_pages.html") + "#unmatched", ctx(resume))
+
+
+@pytest.mark.parametrize(
+    ("label", "readable_label"),
+    [
+        ("cLocation", "Location"),
+        ("candidateFirstName", "First Name"),
+        ("current_ctc", "Current ctc"),
+        ("SVGs not supported by this browser.", "SVGs not supported by this browser."),  # nothing left: kept
+        ("Resume SVGs not supported by this browser.", "Resume"),
+        ("Phone (required)", "Phone"),
+        ("Why do you want to work here?", "Why do you want to work here?"),
+    ],
+)
+def test_labels_are_made_readable(label: str, readable_label: str) -> None:
+    from sarthi.apply.agent import readable  # noqa: PLC0415
+
+    assert readable(FormField("s-1", label)).label == readable_label
