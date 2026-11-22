@@ -21,6 +21,7 @@ AI_WEIGHT = 0.6
 # Without this, location and recency points alone lift unrelated jobs ("Java Developer") into the digest.
 MIN_SKILLS_WITHOUT_TITLE = 4  # the AI's read of the full job counts more than keyword overlap
 MAX_REASONS = 4
+MIN_DETAILS = 40  # characters of posting text below which a job is only a title (no line about the work)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,4 +86,12 @@ async def evaluate(
         # The AI is set up but could not read the full posting now (limit reached, provider down): years
         # asked, level and must-have skills are unchecked, so the job waits for the digest, not the phone.
         outcome = Outcome(Decision.DIGEST, "unchecked")
+    elif (
+        outcome.decision is Decision.ALERT
+        and ai_verdict is None
+        and len(job.description.strip()) < MIN_DETAILS
+    ):
+        # Only a title to go on (the posting's text could not be read): nothing about years, level or skills
+        # was checked, so it is not sure enough to interrupt; the daily digest shows it.
+        outcome = Outcome(Decision.DIGEST, "no_details")
     return MatchResult(score, outcome, reasons[:MAX_REASONS], rules.notes, ai_used=ai_verdict is not None)

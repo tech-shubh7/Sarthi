@@ -107,6 +107,9 @@ _OTHER_FAMILIES: dict[str, str] = {
     "teaching": r"\btrainer\b|\bteacher\b|\btutor\b|\bfaculty\b|\blecturer\b",
     "project management": r"\bscrum master\b|\bproject manager\b|\bprogram manager\b|\bdelivery manager\b",
     "operations": r"\bfield service\b|\btechnician\b|\bback office\b|\bdata entry\b|\bcall cent(?:er|re)\b",
+    "testing": r"\bqa\b|\bquality (?:assurance|analyst|engineer(?:ing)?)\b|\bsdet\b|\btester\b|\bin test\b"
+    r"|\b(?:software|automation|manual|performance)\s+test(?:ing)?\b|\btest(?:ing)?\s+(?:engineer|analyst|lead)\b",
+    "embedded or hardware": r"\bembedded\b|\bfirmware\b|\bvlsi\b|\bfpga\b|\basic\b|\bhardware\b|\bpcb\b",
 }
 
 

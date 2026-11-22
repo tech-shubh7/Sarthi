@@ -75,6 +75,9 @@ async def verdict(title: str, description: str = DESCRIPTION, **job: Any) -> tup
         ("Assoc. Data Analyst", "junior"),
         ("Software Engineering Manager", "manager"),
         ("Associate Director, Engineering", "manager"),
+        ("The Core Engineering-L2-Bengaluru-Vice President-Software Engineering", "manager"),
+        ("AVP - Data Science", "manager"),
+        ("Vice-President, Engineering", "manager"),
         ("Backend Engineer", None),
         ("AI Engineer", None),
         ("Seniority Analyst", None),
@@ -250,6 +253,15 @@ async def test_other_stacks_are_hidden_with_a_reason() -> None:
         ("AI/ML , Cancer Genomics & Computational Biology Trainer", "teaching"),
         ("Agile Scrum Master", "project management"),
         ("Field Service Engineer", "operations"),
+        # Real titles a Python/Node.js developer was alerted to (2026-11-22):
+        ("Automation Software Testing Engineer", "testing"),
+        ("Software Quality Engineer with MNC Pan India (Hyderabad)", "testing"),
+        ("QA Engineer - Backend", "testing"),
+        ("Software Development Engineer in Test", "testing"),
+        ("SDET II", "testing"),
+        ("Manual Tester", "testing"),
+        ("Embedded Software Engineer", "embedded or hardware"),
+        ("Firmware Developer (C)", "embedded or hardware"),
     ],
 )
 def test_other_job_families_are_hidden(title: str, family: str) -> None:
@@ -261,6 +273,29 @@ def test_other_job_families_are_hidden(title: str, family: str) -> None:
 def test_a_family_in_the_users_own_roles_is_kept() -> None:
     profile = make_profile(roles=["Support Engineer"], years_experience=1)
     assert check_rules(make_job(title="L2 Support Engineer"), profile).eligible
+    tester = make_profile(roles=["QA Engineer"], years_experience=1)
+    assert check_rules(make_job(title="QA Engineer - Backend"), tester).eligible
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Backend Engineer",
+        "AI Engineer",
+        "Software Engineer",
+        "Test Automation of nothing",
+        "Quality of Life Engineer",
+    ],
+)
+def test_ordinary_engineering_titles_are_not_testing_or_hardware(title: str) -> None:
+    assert check_rules(make_job(title=title), junior()).eligible
+
+
+async def test_a_title_with_no_posting_text_is_never_an_instant_alert() -> None:
+    decision, _ = await verdict("Backend Engineer", description="")
+    assert decision is Decision.DIGEST
+    decision, _ = await verdict("Backend Engineer")  # the same job with its text: an alert
+    assert decision is Decision.ALERT
 
 
 async def test_intern_in_the_title_wins_over_the_source() -> None:

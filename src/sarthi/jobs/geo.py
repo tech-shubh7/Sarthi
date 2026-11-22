@@ -617,7 +617,7 @@ def location_codes(location: str) -> set[str]:
 _LEVELLED = r"\b(?:engineer|developer|sde|swe|programmer|analyst|scientist|consultant)\s*[-\u2013(]?\s*"
 _NOT_YEARS = r"(?!\s*(?:[-\u2013+]|to\b|\(|years?\b|yrs?\b))"  # "Engineer 5-8 yrs" is years, not level 5
 _SENIORITY = [
-    ("manager", r"\b(?:manager|head of|director|vp\b)"),
+    ("manager", r"\b(?:manager|head of|director|(?:a|s|e)?vp\b|vice[- ]president)"),
     ("principal", r"\b(?:principal|architect|distinguished)\b"),
     ("lead", r"\b(?:lead|leader|staff|team lead|tech lead)\b"),
     (
