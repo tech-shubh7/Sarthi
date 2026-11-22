@@ -22,7 +22,9 @@ COMPLETION_ALLOWANCE = 700  # tokens an answer usually takes (reasoning models t
 CHARS_PER_TOKEN = 4
 YIELD_STEP_S = 2.0  # how often waiting background work looks again
 _DURATION = re.compile(r"(?P<value>\d+(?:\.\d+)?)(?P<unit>ms|h|m|s)")
-_TRY_AGAIN = re.compile(r"try again in ((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)", re.IGNORECASE)
+# Groq: "Please try again in 9m14.5s"; Gemini: "Please retry in 37.2s".
+_TRY_AGAIN = re.compile(r"(?:try again|retry) in ((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)", re.IGNORECASE)
+_EPOCH_MS = 10**12  # an x-ratelimit-reset above this is a time in epoch milliseconds (OpenRouter)
 _SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
 
 Monotonic = Callable[[], float]
@@ -38,8 +40,14 @@ def parse_duration(text: str) -> float | None:
     return sum(float(p["value"]) * _SECONDS[p["unit"]] for p in parts)
 
 
-def retry_seconds(headers: Mapping[str, str], message: str) -> float | None:
-    """How long a refused call says to wait: the ``retry-after`` header, else "try again in 7m12s" text."""
+def retry_seconds(
+    headers: Mapping[str, str], message: str, now: Callable[[], float] = time.time
+) -> float | None:
+    """How long a refused call says to wait.
+
+    The ``retry-after`` header, else "try again in 7m12s" / "retry in 37s" text, else OpenRouter's
+    ``x-ratelimit-reset`` (the reset time in epoch milliseconds, read against ``now``).
+    """
     try:
         seconds = float(headers.get("retry-after", ""))
     except ValueError:
@@ -47,8 +55,15 @@ def retry_seconds(headers: Mapping[str, str], message: str) -> float | None:
     else:
         if seconds >= 0:
             return seconds
-    found = _TRY_AGAIN.search(message)
-    return parse_duration(found.group(1)) if found else None
+    if found := _TRY_AGAIN.search(message):
+        return parse_duration(found.group(1))
+    try:
+        reset = float(headers.get("x-ratelimit-reset", ""))
+    except ValueError:
+        return None
+    if reset > _EPOCH_MS and (wait := reset / 1000 - now()) > 0:
+        return wait
+    return None
 
 
 def estimate_tokens(prompt_chars: int) -> int:

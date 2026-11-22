@@ -347,3 +347,28 @@ async def test_background_work_leaves_the_last_requests_to_the_user(store: AiSto
         await scoring.structured(PROMPT, Answer, job_posting="b")  # only the reserve is left
     assert (await user.structured(PROMPT, Answer, job_posting="c")).greeting == "user again"
     assert len(providers.requests) == 2  # the background call never reached the provider
+
+
+async def test_a_gemini_refusal_in_a_list_is_read_and_its_wait_kept(
+    store: AiStore, clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Gemini's OpenAI-compatible endpoint sends its errors as a one-item list.
+    quota = httpx.Response(
+        429,
+        json=[{"error": {"code": 429, "message": "You exceeded your current quota. Please retry in 37.2s."}}],
+    )
+    time = FakeTime()
+    limits = RateLimits(time, time.sleep)
+    providers = FakeProviders(
+        {
+            "gemini.test": [quota, reply('{"greeting": "b", "count": 2}')],
+            "openai.test": [reply('{"greeting": "a", "count": 1}')],
+        }
+    )
+    ai = limited_client(store, providers, [GEMINI, OPENAI], clock, limits, background=True)
+    assert (await ai.structured(PROMPT, Answer, job_posting="a")).greeting == "a"  # the next model, now
+    assert "exceeded your current quota" in caplog.text
+    assert limits.window(GEMINI.label).blocked_until == pytest.approx(time.now + 37.2)
+    assert (await ai.structured(PROMPT, Answer, job_posting="b")).greeting == "b"  # after the wait it said
+    assert [r.url.host for r in providers.requests] == ["gemini.test", "openai.test", "gemini.test"]
+    assert time.slept == [pytest.approx(37.2)]

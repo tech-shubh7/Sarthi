@@ -97,6 +97,8 @@ def _provider_message(response: httpx.Response, endpoint: Endpoint) -> str:
         body = response.json()
     except ValueError:
         return ""
+    if isinstance(body, list) and body:  # Gemini's OpenAI-compatible errors: [{"error": {...}}]
+        body = body[0]
     error = body.get("error") if isinstance(body, dict) else None
     message = str((error.get("message") if isinstance(error, dict) else error) or "")
     if endpoint.api_key is not None and (key := endpoint.api_key.get_secret_value()):

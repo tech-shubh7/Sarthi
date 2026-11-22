@@ -71,12 +71,17 @@ def test_reset_durations(text: str, seconds: float | None) -> None:
         ({"retry-after": "-5"}, "", None),
         ({}, "Rate limit reached.", None),
         ({}, "try again in a while", None),
+        ({}, "You exceeded your current quota. Please retry in 37.25s.", 37.25),  # Gemini
+        ({"x-ratelimit-reset": "1000060000"}, "", None),  # not epoch ms: unreadable, not 1e9 seconds
+        ({"x-ratelimit-reset": str(1_800_000_090_000)}, "Rate limit exceeded: free-models-per-day", 90.0),
+        ({"x-ratelimit-reset": str(1_799_999_990_000)}, "", None),  # already past
+        ({"x-ratelimit-reset": "soon"}, "", None),
     ],
 )
 def test_how_long_a_refusal_says_to_wait(
     headers: dict[str, str], message: str, seconds: float | None
 ) -> None:
-    result = retry_seconds(headers, message)
+    result = retry_seconds(headers, message, now=lambda: 1_800_000_000.0)
     assert result == pytest.approx(seconds) if seconds is not None else result is None
 
 
