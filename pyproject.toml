@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-settings>=2.6",
     "pypdf>=6.1",
     "python-jobspy>=1.4.1,<1.5",
+    "python-multipart>=0.0.20",
     "trafilatura>=1.12",
     "typer>=0.12",
     "typst>=0.15,<0.16",
@@ -117,7 +118,7 @@ name = "Pipeline steps never import each other (they talk through db + queue)"
 type = "independence"
 modules = [
     "sarthi.sources", "sarthi.matching", "sarthi.documents", "sarthi.answers",
-    "sarthi.apply", "sarthi.tracking", "sarthi.chat", "sarthi.web",
+    "sarthi.apply", "sarthi.tracking", "sarthi.chat", "sarthi.web", "sarthi.relay",
 ]
 
 [[tool.importlinter.contracts]]
@@ -126,7 +127,7 @@ type = "layers"
 layers = [
     "sarthi.cli",
     "sarthi.app",
-    "sarthi.sources | sarthi.matching | sarthi.documents | sarthi.answers | sarthi.apply | sarthi.tracking | sarthi.chat | sarthi.web",
+    "sarthi.sources | sarthi.matching | sarthi.documents | sarthi.answers | sarthi.apply | sarthi.tracking | sarthi.chat | sarthi.web | sarthi.relay",
     "sarthi.queue | sarthi.ai",
     "sarthi.profile",
     "sarthi.db",

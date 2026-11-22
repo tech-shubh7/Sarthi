@@ -10,10 +10,14 @@ Free and open source. Runs on your own computer. Works with a free local AI (Oll
 ## Run with Docker
 
 ```bash
-cp .env.example .env          # add your Telegram bot token (from @BotFather) and an AI key
-docker compose up -d          # starts Sarthi; the dashboard is at http://127.0.0.1:8765
-docker compose run --rm sarthi pair   # shows the code to send your bot, once
+cp .env.example .env          # add one AI key (a free Gemini or Groq key is enough)
+docker compose up -d          # starts Sarthi
 ```
+
+Then open http://127.0.0.1:8765 and tap **Connect Telegram**: it opens the shared Sarthi bot, and after
+you tap Start it messages you there. No bot to create, no code to type. (Want a bot of your own instead?
+Put its token in `SARTHI_TELEGRAM_BOT_TOKEN`; see [docs/RELAY.md](docs/RELAY.md) for how the shared bot
+keeps every user's chat separate.)
 
 Everything that is yours (database, resume, documents, logins) stays in `./data` on your computer.
 The dashboard is read-only and reachable from this computer only.

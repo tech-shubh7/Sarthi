@@ -22,6 +22,7 @@ class Overview:
     replies: dict[str, int]  # reply kinds
     tasks_waiting: dict[str, int]  # pending or running tasks by type
     ai_tokens_today: dict[str, int]  # provider -> tokens
+    pair_link: str | None = None  # shared bot: the t.me link that connects Telegram, until it is used
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +95,13 @@ class DashboardQueries:
                 " GROUP BY provider",
                 (to_iso(today_start),),
             ),
+            pair_link=self._pair_link(),
         )
+
+    def _pair_link(self) -> str | None:
+        row = self._conn.execute("SELECT value FROM app_state WHERE key = 'telegram.pair_link'").fetchone()
+        link = str(row[0]) if row and row[0] else ""
+        return link if link.startswith("https://t.me/") else None  # only ever a Telegram link
 
     def matches(self, decisions: tuple[str, ...], since: datetime, limit: int = MAX_ROWS) -> list[MatchRow]:
         """Matches with these decisions among jobs first seen since ``since``, best first."""

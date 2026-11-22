@@ -36,8 +36,14 @@ def version() -> None:
 
 @app.command()
 def pair() -> None:
-    """Show a one-time code that links your Telegram chat to Sarthi."""
+    """Show a one-time code that links your Telegram chat to Sarthi (your own bot only)."""
     settings = get_settings()
+    if settings.telegram_bot_token is None and settings.relay_url:
+        typer.echo(
+            "With the shared Sarthi bot there is nothing to pair by hand: start Sarthi and open the link it\n"
+            f"shows in its log and at http://127.0.0.1:{settings.dashboard_port}"
+        )
+        return
     conn = connect(settings.db_path)
     try:
         code = new_code(ChatStore(conn), utcnow())
@@ -46,6 +52,49 @@ def pair() -> None:
     minutes = int(CODE_LIFETIME.total_seconds() // 60)
     typer.echo(f"In Telegram, open your Sarthi bot and send:\n\n    /start {code}\n")
     typer.echo(f"The code works once and expires in {minutes} minutes. Then run: uv run sarthi run")
+
+
+@app.command()
+def relay() -> None:
+    """Run the shared-bot relay (the project's server, not for users): one bot for every Sarthi."""
+    import uvicorn  # noqa: PLC0415  (only for the relay)
+
+    from sarthi.chat.telegram.bot import COMMANDS  # noqa: PLC0415
+    from sarthi.relay.server import Relay, RelayStore, create_relay_app  # noqa: PLC0415
+
+    settings = get_settings()
+    if settings.relay_bot_token is None:
+        typer.echo("Cannot start: set SARTHI_RELAY_BOT_TOKEN (the shared bot's token)", err=True)
+        raise typer.Exit(code=1)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    shared = Relay(RelayStore(settings.data_dir / "relay.db"), settings.relay_bot_token, commands=COMMANDS)
+    web = create_relay_app(shared, trust_forwarded=settings.relay_trust_forwarded)
+
+    async def serve() -> None:
+        await shared.start()
+        typer.echo(f"Relay for @{shared.bot_username} on port {settings.relay_port}. Ctrl+C to stop.")
+        config = uvicorn.Config(
+            web,
+            host="0.0.0.0",  # noqa: S104  (a public server, behind HTTPS)
+            port=settings.relay_port,
+            log_level="warning",
+            access_log=False,
+            server_header=False,
+            lifespan="off",
+        )
+        server = uvicorn.Server(config)
+        poller = asyncio.create_task(shared.poll())
+        try:
+            await server.serve()
+        finally:
+            shared.stop()
+            poller.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await poller
+            await shared.aclose()
+
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(serve())
 
 
 @app.command()

@@ -168,3 +168,18 @@ def test_no_free_port_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "_bindable", lambda port, host="": False)
     with pytest.raises(server.NoFreePortError, match="SARTHI_DASHBOARD_PORT"):
         server.free_port(8765)
+
+
+def test_the_link_to_connect_telegram_is_shown_until_used(
+    client: TestClient, conn: sqlite3.Connection
+) -> None:
+    assert "Connect Telegram" not in client.get("/").text
+    chats = ChatStore(conn)
+    chats.set_state("telegram.pair_link", "https://t.me/SarthiJobsBot?start=AB12CD")
+    page = client.get("/").text
+    assert "Connect Telegram" in page
+    assert 'href="https://t.me/SarthiJobsBot?start=AB12CD"' in page
+    chats.set_state("telegram.pair_link", "javascript:alert(1)")  # never anything but a Telegram link
+    assert "Connect Telegram" not in client.get("/").text
+    chats.set_state("telegram.pair_link", None)
+    assert "Connect Telegram" not in client.get("/").text

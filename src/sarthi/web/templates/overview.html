@@ -7,6 +7,15 @@
   <p class="lede">Everything Sarthi has found, matched and sent for you.</p>
 </div>
 
+{% if ov.pair_link %}
+<section class="panel connect" aria-label="Connect Telegram">
+  <h2>Connect Telegram</h2>
+  <p>Open this link on the phone or computer where you use Telegram, then tap <b>Start</b>.
+     Sarthi will message you there. (A new link appears here every 15 minutes until you connect.)</p>
+  <p><a class="connect-link" href="{{ ov.pair_link }}" rel="noreferrer">{{ ov.pair_link }}</a></p>
+</section>
+{% endif %}
+
 {% set shown = ov.shown %}
 {% set apps = ov.applications %}
 <ol class="pipeline" aria-label="From found to applied">

@@ -15,6 +15,7 @@ Descriptions are not read: they are stored in blocks of up to ~500 MB each (meas
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -42,6 +43,7 @@ THREADS = 2
 MAX_ROWS = 2000
 MAX_ROLES = 8
 MIN_LOOK_BACK = timedelta(days=2)  # the snapshot is refreshed about daily; reposts are merged later
+INTERRUPT_WAIT_S = 10.0  # how long a stopped scan gets to end
 QUERY_TIMEOUT_S = 300.0
 COLUMNS = (
     "url", "title", "company", "ats_type", "ats_id", "location", "country_iso", "is_remote", "workplace_type",
@@ -147,12 +149,20 @@ async def _run(sql: str, params: list[Any]) -> list[dict[str, Any]]:
             names = [d[0] for d in cursor.description or []]
             return [dict(zip(names, row, strict=True)) for row in cursor.fetchall()]
 
+        thread = asyncio.ensure_future(asyncio.to_thread(work))
         try:
-            return await asyncio.wait_for(asyncio.to_thread(work), QUERY_TIMEOUT_S)
+            return await asyncio.wait_for(asyncio.shield(thread), QUERY_TIMEOUT_S)
         except TimeoutError:
-            con.interrupt()
             raise RetryableError("catalog: the snapshot query took too long") from None
         except duckdb.Error as error:
             raise RetryableError(f"catalog: {type(error).__name__}: {str(error)[:200]}") from None
+        finally:
+            if not thread.done():
+                # A timeout, or Sarthi stopping (Ctrl+C cancels this task): stop the scan itself, or its
+                # thread runs on for minutes and the program cannot exit until it ends.
+                con.interrupt()
+                with contextlib.suppress(BaseException):
+                    await asyncio.wait_for(asyncio.shield(thread), INTERRUPT_WAIT_S)
     finally:
-        con.close()
+        with contextlib.suppress(duckdb.Error):
+            con.close()

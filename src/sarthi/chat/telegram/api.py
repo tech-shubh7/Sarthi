@@ -162,6 +162,10 @@ class TelegramApi:
         result = await self._upload("sendPhoto", data, {"photo": ("form.png", photo, "image/png")})
         return int(result["message_id"])
 
+    async def set_pairing_code(self, code_hash: str) -> None:
+        """Shared bot only: tell the relay the hash of the code this Sarthi shows (see ``sarthi.relay``)."""
+        await self._call("setPairingCode", {"code_hash": code_hash})
+
     async def answer_callback(self, callback_id: str, text: str = "") -> None:
         """Acknowledge a button tap (stops the spinner), with an optional short toast."""
         await self._call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text[:200]})

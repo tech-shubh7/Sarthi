@@ -24,14 +24,15 @@ CODE_LIFETIME = timedelta(minutes=15)
 _CODE_BYTES = 6
 
 
-def _hash(code: str) -> str:
+def code_hash(code: str) -> str:
+    """How a code is stored (and, with the shared bot, sent to the relay)."""
     return hashlib.sha256(code.strip().upper().encode()).hexdigest()
 
 
 def new_code(store: ChatStore, now: datetime) -> str:
     """Create a fresh one-time pairing code (replacing any earlier one) and return it."""
     code = secrets.token_hex(_CODE_BYTES).upper()
-    store.set_state(_CODE_HASH_KEY, _hash(code))
+    store.set_state(_CODE_HASH_KEY, code_hash(code))
     store.set_state(_CODE_EXPIRES_KEY, to_iso(now + CODE_LIFETIME))
     store.set_state(_FAILURES_KEY, None)
     return code
@@ -50,7 +51,7 @@ def redeem(store: ChatStore, code: str, chat_id: int, now: datetime) -> bool:
     if now > from_iso(expires):
         _forget_code(store)
         return False
-    if not code or not hmac.compare_digest(expected, _hash(code)):
+    if not code or not hmac.compare_digest(expected, code_hash(code)):
         failures = int(store.get_state(_FAILURES_KEY) or 0) + 1
         if failures >= MAX_WRONG_GUESSES:
             _forget_code(store)

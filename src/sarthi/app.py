@@ -18,10 +18,11 @@ from sarthi.ai.scoring import LlmMatchScorer
 from sarthi.answers.handler import FormChecker
 from sarthi.apply.engine import ApplyEngine
 from sarthi.apply.handler import Applier
-from sarthi.chat.pairing import owner_chat
+from sarthi.chat.pairing import CODE_LIFETIME, OWNER_KEY, code_hash, new_code, owner_chat
 from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import TelegramApi
-from sarthi.chat.telegram.bot import TelegramBot
+from sarthi.chat.telegram.bot import OFFSET_KEY, TelegramBot
+from sarthi.chat.telegram.link import MODE_KEY, PAIR_LINK_KEY, RelayError, RelayLink, relay_link
 from sarthi.clock import Clock, from_iso, to_iso, utcnow
 from sarthi.config import Settings
 from sarthi.db.ai_store import AiStore
@@ -72,6 +73,8 @@ CATCHUP_POLL_S = 2.0
 REMATCH_AFTER_UPGRADE = timedelta(days=7)
 SNIPPET_CHARS = 300  # a saved description this short is a title and a line: its page is read first
 TICK_SECONDS = 60
+PAIR_CHECK_S = 3.0
+PAIR_RETRY_S = 30.0
 
 
 class SetupError(Exception):
@@ -102,6 +105,7 @@ class App:
     filler: TextFiller
     ai_clients: tuple[AiClient, ...]
     clock: Clock
+    relay: RelayLink | None = None  # the shared bot's relay, when no bot token of one's own is set
 
     def schedule_digest(self) -> None:
         """Queue the next daily digest (idempotent: one task per local date)."""
@@ -212,6 +216,7 @@ class App:
             asyncio.create_task(worker.run()),
             asyncio.create_task(user.run()),
             asyncio.create_task(self._tick_sources(worker)),
+            asyncio.create_task(self.offer_pairing()),
         ]
         dashboard = self._dashboard()
         if dashboard is not None:
@@ -222,6 +227,31 @@ class App:
             if dashboard is not None:
                 dashboard.should_exit = True
             await self._shutdown((worker, user), tasks)
+
+    async def offer_pairing(self) -> None:
+        """Shared bot: keep a fresh link to connect Telegram on show (log and dashboard) until one is used."""
+        if self.relay is None:
+            return
+        chats = self.bot.chats
+        while owner_chat(chats) is None:
+            code = new_code(chats, self.clock())
+            try:
+                await self.bot.api.set_pairing_code(code_hash(code))
+            except (RetryableError, PermanentError) as error:
+                log.warning("could not reach the shared Sarthi bot to make a link: %s", error)
+                await asyncio.sleep(PAIR_RETRY_S)
+                continue
+            link = self.relay.pairing_link(code)
+            chats.set_state(PAIR_LINK_KEY, link)
+            log.info(
+                "Connect Telegram: open %s on your phone (or at http://127.0.0.1:%d)",
+                link,
+                self.settings.dashboard_port,
+            )
+            renew_at = self.clock() + CODE_LIFETIME - timedelta(minutes=1)
+            while owner_chat(chats) is None and self.clock() < renew_at:
+                await asyncio.sleep(PAIR_CHECK_S)
+        chats.set_state(PAIR_LINK_KEY, None)
 
     def _dashboard(self) -> Any:
         """The local dashboard's server, or None when it is off or no port is free (Sarthi runs on)."""
@@ -330,8 +360,19 @@ def repair_saved_profile(path: Path) -> None:
 
 def build(settings: Settings, clock: Clock = utcnow) -> App:
     """Wire Sarthi from ``settings``. Raises ``SetupError`` when the bot token is missing."""
-    if settings.telegram_bot_token is None:
-        raise SetupError("SARTHI_TELEGRAM_BOT_TOKEN is not set in .env (create a bot with @BotFather)")
+    relay: RelayLink | None = None
+    if settings.telegram_bot_token is not None:
+        api, mode = TelegramApi(settings.telegram_bot_token), "own"
+    elif settings.relay_url:
+        try:
+            relay = relay_link(settings.data_dir, settings.relay_url)
+        except RelayError as error:
+            raise SetupError(f"the shared Sarthi bot ({settings.relay_url}): {error}") from None
+        api, mode = TelegramApi(relay.secret, base_url=relay.url), f"relay:{relay.url}"
+    else:
+        raise SetupError(
+            "no Telegram bot: set SARTHI_RELAY_URL (the shared Sarthi bot) or SARTHI_TELEGRAM_BOT_TOKEN"
+        )
     conn = connect(settings.db_path)
     queue = TaskQueue(TaskStore(conn, clock=clock), clock=clock)
     jobs, matches = JobStore(conn, clock=clock), MatchStore(conn, clock=clock)
@@ -350,7 +391,13 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
     def profile() -> Profile | None:
         return load_profile(path)
 
-    api = TelegramApi(settings.telegram_bot_token)
+    previous = chats.get_state(MODE_KEY)
+    if previous != mode:
+        # Another bot (own bot <-> shared bot): its update numbers and chat link do not carry over. An
+        # install from before modes were recorded used its own bot: nothing to reset for it.
+        for key in () if previous is None and mode == "own" else (OFFSET_KEY, OWNER_KEY, PAIR_LINK_KEY):
+            chats.set_state(key, None)
+        chats.set_state(MODE_KEY, mode)
     setup = SetupFlow(api, chats, quality, path, jobs=jobs, queue=queue, clock=clock)
 
     def profile_version() -> str | None:
@@ -478,4 +525,5 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         filler,
         (fast, quality, matching_ai),
         clock,
+        relay,
     )

@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,7 +27,30 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default=Path("data"), description="User data: database, resume, keys.")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
-    telegram_bot_token: SecretStr | None = None
+    telegram_bot_token: SecretStr | None = Field(
+        default=None,
+        description="Only for a bot of your own; without it Sarthi uses the shared bot (relay_url).",
+    )
+    relay_url: str = Field(
+        default="",
+        description="The shared Sarthi bot's relay. Nothing to create: open the link Sarthi shows.",
+    )
+    # Running the relay itself (the project's server for the shared bot, not something users run):
+    relay_bot_token: SecretStr | None = None
+    relay_port: int = Field(default=8780, ge=1, le=65535)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object, info: object) -> object:
+        """``SARTHI_X=`` (a line copied from .env.example and left empty) means "not set" for secrets."""
+        name = getattr(info, "field_name", "")
+        if isinstance(value, str) and not value.strip() and (name.endswith(("_token", "_key", "_password"))):
+            return None
+        return value
+
+    relay_trust_forwarded: bool = Field(
+        default=False, description="Behind a reverse proxy: count sign-ups per X-Forwarded-For address."
+    )
     digest_hour: int = Field(default=19, ge=0, le=23, description="Local hour for the daily digest.")
 
     # Job sources. Company boards are "<hiring system>/<company slug>", e.g. "greenhouse/razorpay".

@@ -1,9 +1,8 @@
 # Adapted from JobRadar (MIT), docker-compose.yml @ fdd739b. Copyright (c) ThePlator.
 # Modifications (c) Sarthi contributors.
 #
-#   cp .env.example .env        # then fill in your Telegram bot token and AI keys
-#   docker compose up -d        # Sarthi; the dashboard is at http://127.0.0.1:8765
-#   docker compose run --rm sarthi pair      # link your Telegram chat (once)
+#   cp .env.example .env        # then add one AI key (a free Gemini or Groq key is enough)
+#   docker compose up -d        # Sarthi; open http://127.0.0.1:8765 and tap "Connect Telegram"
 #   docker compose logs -f sarthi
 #
 # A local AI model, optional (needs ~2 GB of free memory):
