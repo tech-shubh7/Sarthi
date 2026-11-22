@@ -27,7 +27,7 @@ services:
     read_only: true # only /app/data (and the scratch folders below) can be written
     tmpfs:
       - /tmp
-      - /home/sarthi
+      - /home/sarthi:uid=1000,gid=1000,mode=700 # owned by the app user (Docker's default is root-only)
     shm_size: 256mb # Chromium needs more shared memory than Docker's default 64 MB
     security_opt:
       - no-new-privileges:true
