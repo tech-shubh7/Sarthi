@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints
 
 from sarthi.ai.client import AiClient, AiError
 from sarthi.ai.privacy import scrub
@@ -23,7 +23,30 @@ log = logging.getLogger(__name__)
 RESUME_CHARS = 14_000
 JOB_CHARS = 8_000
 
-Text = Annotated[str, StringConstraints(strip_whitespace=True, max_length=600)]
+
+def _at_most(n: int) -> BeforeValidator:
+    """A list cut to its first ``n`` items: one item too many from a model must not lose the whole answer."""
+    return BeforeValidator(lambda v: v[:n] if isinstance(v, list) else v)
+
+
+def _or_blank(n: int) -> BeforeValidator:
+    """A text longer than ``n`` becomes "", so the code keeps the master's own words for that one line."""
+    return BeforeValidator(lambda v: "" if isinstance(v, str) and len(v.strip()) > n else v)
+
+
+def _paragraph_list(value: object) -> object:
+    """Paragraphs given as one string (a small model's habit) split on blank lines."""
+    if isinstance(value, str):
+        return [p for p in value.split("\n\n") if p.strip()]
+    return value
+
+
+_Strip = StringConstraints(strip_whitespace=True)
+Text = Annotated[str, _Strip, _or_blank(600)]
+Headline = Annotated[str, _Strip, _or_blank(100)]
+Summary = Annotated[str, _Strip, _or_blank(700)]
+SkillName = Annotated[str, _Strip, _or_blank(60)]
+Paragraph = Annotated[str, _Strip, _or_blank(900)]
 
 
 # ---- reading the resume into sections -----------------------------------------------------------------
@@ -70,7 +93,7 @@ class TailoredJob(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     index: int = Field(ge=0, le=30)
-    bullets: list[Text] = Field(default_factory=list, max_length=8)
+    bullets: Annotated[list[Text], _at_most(8)] = Field(default_factory=list)
 
 
 class TailorAnswer(BaseModel):
@@ -78,18 +101,16 @@ class TailorAnswer(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    headline: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] = ""
-    summary: Annotated[str, StringConstraints(strip_whitespace=True, max_length=700)] = ""
-    experience: list[TailoredJob] = Field(default_factory=list, max_length=20)
-    project_order: list[int] = Field(default_factory=list, max_length=15)
-    skills_first: list[Annotated[str, StringConstraints(strip_whitespace=True, max_length=60)]] = Field(
-        default_factory=list, max_length=25
-    )
+    headline: Headline = ""
+    summary: Summary = ""
+    experience: Annotated[list[TailoredJob], _at_most(20)] = Field(default_factory=list)
+    project_order: Annotated[list[int], _at_most(15)] = Field(default_factory=list)
+    skills_first: Annotated[list[SkillName], _at_most(25)] = Field(default_factory=list)
 
 
 TAILOR_PROMPT = Prompt(
     name="tailor_resume",
-    version="2",
+    version="3",
     instructions="""
 Tailor the candidate's resume to the job, the way a careful human editor would. You may only re-word and
 re-order what <resume_sections> already says. Never add a skill, tool, employer, number, metric, team size or
@@ -114,6 +135,8 @@ Write like a person, not a template: concrete nouns, short words, no filler ("va
 spearheaded, robust, cutting-edge, seamless, synergy, results-driven, detail-oriented, proven track record,
 dynamic, innovative, utilize.
 """,
+    shape='{"headline": "", "summary": "", "experience": [{"index": 0, "bullets": [""]}], '
+    '"project_order": [0], "skills_first": [""]}',
 )
 
 
@@ -161,14 +184,16 @@ class CoverAnswer(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    paragraphs: list[Annotated[str, StringConstraints(strip_whitespace=True, max_length=900)]] = Field(
-        min_length=2, max_length=4
-    )
+    paragraphs: Annotated[
+        list[Paragraph],
+        _at_most(4),
+        BeforeValidator(_paragraph_list),
+    ] = Field(min_length=2)
 
 
 COVER_PROMPT = Prompt(
     name="cover_letter",
-    version="2",
+    version="3",
     instructions="""
 Write the body of a short cover letter (3 paragraphs, 170-240 words in total) in the candidate's own voice,
 to the company in <job_posting>, using only facts in <resume_sections>. It should read like a capable person
@@ -187,7 +212,10 @@ No greeting, no signature, no subject line, no praise of the company ("industry 
 dashes. Never use: passionate, thrilled, excited to apply, leverage, align with, demonstrate, resonate,
 synergy, I believe, I am confident, furthermore, additionally, moreover, dynamic, innovative, esteemed,
 I am writing to.
+
+Return JSON: {"paragraphs": ["<paragraph 1>", "<paragraph 2>", "<paragraph 3>"]}
 """,
+    shape='{"paragraphs": ["<paragraph 1>", "<paragraph 2>", "<paragraph 3>"]}',
 )
 
 
@@ -235,6 +263,7 @@ not hold, or anything not in the resume at all. Opinions and the job's own requi
 
 Return JSON: {"unsupported": ["<short quote of the claim> - <why>", ...]} ([] when everything is supported).
 """,
+    shape='{"unsupported": ["<short quote of the claim> - <why>"]}',
 )
 
 

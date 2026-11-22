@@ -164,14 +164,34 @@ def _and_list(items: list[str]) -> str:
     return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
 
 
-def plain_letter(master: MasterResume, role: str, company: str) -> list[str]:
-    """A short, true letter built from the resume alone (used only when no AI letter passes the checks)."""
+def _short_role(role: str) -> str:
+    """A title as said in a sentence: "Backend Developer (Node.js)" -> "Backend Developer"."""
+    short = re.sub(r"\s*[(\[][^)\]]*[)\]]", "", role)
+    short = re.split(r"\s+(?:\||-|\u2013|\u2014|/)\s+", short)[0]
+    return re.sub(r"\s+", " ", short).strip(" ,-|") or role.strip()
+
+
+def _first_sentence(text: str) -> str:
+    """The first sentence of a resume line ("Built X. Rebuilt it on Y." -> "Built X.")."""
+    return re.split(r"(?<=[.!?])\s+(?=[A-Z])", text.strip(), maxsplit=1)[0]
+
+
+def _mentioned(skill: str, text: str) -> bool:
+    return bool(re.search(rf"(?<![\w.+#]){re.escape(skill)}(?![\w+#])", text, re.IGNORECASE))
+
+
+def plain_letter(master: MasterResume, role: str, company: str, job_text: str = "") -> list[str]:
+    """A short, true letter built from the resume alone (used only when no AI letter passes the checks).
+
+    The skills named are the ones ``job_text`` asks for first, so a React job does not read "Python and SQL".
+    """
     latest = master.experience[0] if master.experience else None
-    opening = f"I'd like to apply for the {role} role at {company}."
+    opening = f"I'd like to apply for the {_short_role(role)} role at {company}."
     if latest:
         opening += f" I'm currently a {latest.title} at {latest.company}"
-        opening += f", where I {_as_clause(latest.bullets[0])}." if latest.bullets else "."
-    skills = master.all_skills()[:4]
+        opening += f", where I {_as_clause(_first_sentence(latest.bullets[0]))}." if latest.bullets else "."
+    every = master.all_skills()
+    skills = sorted(every, key=lambda s: (not _mentioned(s, job_text), every.index(s)))[:4]
     middle = f"Most of my day-to-day work is in {_and_list(skills)}." if skills else ""
     if master.projects and master.projects[0].description:
         project = master.projects[0]
@@ -196,6 +216,7 @@ def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
     company: str,
     own_skills: tuple[str, ...] = (),
     strict: bool = False,
+    job_text: str = "",
 ) -> Letter:
     """The letter for one job.
 
@@ -205,7 +226,7 @@ def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
     """
     sign_off = f"Best regards,\n{master.name}" if master.name else "Best regards,"
     greeting = f"Dear {company} hiring team,"
-    plain = plain_letter(master, role, company)
+    plain = plain_letter(master, role, company, job_text)
     if answer is None:
         return Letter(greeting, plain, sign_off, from_ai=False)
     checker = Checker(master, resume_text, own_skills)

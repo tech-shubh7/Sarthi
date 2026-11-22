@@ -493,3 +493,91 @@ def test_report_text_escapes_and_explains() -> None:
     assert "33%" in text and "Docker" in text and "Go" in text
     assert "original resume, not tailored" in text
     assert "⚠️ name cannot be read" in text
+
+
+# ---- what a small local model sends back (found running qwen2.5:1.5b on real jobs) ----
+
+
+def test_one_item_too_many_trims_instead_of_losing_the_answer() -> None:
+    answer = TailorAnswer.model_validate(
+        {
+            "headline": "Backend Engineer | Python",
+            "skills_first": [f"Skill {i}" for i in range(27)],
+            "experience": [{"index": 0, "bullets": [f"Built thing {i}" for i in range(11)]}],
+            "project_order": list(range(20)),
+        }
+    )
+    assert len(answer.skills_first) == 25
+    assert len(answer.experience[0].bullets) == 8
+    assert len(answer.project_order) == 15
+
+
+def test_an_overlong_line_is_dropped_alone() -> None:
+    answer = TailorAnswer.model_validate(
+        {
+            "headline": "x" * 101,
+            "summary": "y" * 701,
+            "experience": [{"index": 0, "bullets": ["z" * 601, "Built it"]}],
+        }
+    )
+    assert answer.headline == ""  # the master's headline is kept for it
+    assert answer.summary == ""
+    assert answer.experience[0].bullets == ["", "Built it"]
+    built = tailored_resume(master(), answer, RESUME_TEXT)
+    assert built.resume.headline == master().headline
+    assert built.resume.summary == master().summary
+
+
+def test_letter_paragraphs_given_as_one_string_or_too_many() -> None:
+    assert CoverAnswer.model_validate({"paragraphs": "First one.\n\nSecond one.\n\n"}).paragraphs == [
+        "First one.",
+        "Second one.",
+    ]
+    assert len(CoverAnswer.model_validate({"paragraphs": ["a", "b", "c", "d", "e"]}).paragraphs) == 4
+    with pytest.raises(ValueError):
+        CoverAnswer.model_validate({"job_posting": {"role": "x"}})  # the input echoed back: no letter
+
+
+def test_plain_letter_says_the_role_plainly_and_names_the_jobs_skills() -> None:
+    two_sentences = master().model_copy(
+        update={
+            "experience": (
+                master()
+                .experience[0]
+                .model_copy(
+                    update={"bullets": ("Built a chatbot used by 1,000 staff. Rebuilt it on LangGraph.",)}
+                ),
+            )
+        }
+    )
+    text = " ".join(
+        plain_letter(
+            two_sentences,
+            "Full-Stack Developer (React.js / Next.js / Node.js)",
+            "Gamma",
+            "We use Node.js, Docker and Express.js daily.",
+        )
+    )
+    assert text.startswith("I'd like to apply for the Full-Stack Developer role at Gamma.")
+    assert "where I built a chatbot used by 1,000 staff." in text
+    assert "Rebuilt it" not in text  # a sentence with no subject after "where I ..."
+    named = text.split("day-to-day work is in ")[1].split(". ")[0].replace(" and ", ", ").split(", ")
+    assert named[:2] == ["Node.js", "Docker"], named  # the job's skills first (Express.js is not hers)
+
+
+@pytest.mark.parametrize(
+    ("role", "short"),
+    [
+        ("Backend Developer (Node.js)", "Backend Developer"),
+        ("Software Engineer - Payments", "Software Engineer"),
+        ("SDE | Platform", "SDE"),
+        ("Data Engineer [Remote]", "Data Engineer"),
+        ("Full-Stack Developer", "Full-Stack Developer"),  # a hyphen inside a word stays
+        ("(Remote)", "(Remote)"),  # nothing left: the title as given
+        ("AI/ML Engineer", "AI/ML Engineer"),
+    ],
+)
+def test_short_role(role: str, short: str) -> None:
+    from sarthi.documents.build import _short_role  # noqa: PLC0415
+
+    assert _short_role(role) == short

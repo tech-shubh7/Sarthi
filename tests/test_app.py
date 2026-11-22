@@ -87,10 +87,14 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
         assert sarthi.queue.store.task_counts()[TaskStatus.PENDING] == 1
         assert not any(client.available for client in sarthi.ai_clients)
 
-        sarthi.bot.jobs.save(make_job())
-        assert sarthi.rematch_after_upgrade() == 1  # matching logic changed: recent jobs matched again
+        sarthi.bot.jobs.save(make_job(description="Build payment APIs in Python. " * 12))
+        sarthi.bot.jobs.save(
+            make_job(url="https://example.com/jobs/2", title="Data Engineer", description="")
+        )
+        assert sarthi.rematch_after_upgrade() == 2  # matching logic changed: recent jobs matched again
         assert sarthi.rematch_after_upgrade() == 0  # once
         assert sarthi.queue.active("match") == 1
+        assert sarthi.queue.active("fill_text") == 1  # saved with a title only: its page is read first
     finally:
         await sarthi.bot.api.aclose()
         for client in sarthi.ai_clients:

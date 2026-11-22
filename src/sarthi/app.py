@@ -70,6 +70,7 @@ ALIVE_KEY = "app.alive"  # last time a running Sarthi was seen (ISO), for catch-
 AUTO_CATCHUP_AFTER = timedelta(hours=6)
 CATCHUP_POLL_S = 2.0
 REMATCH_AFTER_UPGRADE = timedelta(days=7)
+SNIPPET_CHARS = 300  # a saved description this short is a title and a line: its page is read first
 TICK_SECONDS = 60
 
 
@@ -176,10 +177,23 @@ class App:
             return 0
         ids = jobs.ids_active_since(self.clock() - REMATCH_AFTER_UPGRADE)
         for job_id in ids:
-            self.queue.enqueue(names.MATCH, job_id, priority=Priority.NORMAL)
+            self.queue.enqueue(self._rematch_task(job_id), job_id, priority=Priority.NORMAL)
         chats.set_state(MATCH_LOGIC_KEY, LOGIC_VERSION)
         log.info("matching logic changed: %d recent job(s) queued to be matched again", len(ids))
         return len(ids)
+
+    def _rematch_task(self, job_id: str) -> str:
+        """``fill_text`` for a job saved before its page was read (a title or a snippet only), else ``match``.
+
+        Matching it again on a title alone checks nothing the new logic reads (years asked, level, skills).
+        """
+        if not self.settings.fill_text:
+            return names.MATCH
+        job = self.bot.jobs.get(job_id)
+        text = self.bot.jobs.full_text(job_id) or (job.description if job else "")
+        if job is None or len(text) >= SNIPPET_CHARS:  # (old saves mark even a title-only job "complete")
+            return names.MATCH
+        return names.FILL_TEXT
 
     async def run(self) -> None:
         """Run the bot, the source scheduler and the worker until cancelled."""

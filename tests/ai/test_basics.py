@@ -68,3 +68,8 @@ def test_usage_totals_exclude_free_providers(conn: object, clock: FakeClock) -> 
     store.cache_put("k", "v1")
     store.cache_put("k", "v2")
     assert store.cache_get("k") == "v2"
+
+
+def test_prompt_repeats_its_json_shape_after_the_data() -> None:
+    text = Prompt("t", "1", "Do the task.", shape='{"a": ""}').render(job_posting="J")
+    assert text.endswith('</job_posting>\n\nReply with only this JSON, filled in as asked above: {"a": ""}')

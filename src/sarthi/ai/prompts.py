@@ -51,8 +51,14 @@ class Prompt:
     name: str
     version: str
     instructions: str
+    shape: str = ""  # the JSON shape, repeated after the data so a small model ends on the task
 
     def render(self, **data: str) -> str:
         """The instructions followed by each value in its own fenced block."""
         blocks = "\n\n".join(fence(name, value) for name, value in data.items())
-        return f"{self.instructions.strip()}\n\n{blocks}"
+        text = f"{self.instructions.strip()}\n\n{blocks}"
+        return (
+            f"{text}\n\nReply with only this JSON, filled in as asked above: {self.shape}"
+            if self.shape
+            else text
+        )

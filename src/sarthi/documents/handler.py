@@ -276,6 +276,7 @@ class DocumentMaker:
                 company=company,
                 own_skills=profile.skills,
                 strict=strict,
+                job_text=job_text,
             )
             if not letter.from_ai:
                 if answer is None or strict:
@@ -293,7 +294,9 @@ class DocumentMaker:
             problems = letter.problems + [f"unsupported claim: {c}" for c in claims]
             if not problems:
                 return letter
-        return Letter(letter.greeting, plain_letter(master, role, company), letter.sign_off, from_ai=False)
+        return Letter(
+            letter.greeting, plain_letter(master, role, company, job_text), letter.sign_off, from_ai=False
+        )
 
     def _today(self) -> date:
         return self._clock().astimezone().date()
