@@ -294,15 +294,23 @@ _SIGNED_IN = {
 LOGIN_WAIT_S = 600
 
 
-async def login(site: str, profile_dir: Path, *, wait_s: float = LOGIN_WAIT_S) -> bool:
+async def login(
+    site: str, profile_dir: Path, *, wait_s: float = LOGIN_WAIT_S, env: dict[str, str] | None = None
+) -> bool:
     """Open a visible browser on the site's login page; the user signs in themselves, the session is kept.
 
     Sarthi never sees or stores the password: only the browser's own session cookies, in ``profile_dir``.
     Returns True once the site shows a signed-in page, False when the window was closed or time ran out.
+    ``env`` puts the window on another screen (the virtual one of ``sarthi.apply.screen``).
     """
     profile_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(str(profile_dir), headless=False)
+        context = await playwright.chromium.launch_persistent_context(
+            str(profile_dir),
+            headless=False,
+            env=_browser_env(env),
+            args=["--window-position=0,0", "--window-size=1280,900"] if env else [],
+        )
         page = context.pages[0] if context.pages else await context.new_page()
         await page.goto(LOGIN_PAGES[site])
         end = time.monotonic() + wait_s
@@ -315,3 +323,8 @@ async def login(site: str, profile_dir: Path, *, wait_s: float = LOGIN_WAIT_S) -
         with contextlib.suppress(PlaywrightError):
             await context.close()
         return signed_in
+
+
+def _browser_env(env: dict[str, str] | None) -> dict[str, str | float | bool] | None:
+    """Playwright's type for a browser's environment (None: the current one)."""
+    return {key: value for key, value in env.items()} if env else None  # noqa: C416  (the type needs a new dict)

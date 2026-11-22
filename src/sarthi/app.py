@@ -17,7 +17,9 @@ from sarthi.ai.providers import resolve
 from sarthi.ai.scoring import LlmMatchScorer
 from sarthi.answers.handler import FormChecker
 from sarthi.apply.engine import ApplyEngine
+from sarthi.apply.engine import login as login_to
 from sarthi.apply.handler import Applier
+from sarthi.apply.screen import ScreenError, login_screen
 from sarthi.chat.pairing import CODE_LIFETIME, OWNER_KEY, code_hash, new_code, owner_chat
 from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import TelegramApi
@@ -106,6 +108,7 @@ class App:
     ai_clients: tuple[AiClient, ...]
     clock: Clock
     relay: RelayLink | None = None  # the shared bot's relay, when no bot token of one's own is set
+    _login: asyncio.Task[None] | None = None
 
     def schedule_digest(self) -> None:
         """Queue the next daily digest (idempotent: one task per local date)."""
@@ -211,6 +214,7 @@ class App:
         except (RetryableError, PermanentError) as error:
             log.warning("could not start the catch-up after a break: %s", error)
         worker, user = self.worker(), self.user_worker()
+        self.bot.site_login = self.site_login
         tasks = [
             asyncio.create_task(self.bot.poll()),
             asyncio.create_task(worker.run()),
@@ -227,6 +231,43 @@ class App:
             if dashboard is not None:
                 dashboard.should_exit = True
             await self._shutdown((worker, user), tasks)
+
+    async def site_login(self, chat_id: int, site: str) -> None:
+        """/login from Telegram: open the site's login page, on a screen in the browser when in Docker."""
+        if self._login is not None and not self._login.done():
+            await self.bot.api.send_message(
+                chat_id, "A login is already open: finish or close that one first."
+            )
+            return
+        self._login = asyncio.create_task(self._log_in(chat_id, site))
+
+    async def _log_in(self, chat_id: int, site: str) -> None:
+        name = {"linkedin": "LinkedIn", "naukri": "Naukri"}.get(site, site)
+        send = self.bot.api.send_message
+        try:
+            async with login_screen(self.settings.screen_port, self.settings.dashboard_host) as screen:
+                if screen.url is None:
+                    await send(chat_id, f"A browser window opened on your computer. Log in to {name} there.")
+                else:
+                    await send(
+                        chat_id,
+                        f"Open this on the computer running Sarthi and log in to {name} there "
+                        f"(the link works for 10 minutes):\n{screen.url}",
+                    )
+                done = await login_to(site, self.settings.data_dir / BROWSER_PROFILE, env=screen.env)
+        except ScreenError as error:
+            await send(chat_id, f"Could not open a browser for the login: {error}")
+            return
+        except Exception:  # a browser that fails to start must not stop Sarthi
+            log.exception("login to %s failed", site)
+            await send(chat_id, f"The {name} login could not be opened. Try /login again.")
+            return
+        await send(
+            chat_id,
+            f"✅ Logged in to {name}: Sarthi can apply there now."
+            if done
+            else f"Not logged in to {name} (the window was closed or 10 minutes passed). Try /login again.",
+        )
 
     async def offer_pairing(self) -> None:
         """Shared bot: keep a fresh link to connect Telegram on show (log and dashboard) until one is used."""

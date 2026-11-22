@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     # The local dashboard (read-only), at http://127.0.0.1:<port> while `sarthi run` runs. This computer only.
     dashboard: bool = True
     dashboard_port: int = Field(default=8765, ge=1024, le=65535)
+    screen_port: int = Field(
+        default=6080, ge=1024, le=65535, description="Where a site login is shown when there is no desktop."
+    )
     # 0.0.0.0 only inside the Docker container (compose publishes it to the host's 127.0.0.1 only).
     dashboard_host: Literal["127.0.0.1", "0.0.0.0"] = "127.0.0.1"  # noqa: S104  (container only)
 

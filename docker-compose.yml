@@ -23,6 +23,7 @@ services:
       - ./data:/app/data # database, resume, documents, logins: everything that is yours
     ports:
       - "127.0.0.1:8765:8765" # the dashboard, reachable from this computer only
+      - "127.0.0.1:6080:6080" # a site login's browser (/login in Telegram), only while it is open
     read_only: true # only /app/data (and the scratch folders below) can be written
     tmpfs:
       - /tmp

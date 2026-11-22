@@ -288,7 +288,18 @@ async def test_poll_sets_the_slash_command_menu(bot: TelegramBot, api: FakeApi) 
     bot.stop()
     await bot.poll()
     names = [name for name, _ in api.commands]
-    assert names == ["setup", "profile", "today", "catchup", "status", "pause", "resume", "cancel", "help"]
+    assert names == [
+        "setup",
+        "profile",
+        "today",
+        "catchup",
+        "status",
+        "pause",
+        "resume",
+        "cancel",
+        "login",
+        "help",
+    ]
     assert all(
         n.islower() and 1 <= len(n) <= 32 and len(d) <= 256 for n, d in api.commands
     )  # Telegram's limits
@@ -303,3 +314,33 @@ async def test_menu_failure_does_not_stop_the_bot(bot: TelegramBot, api: FakeApi
     api.set_commands = refuse  # type: ignore[method-assign]
     bot.stop()
     await bot.poll()
+
+
+async def test_login_asks_which_site_then_opens_it(
+    bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock
+) -> None:
+    pair(bot, chats, clock)
+    opened: list[tuple[int, str]] = []
+
+    async def site_login(chat_id: int, site: str) -> None:
+        opened.append((chat_id, site))
+
+    bot.site_login = site_login
+    await bot.handle_update(message(OWNER, "/login"))
+    _, text, markup = api.sent[-1]
+    assert "never sees your password" in text
+    assert markup is not None
+    assert [b["callback_data"] for b in markup["inline_keyboard"][0]] == ["login:linkedin", "login:naukri"]
+    await bot.handle_update(tap(OWNER, "login:naukri"))
+    assert opened == [(OWNER, "naukri")]
+    await bot.handle_update(tap(OWNER, "login:evil.example"))  # only the two sites
+    await bot.handle_update(tap(OWNER + 1, "login:linkedin"))  # not the owner
+    assert opened == [(OWNER, "naukri")]
+
+
+async def test_login_without_the_app_says_how(
+    bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock
+) -> None:
+    pair(bot, chats, clock)
+    await bot.handle_update(tap(OWNER, "login:linkedin"))
+    assert "sarthi login" in api.texts()[-1]

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -102,6 +102,7 @@ COMMANDS: tuple[tuple[str, str], ...] = (
     ("pause", "Stop instant alerts (matches wait for you)"),
     ("resume", "Start instant alerts again"),
     ("cancel", "Stop the profile setup you are in"),
+    ("login", "Log in to LinkedIn or Naukri once, so Sarthi can apply there"),
     ("help", "What Sarthi does and these commands"),
 )
 HELP = "<b>Sarthi</b> finds jobs that fit you and messages you here.\n\n" + "\n".join(
@@ -173,6 +174,8 @@ class TelegramBot:
             if applications is not None and data_dir is not None
             else None
         )
+        # Opens a job site's login page (set by the app): (chat id, site) -> None; it reports back itself.
+        self.site_login: Callable[[int, str], Awaitable[None]] | None = None
         self._stopping = asyncio.Event()
         self.catchup = CatchUp(api, chats, jobs, matches, queue, send_job=self.send_job, clock=clock)
 
@@ -363,6 +366,12 @@ class TelegramBot:
             await self.api.send_message(chat_id, f"▶️ Instant alerts on. {waiting} match(es) waiting: /today")
         elif command == "/today":
             await self._send_unseen(chat_id, quiet_if_none=False)
+        elif command == "/login":
+            await self.api.send_message(
+                chat_id,
+                "Which site? You log in on the site itself; Sarthi never sees your password.",
+                buttons([("LinkedIn", "login:linkedin"), ("Naukri", "login:naukri")]),
+            )
         else:
             await self.api.send_message(chat_id, "I didn't understand that. /help lists what I can do.")
 
@@ -490,6 +499,15 @@ class TelegramBot:
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)
             await self.questions.on_button(chat_id, data)
+        elif data in ("login:linkedin", "login:naukri"):
+            await self.api.answer_callback(callback_id)
+            await self.api.edit_buttons(chat_id, message_id, None)
+            if self.site_login is None:
+                await self.api.send_message(
+                    chat_id, "Logging in from here is not available; run sarthi login."
+                )
+            else:
+                await self.site_login(chat_id, data.split(":", 1)[1])
         elif data.split(":", 1)[0] in ("submit", "cancel", "applied") and self.applying is not None:
             label = await self.applying.on_button(chat_id, data)
             await self.api.answer_callback(callback_id, label)
