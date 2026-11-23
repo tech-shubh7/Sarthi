@@ -372,3 +372,46 @@ async def test_a_gemini_refusal_in_a_list_is_read_and_its_wait_kept(
     assert (await ai.structured(PROMPT, Answer, job_posting="b")).greeting == "b"  # after the wait it said
     assert [r.url.host for r in providers.requests] == ["gemini.test", "openai.test", "gemini.test"]
     assert time.slept == [pytest.approx(37.2)]
+
+
+GROQ = Endpoint("groq", "gpt-oss-20b", "https://groq.test/v1", SecretStr("secret-groq-key"))
+
+
+def failed_json(draft: str) -> httpx.Response:
+    error = {
+        "message": "Failed to validate JSON. Please adjust your prompt. See 'failed_generation' for more details.",
+        "type": "invalid_request_error",
+        "code": "json_validate_failed",
+        "failed_generation": draft,
+    }
+    return httpx.Response(400, json={"error": error})
+
+
+async def test_an_answer_groq_refused_as_bad_json_is_still_used(store: AiStore, clock: FakeClock) -> None:
+    # Seen live: gpt-oss on Groq answered with a stray sentence around the JSON; Groq returned 400.
+    providers = FakeProviders({"groq.test": [failed_json('Here it is: {"greeting": "hi", "count": 2}')]})
+    result = await client(store, providers, [GROQ], clock).structured(PROMPT, Answer)
+    assert result == Answer(greeting="hi", count=2)
+    assert len(providers.requests) == 1
+
+
+async def test_a_refused_draft_that_is_not_json_gets_the_repair_round(
+    store: AiStore, clock: FakeClock
+) -> None:
+    providers = FakeProviders(
+        {"groq.test": [failed_json("greeting hi, count 2"), reply('{"greeting": "hi", "count": 2}')]}
+    )
+    result = await client(store, providers, [GROQ], clock).structured(PROMPT, Answer)
+    assert result.count == 2
+    assert providers.bodies()[1]["messages"][-1]["content"].startswith("That did not match")
+
+
+async def test_any_other_400_still_falls_back(store: AiStore, clock: FakeClock) -> None:
+    providers = FakeProviders(
+        {
+            "groq.test": [httpx.Response(400, json={"error": {"message": "model not found"}})],
+            "openai.test": [reply('{"greeting": "ok", "count": 3}')],
+        }
+    )
+    result = await client(store, providers, [GROQ, OPENAI], clock).structured(PROMPT, Answer)
+    assert result.greeting == "ok"

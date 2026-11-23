@@ -106,6 +106,21 @@ def _provider_message(response: httpx.Response, endpoint: Endpoint) -> str:
     return message
 
 
+_BAD_REQUEST = 400
+
+
+def _failed_generation(response: httpx.Response) -> str | None:
+    """The model's own answer inside a 400 "Failed to validate JSON" (Groq), or None."""
+    if response.status_code != _BAD_REQUEST:
+        return None
+    try:
+        error = response.json().get("error")
+    except (ValueError, AttributeError):
+        return None
+    draft = error.get("failed_generation") if isinstance(error, dict) else None
+    return draft if isinstance(draft, str) and draft.strip() else None
+
+
 class _CallFailedError(Exception):
     """One endpoint failed; try the next."""
 
@@ -267,6 +282,10 @@ class AiClient:
         if response.status_code == _TOO_MANY_REQUESTS and (wait := _retry_after(response, limit)) is not None:
             await asyncio.sleep(wait)  # a "slow down" from a fast provider: worth one wait
             response = await self._post(endpoint, body, headers)
+        if response.status_code != _HTTP_OK and (draft := _failed_generation(response)) is not None:
+            # Groq refuses an answer its JSON mode cannot parse (a trailing comma, a stray word) but sends it
+            # back; the tolerant parser and the one repair round in ``_ask`` usually save it.
+            return draft
         if response.status_code != _HTTP_OK:
             kind = (
                 "temporary"
