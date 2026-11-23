@@ -144,6 +144,35 @@ def similarity(a: str, b: str) -> float:
     return len(ta & tb) / max(len(ta), len(tb))
 
 
+# A question about this one employer ("Why do you want to work here?"): its answer is kept for that job only,
+# never offered to another company's form.
+_COMPANY_SPECIFIC = re.compile(
+    r"\bwhy\b.*\b(?:here|us|our|join|this (?:company|role|team|position|job)|work (?:at|for|with))\b"
+    r"|\b(?:interest(?:s|ed)?|excite[sd]?|attract(?:s|ed)?|motivate[sd]?|drew you)\b.*"
+    r"\b(?:us|our|this (?:company|role|team|position|job)|about (?:the|this) (?:company|role))\b",
+    re.IGNORECASE,
+)
+_JOB_SCOPE = " [job:"
+
+
+def company_specific(label: str) -> bool:
+    """True for a question about this employer, whose answer must not be reused elsewhere."""
+    return bool(_COMPANY_SPECIFIC.search(label))
+
+
+def for_job(label: str, job_id: str) -> str:
+    """The answer bank key of an answer kept for one job only."""
+    return f"{label}{_JOB_SCOPE}{job_id}]"
+
+
+def split_bank(saved: dict[str, str], job_id: str) -> tuple[dict[str, str], dict[str, str]]:
+    """(answers for any form, this job's own answers by question) from the whole answer bank."""
+    general = {q: a for q, a in saved.items() if _JOB_SCOPE not in q}
+    suffix = f"{_JOB_SCOPE}{job_id}]"
+    own = {q.removesuffix(suffix): a for q, a in saved.items() if q.endswith(suffix)}
+    return general, own
+
+
 def lookup(answers: dict[str, str], label: str, minimum: float = _MATCH_MIN) -> tuple[str, str] | None:
     """The saved (question, answer) closest to ``label``, or None below ``minimum``."""
     best: tuple[str, str] | None = None
@@ -513,6 +542,8 @@ def suggest(form_field: FormField, ctx: FormContext) -> Suggestion | None:  # no
         own = hit[1]
     if value := _fit(form_field, own):
         return Suggestion(value, "job")
+    if company_specific(form_field.label):
+        return None  # about this employer: only an answer given for this job (above) is used
     if _BOT_CHECK.search(f"{label} {' '.join(norm(o) for o in form_field.options)}"):
         saved = lookup(ctx.applicant.saved_answers, form_field.label)  # the user's own earlier answer only
         value = _fit(form_field, saved[1]) if saved else None

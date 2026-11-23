@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from html import escape
 from pathlib import Path
@@ -17,6 +18,7 @@ from sarthi.queue.tasks import Priority, TaskQueue
 
 log = logging.getLogger(__name__)
 
+PENDING = "apply.pending."  # + job id: {"code", "screenshot"} of a filled form waiting for Submit
 MAX_FILLED_SHOWN = 12
 MAX_PHOTO_BYTES = 9_000_000  # Telegram's photo limit is 10 MB
 
@@ -72,9 +74,12 @@ class ApplyingFlow:
         code = str(task.payload.get("code") or "")
         if job is None or not code:
             return
+        shot = str(task.payload.get("screenshot") or "")
+        # Remembered so the dashboard can show it and submit it too; whichever answers first wins.
+        self.chats.set_state(PENDING + task.key, json.dumps({"code": code, "screenshot": shot}))
         caption = preview_text(job.company, job.title, list(task.payload.get("filled") or []))
         markup = buttons([("✅ Submit", f"submit:{task.key}:{code}"), ("❌ Cancel", f"cancel:{task.key}")])
-        photo = self._photo(str(task.payload.get("screenshot") or ""))
+        photo = self._photo(shot)
         if photo is None or not await self._send_photo(chat_id, photo, caption, markup):
             await self.api.send_message(chat_id, caption, markup)
 
@@ -94,17 +99,39 @@ class ApplyingFlow:
         if not job_id or self.jobs.get(job_id) is None:
             return "That job is no longer stored."
         if action == "submit" and code:
-            self.queue.enqueue(names.SUBMIT, job_id, {"code": code}, priority=Priority.ALERT)
+            self.submit(job_id, code)
             return "⏳ Submitting…"
         if action == "cancel":
-            self.applications.record(job_id, ApplicationStatus.FAILED, detail="cancelled by the user")
-            self.chats.set_job_status(job_id, JobStatus.SKIPPED)
+            self.cancel(job_id)
             return "Cancelled: nothing was sent."
         if action == "applied":
             self.applications.record(job_id, ApplicationStatus.APPLIED_BY_USER, detail="applied by the user")
             self.chats.set_job_status(job_id, JobStatus.APPLIED)
             return "✅ Marked as applied"
         return ""
+
+    def waiting(self) -> dict[str, tuple[str, str]]:
+        """Filled forms waiting for Submit: job id -> (one-time code, screenshot path)."""
+        found = {}
+        for job_id, raw in self.chats.states(PENDING).items():
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(data, dict) and data.get("code"):
+                found[job_id] = (str(data["code"]), str(data.get("screenshot") or ""))
+        return found
+
+    def submit(self, job_id: str, code: str) -> None:
+        """Send the approved form (from a Telegram tap or the dashboard)."""
+        self.chats.set_state(PENDING + job_id, None)
+        self.queue.enqueue(names.SUBMIT, job_id, {"code": code}, priority=Priority.ALERT)
+
+    def cancel(self, job_id: str) -> None:
+        """Drop the filled form; nothing is sent."""
+        self.chats.set_state(PENDING + job_id, None)
+        self.applications.record(job_id, ApplicationStatus.FAILED, detail="cancelled by the user")
+        self.chats.set_job_status(job_id, JobStatus.SKIPPED)
 
     async def result(self, task: TaskRecord, chat_id: int) -> None:
         """``apply_result`` task: how the application ended, with what to do next."""

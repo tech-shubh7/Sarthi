@@ -117,3 +117,9 @@ async def test_scorer_returns_none_when_the_ai_cannot_answer(
     assert await failing.score(make_job(), make_profile()) is None
     unconfigured = LlmMatchScorer(AiClient([], AiStore(conn, clock=clock)))
     assert await unconfigured.score(make_job(), make_profile()) is None
+
+
+def test_a_vague_posting_is_never_a_near_perfect_match() -> None:
+    # Seen live: "Knowledge of programming languages", location "to be confirmed", scored 94.
+    assert combine(answers(confidence=0.4)) == 70
+    assert combine(answers(confidence=0.9)) == 100

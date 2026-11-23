@@ -276,3 +276,52 @@ def test_catchup_command_explains_what_is_missing(tmp_path: Path, monkeypatch: p
     assert result.exit_code == 1
     assert "pair" in result.output
     assert too_far.exit_code != 0
+
+
+async def test_the_dashboards_actions_do_what_the_telegram_buttons_do(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    from sarthi.app import WebActions  # noqa: PLC0415
+    from sarthi.chat.applying import PENDING  # noqa: PLC0415
+    from sarthi.db.chat import JobStatus  # noqa: PLC0415
+    from sarthi.queue import names  # noqa: PLC0415
+
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        telegram_bot_token=SecretStr("1:x"),
+        llm_fast_models=[],
+        llm_quality_models=[],
+    )
+    sarthi = build(settings, clock=clock)
+    try:
+        web = WebActions(sarthi)
+        assert web.profile() is None
+        sarthi.bot.jobs.save(make_job())
+        assert web.save_profile(make_profile()) == 1  # the recent job is matched again
+        assert web.profile() == make_profile()
+        job_id = sarthi.bot.jobs.save(
+            make_job(url="https://jobs.lever.co/acme/9", title="AI Engineer")
+        ).job_id
+        assert web.choose(job_id, "apply")
+        assert sarthi.bot.chats.job_status(job_id) is JobStatus.APPLY
+        assert sarthi.queue.claim([names.DOCUMENTS]) is not None
+        assert not web.choose("missing", "apply")
+        web.set_paused(True)
+        assert web.controls().paused
+        assert web.set_auto_line("60") is not None
+        assert web.set_auto_line("90") is None
+        assert web.controls().auto_line == 90
+        sarthi.bot.chats.set_state(PENDING + job_id, '{"code": "ABC234", "screenshot": "screenshots/x.png"}')
+        assert web.pending()[job_id].screenshot == "screenshots/x.png"
+        assert web.submit(job_id)
+        submit = sarthi.queue.claim([names.SUBMIT])
+        assert submit is not None and submit.payload == {"code": "ABC234"}
+        assert not web.submit(job_id)  # only once
+        with pytest.raises(ValueError, match="almost no text"):
+            web.resume_text(b"  ")
+    finally:
+        await sarthi.bot.api.aclose()
+        for client in sarthi.ai_clients:
+            await client.aclose()
+        sarthi.conn.close()

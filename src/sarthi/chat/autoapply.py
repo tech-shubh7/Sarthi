@@ -107,15 +107,21 @@ class AutoApply:
         """No automatic application for this job (the user can still tap Apply on its card)."""
         self.chats.set_auto(job_id, on=False)
 
-    def set_line(self, argument: str) -> str:
-        """``/autoapply [off | <percent>]``: the reply to send."""
-        word = argument.strip().lower().rstrip("%")
+    def change_line(self, argument: str) -> str | None:
+        """Store ``off`` or a percent (MIN_LINE-100); the problem, or None when stored (or nothing given)."""
+        word = argument.strip().lower().rstrip("%").strip()
         if word in ("off", "stop", "no", "0"):
             self.chats.set_state(LINE_KEY, "off")
-        elif word.isdigit():
-            if not MIN_LINE <= int(word) <= 100:  # noqa: PLR2004
-                return f"Pick a line from {MIN_LINE} to 100, e.g. /autoapply 85."
+        elif word.isdigit() and MIN_LINE <= int(word) <= 100:  # noqa: PLR2004
             self.chats.set_state(LINE_KEY, word)
+        elif word:
+            return f"Pick a line from {MIN_LINE} to 100, e.g. /autoapply 85, or off."
+        return None
+
+    def set_line(self, argument: str) -> str:
+        """``/autoapply [off | <percent>]``: the reply to send."""
+        if problem := self.change_line(argument):
+            return problem
         line = self.line()
         state = f"on from <b>{line}%</b>" if line is not None else "<b>off</b>"
         return HELP.format(
@@ -126,6 +132,6 @@ class AutoApply:
 def _wait_text(seconds: float) -> str:
     minutes = round(seconds / 60)
     if minutes < 60 or minutes % 60:  # noqa: PLR2004
-        return f"{minutes} minutes"
+        return f"{minutes} minute{'' if minutes == 1 else 's'}"
     hours = minutes // 60
     return f"{hours} hour{'' if hours == 1 else 's'}"

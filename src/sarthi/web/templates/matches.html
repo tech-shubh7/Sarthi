@@ -6,7 +6,7 @@
 <div class="head">
   <p class="eyebrow">Last {{ days }} days</p>
   <h1>Matches</h1>
-  <p class="lede">Jobs that fit your profile, best first. Answer them in Telegram.</p>
+  <p class="lede">Jobs that fit your profile, best first. Answer them here or in Telegram.</p>
 </div>
 <nav class="tabs" aria-label="Which matches">
   <a href="/matches?show=all" {% if show == 'all' %}aria-current="page"{% endif %}>All</a>
@@ -24,12 +24,23 @@
       <td>{{ r.company }}</td>
       <td class="faint">{{ ago(r.first_seen_at) }}</td>
       <td class="faint">{{ r.source }}</td>
-      <td>{{ label(r.status) if r.status else '' }}</td>
+      <td>
+        {% if can_edit and r.status in (none, 'alerted', 'digested', 'later') %}
+        <div class="row-actions">
+          {% if r.status == 'later' %}<span class="pill">Later</span>{% endif %}
+          <form method="post" action="/jobs/{{ r.job_id }}/apply"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small" type="submit">Apply</button></form>
+          {% if r.status != 'later' %}
+          <form method="post" action="/jobs/{{ r.job_id }}/later"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small quiet" type="submit">Later</button></form>
+          {% endif %}
+          <form method="post" action="/jobs/{{ r.job_id }}/skip"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small quiet" type="submit">Skip</button></form>
+        </div>
+        {% elif r.status %}{{ label(r.status) }}{% endif %}
+      </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 {% else %}
-<div class="empty"><h2>No matches in the last {{ days }} days</h2><p>Sarthi keeps looking; new ones arrive in Telegram first.</p></div>
+<div class="empty"><h2>No matches in the last {{ days }} days</h2><p>Sarthi keeps looking; strong ones also arrive in Telegram.</p></div>
 {% endif %}
 {% endblock %}

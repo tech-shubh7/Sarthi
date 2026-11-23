@@ -15,6 +15,7 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
+from sarthi.web.actions import DashboardActions
 from sarthi.web.app import create_app, read_only
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,15 @@ def free_port(port: int, host: str = HOST) -> int:
     )
 
 
-def make_server(db_path: Path, port: int, *, host: str = HOST, own_signals: bool = True) -> Any:
+def make_server(  # noqa: PLR0913  (where, how, and what it may change)
+    db_path: Path,
+    port: int,
+    *,
+    host: str = HOST,
+    own_signals: bool = True,
+    actions: DashboardActions | None = None,
+    data_dir: Path | None = None,
+) -> Any:
     """A Uvicorn server for the dashboard on ``host`` (127.0.0.1, or all interfaces inside a container).
 
     ``own_signals=False`` (inside ``sarthi run``) leaves Ctrl+C to Sarthi, which stops it via ``should_exit``.
@@ -72,7 +81,7 @@ def make_server(db_path: Path, port: int, *, host: str = HOST, own_signals: bool
         log.warning("Port %d is in use; the dashboard took %d instead", port, chosen)
     log.info("Dashboard: http://%s:%d", HOST, chosen)
     config = uvicorn.Config(
-        create_app(read_only(db_path)),
+        create_app(read_only(db_path), actions=actions, data_dir=data_dir),
         host=host,
         port=chosen,
         log_level="warning",

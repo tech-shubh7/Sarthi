@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Settings · Sarthi{% endblock %}
+{% macro field(name, label, hint='', kind='text') %}
+<div class="field{% if errors.get(name) %} has-error{% endif %}">
+  <label for="f-{{ name }}">{{ label }}</label>
+  {% if kind == 'area' %}
+  <textarea id="f-{{ name }}" name="{{ name }}" rows="3" {% if not can_edit %}disabled{% endif %}>{{ values.get(name, '') }}</textarea>
+  {% else %}
+  <input id="f-{{ name }}" name="{{ name }}" type="text" value="{{ values.get(name, '') }}" {% if not can_edit %}disabled{% endif %}>
+  {% endif %}
+  {% if errors.get(name) %}<p class="error">{{ errors[name] }}</p>{% elif hint %}<p class="hint">{{ hint }}</p>{% endif %}
+</div>
+{% endmacro %}
+{% block main %}
+<div class="head">
+  <p class="eyebrow">Your search</p>
+  <h1>Settings</h1>
+  <p class="lede">What Sarthi looks for and how it may act for you. Saving your profile matches recent jobs again.</p>
+</div>
+
+{% if errors.get('form') %}<p class="notice bad" role="alert">{{ errors['form'] }}</p>{% endif %}
+
+<form class="panel form" method="post" action="/settings/profile" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Profile</h2>
+  {% if not has_profile %}<p class="hint">No profile yet: add your resume and the fields below (or send /setup in Telegram).</p>{% endif %}
+  <div class="field{% if errors.get('resume') %} has-error{% endif %}">
+    <label for="f-resume">Resume {% if has_profile %}<span class="faint">(optional: only to replace it)</span>{% endif %}</label>
+    <input id="f-resume" name="resume" type="file" accept=".pdf,.docx,.txt" {% if not can_edit %}disabled{% endif %}>
+    {% if errors.get('resume') %}<p class="error">{{ errors['resume'] }}</p>{% else %}<p class="hint">PDF or Word (.docx), up to 5 MB. Read on this computer only.</p>{% endif %}
+  </div>
+  <div class="cols">
+    {{ field('roles', 'Job titles to look for', 'Comma-separated, e.g. AI Engineer, Backend Engineer') }}
+    {{ field('skills', 'Your skills', 'Comma-separated, as on your resume') }}
+    {{ field('home', 'Country you live in', 'e.g. India') }}
+    {{ field('countries', 'Other countries for on-site or hybrid work', 'e.g. UK, UAE, Europe, or none') }}
+    {{ field('visa_free', 'Where you can work without a visa (besides home)', 'e.g. EU passport: Europe; or none') }}
+    <div class="field{% if errors.get('remote') %} has-error{% endif %}">
+      <label for="f-remote">Remote work</label>
+      <select id="f-remote" name="remote" {% if not can_edit %}disabled{% endif %}>
+        {% for value, text in remote_choices.items() %}
+        <option value="{{ value }}" {% if values.get('remote') == value %}selected{% endif %}>{{ text }}</option>
+        {% endfor %}
+      </select>
+      {% if errors.get('remote') %}<p class="error">{{ errors['remote'] }}</p>{% endif %}
+    </div>
+    {{ field('years', 'Years of work experience', 'e.g. 1, 1.5 or 0 for a fresher') }}
+    {{ field('salary', 'Minimum salary', 'e.g. 6 LPA, 80k GBP, USD 120000; empty for none') }}
+    {{ field('exclude_companies', 'Companies to never show', 'Comma-separated') }}
+  </div>
+  {{ field('looking_for', 'What you are looking for (in your words)', 'e.g. LLM products at a startup, Python backend', 'area') }}
+  {{ field('ruled_out', 'What you rule out', 'e.g. sales, night shifts, service companies', 'area') }}
+  {% if can_edit %}<p class="actions"><button class="button" type="submit">Save profile</button></p>{% endif %}
+</form>
+
+{% if controls %}
+<form class="panel form" method="post" action="/settings/alerts">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Alerts and auto-apply</h2>
+  <div class="field check">
+    <label><input type="checkbox" name="paused" {% if controls.paused %}checked{% endif %}> Pause instant alerts
+      <span class="faint">(matches wait in the daily digest and /today)</span></label>
+  </div>
+  <div class="field{% if errors.get('auto_line') %} has-error{% endif %}">
+    <label for="f-auto">Auto-apply from this match %</label>
+    <select id="f-auto" name="auto_line">
+      <option value="off" {% if controls.auto_line is none %}selected{% endif %}>Off (I tap Apply myself)</option>
+      {% for n in [75, 80, 85, 90, 95] %}
+      <option value="{{ n }}" {% if controls.auto_line == n %}selected{% endif %}>{{ n }}% or more</option>
+      {% endfor %}
+    </select>
+    {% if errors.get('auto_line') %}<p class="error">{{ errors['auto_line'] }}</p>{% else %}
+    <p class="hint">Sarthi tells you in Telegram and waits {{ controls.auto_wait_minutes }} minutes for a Cancel.
+      It sends a form without your tap only when every answer came from your profile, never on LinkedIn,
+      Naukri or other job boards, and at most {{ controls.auto_daily_limit }} a day. Anything else waits for your Submit.</p>{% endif %}
+  </div>
+  <p class="actions"><button class="button" type="submit">Save</button></p>
+</form>
+{% endif %}
+{% endblock %}

@@ -8,6 +8,29 @@
   <h1>Applications</h1>
   <p class="lede">Every form Sarthi filled or sent for you, and the latest reply about it.</p>
 </div>
+
+{% set waiting = rows|selectattr('job_id', 'in', pending)|list %}
+{% if waiting %}
+<section class="waiting" aria-label="Waiting for your Submit">
+  <h2>Waiting for your Submit</h2>
+  {% for r in waiting %}
+  <article class="panel pending">
+    <div>
+      <p class="pending-title">{{ job_link(r.title, r.url) }} <span class="faint">at {{ r.company }}</span></p>
+      <p class="hint">Check the filled form, then submit. Nothing is sent until you do.</p>
+      <div class="row-actions">
+        <form method="post" action="/applications/{{ r.job_id }}/submit"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button" type="submit">Submit application</button></form>
+        <form method="post" action="/applications/{{ r.job_id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button quiet" type="submit">Cancel</button></form>
+      </div>
+    </div>
+    {% if pending[r.job_id].screenshot %}
+    <a class="shot" href="/applications/{{ r.job_id }}/form.png" target="_blank" rel="noopener"><img src="/applications/{{ r.job_id }}/form.png" alt="The filled form for {{ r.title }}" loading="lazy"></a>
+    {% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
 {% if rows %}
 <table class="table">
   <thead><tr><th>Role</th><th>Company</th><th>Status</th><th>Reply</th><th>Site</th><th>Updated</th></tr></thead>
@@ -25,6 +48,6 @@
   </tbody>
 </table>
 {% else %}
-<div class="empty"><h2>No applications yet</h2><p>Tap Apply on a job in Telegram; it shows up here once the form is filled.</p></div>
+<div class="empty"><h2>No applications yet</h2><p>Tap Apply on a match (here or in Telegram); it shows up here once the form is filled.</p></div>
 {% endif %}
 {% endblock %}

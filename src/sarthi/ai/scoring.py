@@ -36,6 +36,7 @@ WRONG_ROLE_BELOW = 0.4  # not the kind of work the resume shows: capped, whateve
 WRONG_ROLE_CAP = 0.45  # under the hide line (50): never shown
 THIN_COVERAGE_BELOW = 0.5  # fewer than half the must-haves shown on the resume
 THIN_COVERAGE_CAP = 0.55
+VAGUE_CAP = 0.7  # the model is unsure (a vague posting): never shown as a near-perfect match
 MAX_MUST_HAVES = 6
 
 MAX_LINES = 2
@@ -99,7 +100,7 @@ class MatchAnswers(BaseModel):
 
 MATCH_PROMPT = Prompt(
     name="match",
-    version="4",
+    version="5",
     instructions="""
 Judge how well the job fits the candidate, as a strict recruiter would. Use only what the job posting and
 the candidate's resume say; a skill counts only when the resume shows it was used.
@@ -121,7 +122,8 @@ Return JSON with these keys, each a number from 0 to 1 unless stated:
   2+ years more than they have, is 0.4 or lower)
 - "eligible": could they realistically be hired, judging by required degrees, years and must-haves
 - "overall_fit": your overall judgement
-- "confidence": how sure you are (low when the posting is vague or very short)
+- "confidence": how sure you are: 0.4 or lower when the posting is vague, very short or lists only
+  generic requirements ("knowledge of programming languages", "good communication")
 - "min_years_required": the minimum years of work experience the posting requires (a number, e.g. 5 for
   "5-8 years", 0 for "0-2 years"), or null when it states none
 - "strengths": up to 2 short sentences, most important first: what the candidate has that the job asks
@@ -181,6 +183,8 @@ def combine(answers: MatchAnswers) -> int:
         raw = min(raw, WRONG_ROLE_CAP)
     if parts["coverage"] < THIN_COVERAGE_BELOW:
         raw = min(raw, THIN_COVERAGE_CAP)
+    if answers.confidence < SURE_ENOUGH:
+        raw = min(raw, VAGUE_CAP)
     if answers.eligible < NOT_ELIGIBLE_BELOW:
         raw *= NOT_ELIGIBLE_FACTOR
     return max(0, min(100, round(raw * 100)))

@@ -23,7 +23,7 @@ from sarthi.db.chat import ChatStore, JobStatus
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
-from sarthi.jobs.forms import FormField
+from sarthi.jobs.forms import FormField, for_job
 from sarthi.profile.applicant import applicant, relocation, salary_text, visa_facts
 from sarthi.profile.master import Contact, Job, MasterResume, School, save_master
 from sarthi.profile.models import Preferences, Profile
@@ -396,7 +396,11 @@ async def test_questions_are_asked_one_by_one_and_remembered(
     assert await flow.on_text(OWNER, "  ")  # blank: asked again
     assert "Please type an answer." in api.sent[-1][1]
     assert await flow.on_text(OWNER, "I like the product\x00")
-    assert flow.answers.saved() == {"Relocate to Dubai?": "Yes", "Why us?": "I like the product"}
+    # "Why us?" is about this employer: kept for this job only, never offered to another company.
+    assert flow.answers.saved() == {
+        "Relocate to Dubai?": "Yes",
+        for_job("Why us?", job_id): "I like the product",
+    }
     assert queue.active(names.APPLY) == 1
     assert flow.waiting() is None
     assert not await flow.on_text(OWNER, "random chat")  # nothing waiting: normal conversation

@@ -16,7 +16,7 @@ from sarthi.db.answers import AnswerStore
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.jobs.countries import name as country_name
-from sarthi.jobs.forms import Applicant, FormContext
+from sarthi.jobs.forms import Applicant, FormContext, split_bank
 from sarthi.jobs.models import JobPosting, RemoteType
 from sarthi.profile.master import MasterResume, load_master, master_path
 from sarthi.profile.models import Profile
@@ -136,8 +136,10 @@ def form_context(  # noqa: PLR0913  (everything a form is filled from)
         letter_path = data_dir / Path(record.resume_file).parent / LETTER_FILE
         letter = letter_path.read_text(encoding="utf-8") if letter_path.is_file() else ""
     master = load_master(master_path(data_dir))
+    general, own = split_bank(answers.saved(), job_id)
     return FormContext(
-        applicant=applicant(profile, master, job, answers.saved()),
+        applicant=applicant(profile, master, job, general),
+        answers=own,
         resume_file=resume,
         cover_file=cover,
         cover_letter=letter,

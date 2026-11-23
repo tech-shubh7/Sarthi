@@ -26,7 +26,7 @@ from sarthi.chat.autoapply import AutoApplySettings
 from sarthi.chat.pairing import CODE_LIFETIME, OWNER_KEY, code_hash, new_code, owner_chat
 from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import TelegramApi
-from sarthi.chat.telegram.bot import OFFSET_KEY, TelegramBot
+from sarthi.chat.telegram.bot import OFFSET_KEY, PAUSED_KEY, TelegramBot
 from sarthi.chat.telegram.link import MODE_KEY, PAIR_LINK_KEY, RelayError, RelayLink, relay_link
 from sarthi.clock import Clock, from_iso, to_iso, utcnow
 from sarthi.config import Settings
@@ -49,6 +49,7 @@ from sarthi.matching.learning import learned_thresholds
 from sarthi.profile.master import load_master, master_path
 from sarthi.profile.models import Profile
 from sarthi.profile.repair import repair
+from sarthi.profile.resume import ResumeError, extract_text
 from sarthi.profile.store import load_profile, profile_path, save_profile
 from sarthi.queue import names
 from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQueue
@@ -61,6 +62,7 @@ from sarthi.sources.fulltext import Fetcher
 from sarthi.sources.ingest import Ingestor
 from sarthi.sources.schedule import SourceScheduler, plan_sources
 from sarthi.tracking.handler import Mailbox, ReplyTracker
+from sarthi.web.actions import Controls, Pending
 from sarthi.web.server import NoFreePortError, make_server
 
 log = logging.getLogger(__name__)
@@ -91,6 +93,83 @@ def next_digest_at(now: datetime, hour: int) -> datetime:
     local = now.astimezone()
     target = local.replace(hour=hour, minute=0, second=0, microsecond=0)
     return target if target > local else target + timedelta(days=1)
+
+
+class WebActions:
+    """What the dashboard may change, done the way the Telegram commands and buttons do it."""
+
+    def __init__(self, app: App) -> None:
+        """Act on ``app``'s stores, queue and bot."""
+        self._app = app
+        self._path = profile_path(app.settings.data_dir)
+
+    def profile(self) -> Profile | None:
+        """The saved profile."""
+        return load_profile(self._path)
+
+    def save_profile(self, profile: Profile) -> int:
+        """Save it and queue recent jobs to be matched again (as a Telegram setup save does)."""
+        save_profile(self._path, profile)
+        recent = self._app.bot.jobs.ids_seen_since(self._app.clock() - REMATCH_AFTER_UPGRADE)
+        for job_id in recent:
+            self._app.queue.enqueue(names.MATCH, job_id, priority=Priority.BACKGROUND)
+        return len(recent)
+
+    def resume_text(self, data: bytes) -> str:
+        """The uploaded resume's text; ``ValueError`` with the reason when it cannot be read."""
+        try:
+            return extract_text(data)
+        except ResumeError as error:
+            raise ValueError(str(error)) from None
+
+    def controls(self) -> Controls:
+        """Pause and auto-apply as they stand."""
+        auto = self._app.bot.auto
+        return Controls(
+            paused=bool(self._app.bot.chats.get_state(PAUSED_KEY)),
+            auto_line=auto.line(),
+            auto_wait_minutes=round(auto.settings.wait_s / 60),
+            auto_daily_limit=auto.settings.daily_limit,
+        )
+
+    def set_paused(self, paused: bool) -> None:
+        """/pause or /resume."""
+        self._app.bot.chats.set_state(PAUSED_KEY, "1" if paused else None)
+
+    def set_auto_line(self, line: str) -> str | None:
+        """/autoapply off or /autoapply <percent>."""
+        return self._app.bot.auto.change_line(line)
+
+    def choose(self, job_id: str, action: str) -> bool:
+        """Apply, skip or later, as the job's Telegram buttons do."""
+        if self._app.bot.jobs.get(job_id) is None:
+            return False
+        self._app.bot.choose(job_id, action)
+        return True
+
+    def pending(self) -> dict[str, Pending]:
+        """Filled forms waiting for Submit."""
+        flow = self._app.bot.applying
+        if flow is None:
+            return {}
+        return {job_id: Pending(job_id, shot) for job_id, (_, shot) in flow.waiting().items()}
+
+    def submit(self, job_id: str) -> bool:
+        """Send a waiting form, approved on the dashboard."""
+        flow = self._app.bot.applying
+        waiting = flow.waiting().get(job_id) if flow is not None else None
+        if flow is None or waiting is None:
+            return False
+        flow.submit(job_id, waiting[0])
+        return True
+
+    def cancel(self, job_id: str) -> bool:
+        """Drop a waiting form."""
+        flow = self._app.bot.applying
+        if flow is None or job_id not in flow.waiting():
+            return False
+        flow.cancel(job_id)
+        return True
 
 
 @dataclass
@@ -311,6 +390,8 @@ class App:
                 self.settings.dashboard_port,
                 host=self.settings.dashboard_host,
                 own_signals=False,
+                actions=WebActions(self),
+                data_dir=self.settings.data_dir,
             )
         except NoFreePortError as error:
             log.warning("dashboard not started: %s", error)

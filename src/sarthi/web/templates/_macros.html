@@ -10,5 +10,5 @@
 } %}
 {% macro label(key) %}{{ STATUS.get(key, (key or '')|replace('_', ' ')|capitalize) }}{% endmacro %}
 {% macro reply(kind) %}{% if kind %}<span class="pill r-{{ kind }}">{{ REPLY.get(kind, kind) }}</span>{% endif %}{% endmacro %}
-{% macro score(n) %}<span class="score {{ 'good' if n >= 60 else ('fair' if n >= 35 else 'poor') }}">{{ n }}</span>{% endmacro %}
+{% macro score(n) %}<span class="score {{ 'good' if n >= 75 else ('fair' if n >= 50 else 'poor') }}">{{ n }}</span>{% endmacro %}
 {% macro job_link(title, url) %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ title }}</a>{% endmacro %}

@@ -532,16 +532,25 @@ class TelegramBot:
         if action not in _ACTIONS:
             await self.api.answer_callback(callback_id)
             return
+        label = _LABELS[self.choose(job_id, action)]
+        await self.api.answer_callback(callback_id, label)
+        await self.api.edit_buttons(chat_id, message_id, _done(label))
+
+    def choose(self, job_id: str, action: str) -> JobStatus:
+        """Apply, skip or later on one job (its buttons here or on the dashboard); the job's status after.
+
+        The first answer counts, so a second tap changes nothing; only a job saved for later can still be
+        applied to. The user's own choice ends any auto-apply waiting for this job.
+        """
         current = self.chats.job_status(job_id)
-        if current not in ANSWERED:  # the first answer counts; a second tap changes nothing
-            current = _ACTIONS[action]
+        wanted = _ACTIONS[action]
+        if current not in ANSWERED or (current is JobStatus.LATER and wanted is JobStatus.APPLY):
+            current = wanted
             self.chats.set_job_status(job_id, current)
             self.auto.cancel(job_id)  # the user's own tap: they get the usual preview, nothing sent by itself
             if current is JobStatus.APPLY:  # documents first; the application follows them
                 self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
-        label = _LABELS[current]
-        await self.api.answer_callback(callback_id, label)
-        await self.api.edit_buttons(chat_id, message_id, _done(label))
+        return current
 
     async def _on_flow_button(self, callback_id: str, chat_id: int, message_id: int, data: str) -> bool:
         """Buttons of the setup and catch-up conversations. True when handled here."""

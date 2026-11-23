@@ -15,14 +15,20 @@
     <a href="/matches" {% if nav == 'matches' %}aria-current="page"{% endif %}><span>Matches</span><b class="badge hot">{{ ov.decisions.get('alert', 0) }}</b></a>
     <a href="/applications" {% if nav == 'applications' %}aria-current="page"{% endif %}><span>Applications</span><b class="badge">{{ ov.applications.values()|sum }}</b></a>
     <a href="/sources" {% if nav == 'sources' %}aria-current="page"{% endif %}><span>Sources</span></a>
+    <a href="/settings" {% if nav == 'settings' %}aria-current="page"{% endif %}><span>Settings</span></a>
   </nav>
-  <p class="side-note">Read-only. Apply, skip and answer in Telegram.</p>
+  {% if can_edit %}
+  <p class="side-note">Everything here works in Telegram too. A change made in one shows in the other.</p>
+  {% else %}
+  <p class="side-note">Read-only: Sarthi is not running. Start it with <code>sarthi run</code> to change things here.</p>
+  {% endif %}
 </aside>
 <div class="content">
 <main class="{% block main_class %}{% endblock %}">
+{% if done %}<p class="notice" role="status">{{ done }}</p>{% endif %}
 {% block main %}{% endblock %}
 </main>
-<footer>Sarthi {{ version }} · this page only reads your local data and never leaves this computer.</footer>
+<footer>Sarthi {{ version }} · runs on this computer only; nothing on this page is sent anywhere.</footer>
 </div>
 </div>
 </body>

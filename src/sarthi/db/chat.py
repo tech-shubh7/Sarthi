@@ -102,6 +102,13 @@ class ChatStore:
         ).fetchone()
         return int(row["n"])
 
+    def states(self, prefix: str) -> dict[str, str]:
+        """Every stored value whose key starts with ``prefix``, by the rest of the key."""
+        rows = self._conn.execute(
+            "SELECT key, value FROM app_state WHERE substr(key, 1, length(?)) = ?", (prefix, prefix)
+        )
+        return {str(row["key"])[len(prefix) :]: str(row["value"]) for row in rows}
+
     def set_auto(self, job_id: str, *, on: bool) -> None:
         """Mark (or unmark) a job for auto-apply: its filled form may be sent without a tap."""
         self.set_state(f"{_AUTO}{job_id}", "1" if on else None)

@@ -320,3 +320,39 @@ def test_bot_checks_are_only_ever_answered_by_the_user(label: str, options: tupl
     assert f in unanswered([f], ctx())
     own = replace(PERSON, saved_answers={label: options[-1]})
     assert suggest(f, ctx(own)).value == options[-1]  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    ("label", "specific"),
+    [
+        ("Why do you want to work here?", True),
+        ("Why are you interested in this role?", True),
+        ("What excites you about our company?", True),
+        ("Why Acme? Why do you want to join us?", True),
+        ("Are you legally authorized to work in India?", False),
+        ("Notice period", False),
+        ("Why are you leaving your current job?", False),
+    ],
+)
+def test_questions_about_one_employer_are_told_apart(label: str, specific: bool) -> None:
+    from sarthi.jobs.forms import company_specific  # noqa: PLC0415
+
+    assert company_specific(label) is specific
+
+
+def test_an_answer_about_one_employer_never_reaches_another_form() -> None:
+    from sarthi.jobs.forms import for_job, split_bank  # noqa: PLC0415
+
+    # Seen live: "I'll remember it for other applications" for "Why do you want to work here?" at Acme.
+    bank = {
+        "Notice period": "30 days",
+        for_job("Why do you want to work here?", "acme"): "Your FastAPI stack.",
+    }
+    why = FormField("why", "Why do you want to work here?", "textarea", True)
+    general, own = split_bank(bank, "acme")
+    assert suggest(why, ctx(replace(PERSON, saved_answers=general), answers=own)) is not None
+    general, own = split_bank(bank, "beta")
+    assert own == {}
+    assert suggest(why, ctx(replace(PERSON, saved_answers=general), answers=own)) is None
+    notice = FormField("np", "Notice period", "text", True)
+    assert suggest(notice, ctx(replace(PERSON, saved_answers=general), answers=own)) is not None

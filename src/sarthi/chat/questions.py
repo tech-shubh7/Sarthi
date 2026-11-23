@@ -17,7 +17,7 @@ from sarthi.db.answers import MAX_ANSWER_CHARS, AnswerStore
 from sarthi.db.chat import ChatStore, JobStatus
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
-from sarthi.jobs.forms import FormField, best_option, pick_options, to_date
+from sarthi.jobs.forms import FormField, best_option, company_specific, for_job, pick_options, to_date
 from sarthi.queue import names
 from sarthi.queue.tasks import Priority, TaskQueue
 
@@ -102,7 +102,12 @@ class QuestionFlow:
             markup = buttons(*rows, [("⏭ Don't apply to this job", "ans:cancel")])
         else:
             hint = f"\nAnswers: {escape(', '.join(question.options))}" if question.options else ""
-            text += f"{hint}\n\n<i>Reply with your answer. I'll remember it for other applications.</i>"
+            keep = (
+                "I'll use it for this application only."
+                if company_specific(question.label)
+                else "I'll remember it for other applications."
+            )
+            text += f"{hint}\n\n<i>Reply with your answer. {keep}</i>"
             markup = buttons([("⏭ Don't apply to this job", "ans:cancel")])
         self.chats.set_state(ASKING_KEY, json.dumps({"job": job_id, "key": question.key}))
         await self.api.send_message(chat_id, text, markup)
@@ -143,6 +148,8 @@ class QuestionFlow:
         await self._record(chat_id, job_id, question, question.options[int(choice)])
 
     async def _record(self, chat_id: int, job_id: str, question: FormField, answer: str) -> None:
-        self.answers.save(question.label, answer)
+        # An answer about this employer ("Why us?") is kept for this job only, never sent to another company.
+        key = for_job(question.label, job_id) if company_specific(question.label) else question.label
+        self.answers.save(key, answer)
         self.answers.answered(job_id, question.key)
         await self._ask_next(chat_id, job_id)
