@@ -2,13 +2,17 @@
    src/jobradar/web/static/app.css @ fdd739b, Copyright (c) ThePlator. The warm light palette, tables, panels,
    pills and forms are Sarthi's. System fonts only: nothing loads from the internet. */
 :root {
-  /* Light only, easy on the eyes: warm paper instead of pure white, ink instead of black, soft lines. */
-  --page: #f3f0e8; --dots: rgba(60, 52, 40, .05); --card: #fbf9f4; --raise: #f1ede3;
-  --ink: #2d2a25; --muted: #5e584d; --faint: #8a8376; --line: #e3ddd0;
-  --accent: #2f6b8a; --accent-soft: #e2edf2; --on-accent: #fbf9f4;
-  --good: #2f7a47; --good-soft: #e1f0e3; --fair: #8a6512; --fair-soft: #f6ecd2;
-  --poor: #6f6a60; --poor-soft: #ece8de; --bad: #a8402f; --bad-soft: #f6e2dc;
-  --shadow: 0 1px 2px rgba(60, 52, 40, .05), 0 6px 18px rgba(60, 52, 40, .05);
+  /* Sarthi brand palette (docs/BRAND.md): Sarthi blue #233A8B, amber #F4A024, green #20B486,
+     charcoal #1F2937, cream #F9F6EF. Light only, easy on the eyes. Green and amber are used as given for
+     fills and marks; small text on cream uses a darker shade of the same hue (WCAG AA, 4.5:1). */
+  --brand-blue: #233a8b; --brand-amber: #f4a024; --brand-green: #20b486;
+  --brand-charcoal: #1f2937; --brand-cream: #f9f6ef;
+  --page: var(--brand-cream); --dots: rgba(31, 41, 55, .045); --card: #fffdf8; --raise: #f3efe5;
+  --ink: var(--brand-charcoal); --muted: #4b5563; --faint: #6b7280; --line: #e7e1d4;
+  --accent: var(--brand-blue); --accent-soft: #e6eaf6; --on-accent: #ffffff;
+  --good: #137a5a; --good-soft: #dff4ec; --fair: #9a5a00; --fair-soft: #fdf0db;
+  --poor: #6b7280; --poor-soft: #eeebe3; --bad: #b4382c; --bad-soft: #fbe5e1;
+  --shadow: 0 1px 2px rgba(31, 41, 55, .05), 0 6px 18px rgba(31, 41, 55, .05);
   --body: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
   --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
   color-scheme: light;
@@ -79,6 +83,8 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
 .score.good { background: var(--good-soft); color: var(--good); }
 .score.fair { background: var(--fair-soft); color: var(--fair); }
 .score.poor { background: var(--poor-soft); color: var(--poor); }
+.score.good { box-shadow: inset 3px 0 0 var(--brand-green); }
+.score.fair { box-shadow: inset 3px 0 0 var(--brand-amber); }
 .pill { display: inline-block; font-size: 12.5px; font-weight: 650; padding: 3px 9px; border-radius: 999px; background: var(--poor-soft); color: var(--poor); white-space: nowrap; }
 .pill.ok, .pill.s-submitted, .pill.s-applied_by_user, .pill.r-interview, .pill.r-offer { background: var(--good-soft); color: var(--good); }
 .pill.warn, .pill.s-filled, .pill.s-needs_human, .pill.r-assessment { background: var(--fair-soft); color: var(--fair); }
@@ -87,7 +93,9 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
 .empty p { color: var(--muted); margin: 0; }
 
 /* ---- forms and actions ---- */
-.notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--good-soft); color: var(--good); font-weight: 600; border: 1px solid var(--line); }
+.notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--good-soft); color: var(--good); font-weight: 600; border: 1px solid var(--line); border-left: 4px solid var(--brand-green); }
+.notice.bad { border-left-color: var(--bad); }
+.badge.hot { background: var(--brand-amber); color: var(--brand-charcoal); }
 .notice.bad { background: var(--bad-soft); color: var(--bad); }
 .form { margin: 0 0 18px; }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 18px; }
