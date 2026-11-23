@@ -5,11 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Sarthi{% endblock %}</title>
 <link rel="stylesheet" href="{{ asset('app.css') }}">
+<link rel="icon" href="{{ asset('brand/favicon.ico') }}" sizes="any">
+<link rel="icon" type="image/svg+xml" href="{{ asset('brand/sarthi-s.svg') }}">
+<link rel="apple-touch-icon" href="{{ asset('brand/apple-touch-icon.png') }}">
+<meta name="theme-color" content="#233A8B">
 </head>
 <body>
 <div class="shell">
 <aside class="side">
-  <a class="brand" href="/"><span class="logo" aria-hidden="true">S</span><span>Sarthi</span></a>
+  <a class="brand" href="/"><img src="{{ asset('brand/sarthi-wordmark.svg') }}" alt="Sarthi" width="150" height="47"></a>
   <nav class="nav" aria-label="Pages">
     <a href="/" {% if nav == 'overview' %}aria-current="page"{% endif %}><span>Overview</span></a>
     <a href="/matches" {% if nav == 'matches' %}aria-current="page"{% endif %}><span>Matches</span><b class="badge hot">{{ ov.decisions.get('alert', 0) }}</b></a>

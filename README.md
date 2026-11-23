@@ -1,3 +1,13 @@
+<p align="center">
+  <img src="docs/brand/sarthi-wordmark-tagline-light.svg" alt="Sarthi, your AI job assistant" width="440">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0-233A8B" alt="Licence: AGPL-3.0"></a>
+  <img src="https://img.shields.io/badge/python-3.12-233A8B" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/status-early%20development-F4A024" alt="Status: early development">
+</p>
+
 # Sarthi (सारथि)
 
 **A job-search assistant that runs on your own computer.** Sarthi reads job boards, company career pages and
@@ -193,6 +203,7 @@ uv run pytest               # the suite; coverage must stay above 80%
 
 Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit and
 [docs/STANDARDS.md](docs/STANDARDS.md) for the coding and security rules. Please keep test data fictional.
+The logo, colours and how to use them are in [docs/BRAND.md](docs/BRAND.md).
 
 ## Acknowledgements
 
