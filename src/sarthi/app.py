@@ -22,6 +22,7 @@ from sarthi.apply.engine import SITE_NAMES, ApplyEngine
 from sarthi.apply.engine import login as login_to
 from sarthi.apply.handler import Applier
 from sarthi.apply.screen import ScreenError, login_screen
+from sarthi.chat.autoapply import AutoApplySettings
 from sarthi.chat.pairing import CODE_LIFETIME, OWNER_KEY, code_hash, new_code, owner_chat
 from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import TelegramApi
@@ -137,6 +138,7 @@ class App:
             names.FORM_CHECK: self.forms.handle,
             names.ASK_QUESTIONS: self.bot.handle_ask_questions,
             names.APPLY: self.applier.handle_apply,
+            names.AUTO_APPLY: self.bot.handle_auto_apply,
             names.SUBMIT: self.applier.handle_submit,
             names.APPLY_PREVIEW: self.bot.handle_apply_preview,
             names.APPLY_RESULT: self.bot.handle_apply_result,
@@ -475,6 +477,11 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         answers=AnswerStore(conn, clock=clock),
         applications=ApplicationStore(conn, clock=clock),
         data_dir=settings.data_dir,
+        auto_apply=AutoApplySettings(
+            line=settings.auto_apply_min_score,
+            daily_limit=settings.auto_apply_daily_limit,
+            wait_s=settings.auto_apply_wait_minutes * 60,
+        ),
         clock=clock,
     )
 
@@ -523,6 +530,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         queue,
         profile,
         data_dir=settings.data_dir,
+        chats=chats,
     )
     applier = Applier(
         ApplyEngine(
@@ -539,6 +547,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         load_profile=profile,
         data_dir=settings.data_dir,
         daily_limit=settings.apply_daily_limit,
+        chats=chats,
         clock=clock,
     )
     mailbox = (

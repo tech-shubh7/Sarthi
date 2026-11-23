@@ -424,3 +424,55 @@ async def test_the_sites_own_daily_limit_waits(
         await applier(conn, job_store, queue, tmp_path, engine, clock).handle_apply(
             TaskRecord(1, names.APPLY, job_id, {}, 1)
         )
+
+
+def auto_applier(
+    conn: sqlite3.Connection,
+    jobs: JobStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+    engine: FakeEngine,
+    clock: FakeClock,
+) -> tuple[Applier, ChatStore]:
+    chats = ChatStore(conn, clock=clock)
+    base = applier(conn, jobs, queue, tmp_path, engine, clock)
+    base.chats = chats
+    return base, chats
+
+
+async def test_auto_apply_sends_a_clean_fill_without_a_tap(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, LEVER)
+    worker, chats = auto_applier(conn, job_store, queue, tmp_path, FakeEngine(FILLED), clock)
+    chats.set_auto(job_id, on=True)
+    await worker.handle_apply(TaskRecord(1, names.APPLY, job_id, {}, 1))
+    assert queue.claim([names.APPLY_PREVIEW]) is None
+    submit = queue.claim([names.SUBMIT])
+    assert submit is not None
+    assert submit.payload == {"code": "ABC234", "auto": True}
+    assert not chats.is_auto(job_id)  # one try only
+    await worker.handle_submit(submit)
+    result = payload(queue, names.APPLY_RESULT)
+    assert result["outcome"] == "submitted"
+    assert result["detail"].startswith("🤖 Sent by auto-apply.")
+
+
+async def test_auto_apply_never_sends_on_a_job_board_or_with_questions_left(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    engine = FakeEngine(FILLED)
+    engine.walks = True  # boards are walked by the application browser
+    board = job_at(job_store, "https://in.indeed.com/viewjob?jk=7")
+    worker, chats = auto_applier(conn, job_store, queue, tmp_path, engine, clock)
+    chats.set_auto(board, on=True)
+    await worker.handle_apply(TaskRecord(1, names.APPLY, board, {}, 1))
+    assert queue.claim([names.SUBMIT]) is None
+    assert queue.claim([names.APPLY_PREVIEW]) is not None  # the usual approval
+    blank = FormField("q1", "Why us?", "textarea", True)
+    asks = job_at(job_store, "https://jobs.lever.co/beta/2", company="Beta")
+    worker.engine = FakeEngine(FillResult("lever", filled=[("Name", "Asha")], blanks=[blank], code="X"))  # type: ignore[assignment]
+    chats.set_auto(asks, on=True)
+    await worker.handle_apply(TaskRecord(2, names.APPLY, asks, {}, 1))
+    assert queue.claim([names.SUBMIT]) is None
+    assert not chats.is_auto(asks)  # the user answers, so the user approves

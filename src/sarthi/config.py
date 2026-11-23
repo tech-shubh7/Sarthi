@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     def _blank_is_unset(cls, value: object, info: object) -> object:
         """``SARTHI_X=`` (a line copied from .env.example and left empty) means "not set" for secrets."""
         name = getattr(info, "field_name", "")
-        if isinstance(value, str) and not value.strip() and (name.endswith(("_token", "_key", "_password"))):
+        optional = name.endswith(("_token", "_key", "_password")) or name == "auto_apply_min_score"
+        if isinstance(value, str) and not value.strip() and optional:
             return None
         return value
 
@@ -101,6 +102,12 @@ class Settings(BaseSettings):
     # Applying: forms are filled in a browser without a window; nothing is submitted without your approval.
     apply_headless: bool = True
     apply_daily_limit: int = Field(default=30, ge=1, le=500, description="Applications per site per day.")
+    # Auto-apply (off unless a line is set): strong matches at or above this % are applied to after a veto
+    # window, and sent without a tap only when every answer came from the profile. The user can change the
+    # line in the chat (/autoapply 85, /autoapply off).
+    auto_apply_min_score: int | None = Field(default=None, ge=75, le=100)
+    auto_apply_daily_limit: int = Field(default=10, ge=1, le=50)
+    auto_apply_wait_minutes: int = Field(default=120, ge=0, le=1440)
 
     # Reply tracking: Sarthi reads (never changes) your mailbox over IMAP.
     # Gmail: imap.gmail.com and an app password.

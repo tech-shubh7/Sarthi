@@ -14,6 +14,7 @@ from typing import Annotated, Protocol
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from sarthi.ai.client import AiClient, AiError
+from sarthi.ai.documents import at_most
 from sarthi.ai.privacy import scrub
 from sarthi.ai.prompts import Prompt
 from sarthi.jobs.models import JobPosting
@@ -28,10 +29,21 @@ NOT_ELIGIBLE_BELOW = 0.5
 NOT_ELIGIBLE_FACTOR = 0.3
 LEVEL_MISMATCH_BELOW = 0.35  # the AI says the job's level is far from the candidate's experience
 SURE_ENOUGH = 0.6  # a level judgement from a vague or empty posting is not used to hide a job
-_WEIGHTS = {"role_fit": 0.30, "skills_fit": 0.35, "seniority_fit": 0.15, "overall_fit": 0.20}
+# Rubric first, as in jobtracker and HireEx: the model checks each must-have against the resume and code turns
+# that into the score; its own "overall" is one small input. Anchored examples keep "role fit" steady.
+_WEIGHTS = {"role_fit": 0.30, "coverage": 0.35, "seniority_fit": 0.20, "overall_fit": 0.15}
+WRONG_ROLE_BELOW = 0.4  # not the kind of work the resume shows: capped, whatever the keywords
+WRONG_ROLE_CAP = 0.45  # under the hide line (50): never shown
+THIN_COVERAGE_BELOW = 0.5  # fewer than half the must-haves shown on the resume
+THIN_COVERAGE_CAP = 0.55
+MAX_MUST_HAVES = 6
+
+MAX_LINES = 2
+# Marks a reason that is something missing; chat cards show it with ✗ instead of ✓. Stored with the match.
+GAP = "✗ "
 
 Unit = Annotated[float, Field(ge=0, le=1)]
-Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=160)]
+Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=200)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +69,15 @@ class AiScorer(Protocol):
         ...
 
 
+class MustHave(BaseModel):
+    """One requirement the posting states as required, and whether the resume shows it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    need: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=80)]
+    shown: bool
+
+
 class MatchAnswers(BaseModel):
     """The JSON shape the model must return."""
 
@@ -71,28 +92,49 @@ class MatchAnswers(BaseModel):
     overall_fit: Unit
     confidence: Unit
     min_years_required: float | None = Field(default=None, ge=0, le=40)
-    reasons: list[Reason] = Field(default_factory=list, max_length=3)
+    must_haves: Annotated[list[MustHave], at_most(MAX_MUST_HAVES)] = Field(default_factory=list)
+    strengths: Annotated[list[Reason], at_most(MAX_LINES)] = Field(default_factory=list)
+    gaps: Annotated[list[Reason], at_most(MAX_LINES)] = Field(default_factory=list)
 
 
 MATCH_PROMPT = Prompt(
     name="match",
-    version="2",
+    version="4",
     instructions="""
-Judge how well the job fits the candidate. Use only what the job posting and candidate text say.
+Judge how well the job fits the candidate, as a strict recruiter would. Use only what the job posting and
+the candidate's resume say; a skill counts only when the resume shows it was used.
 
 Return JSON with these keys, each a number from 0 to 1 unless stated:
-- "eligible": could they realistically be hired, judging by required degrees, years and must-have skills
-- "role_fit": is this the kind of role they want (see preferences)
-- "skills_fit": share of the job's must-have skills the resume shows
+- "must_haves": up to 6 requirements the posting states as REQUIRED (not "nice to have"), most important
+  first, each {"need": "<short name>", "shown": true or false}; "shown" is true only when the resume shows
+  that skill or experience in use. An empty list when the posting states none.
+- "role_fit": is this the kind of work the resume shows they do AND want (target roles). Examples:
+  * the same kind of role on the same stack: 0.9-1.0
+  * a general "Software Engineer" role whose stack matches: 0.7
+  * an engineer building LLM apps, agents and RAG, applying to "ML Engineer" work that trains models
+    (feature engineering, statistics, model training, fraud or recommendation models): 0.3
+  * a Python backend developer applying to a Java/Spring, frontend-only, data-analyst or DevOps role: 0.2
+  * sales, support, teaching or other non-engineering work: 0.0
+- "skills_fit": share of the job's required skills the resume shows
 - "seniority_fit": does the job's level match their experience (a senior, "III", staff or lead role for
-  someone with 1-2 years is 0.1 or lower)
+  someone with 1-2 years is 0.1 or lower; a mid-level, "intermediate" or "II" role, or one asking for
+  2+ years more than they have, is 0.4 or lower)
+- "eligible": could they realistically be hired, judging by required degrees, years and must-haves
 - "overall_fit": your overall judgement
 - "confidence": how sure you are (low when the posting is vague or very short)
 - "min_years_required": the minimum years of work experience the posting requires (a number, e.g. 5 for
-  "5-8 years"), or null when it states none
-- "reasons": up to 3 short sentences for the candidate, most important first; name concrete matching or
-  missing skills. Do not mention location, visa or salary.
+  "5-8 years", 0 for "0-2 years"), or null when it states none
+- "strengths": up to 2 short sentences, most important first: what the candidate has that the job asks
+  for, naming the skills
+- "gaps": up to 2 short sentences: what the job requires that the resume does not show (missing skills,
+  fewer years than asked); an empty list when nothing important is missing
+Do not mention location, visa or salary. Never put a gap in "strengths".
 """,
+    shape=(
+        '{"must_haves": [{"need": "...", "shown": true}], "role_fit": 0.0, "skills_fit": 0.0, '
+        '"seniority_fit": 0.0, "eligible": 0.0, "overall_fit": 0.0, "confidence": 0.0, '
+        '"min_years_required": null, "strengths": ["..."], "gaps": ["..."]}'
+    ),
 )
 
 
@@ -115,12 +157,41 @@ def _preferences_text(profile: Profile) -> str:
     return "\n".join(p for p in parts if p) or "Nothing beyond the target roles."
 
 
+def coverage(answers: MatchAnswers) -> float:
+    """Share of the posting's must-haves the resume shows; the model's skills_fit when it listed none."""
+    if not answers.must_haves:
+        return answers.skills_fit
+    return sum(m.shown for m in answers.must_haves) / len(answers.must_haves)
+
+
 def combine(answers: MatchAnswers) -> int:
-    """The 0-100 score from the model's answers; a probably-ineligible job is scaled down hard."""
-    raw = sum(float(getattr(answers, name)) * weight for name, weight in _WEIGHTS.items())
+    """The 0-100 score from the model's answers.
+
+    Capped when the role is not the candidate's kind of work or most must-haves are missing, however well
+    the rest reads; a probably-ineligible job is scaled down hard.
+    """
+    parts = {
+        "role_fit": answers.role_fit,
+        "coverage": coverage(answers),
+        "seniority_fit": answers.seniority_fit,
+        "overall_fit": answers.overall_fit,
+    }
+    raw = sum(parts[name] * weight for name, weight in _WEIGHTS.items())
+    if answers.role_fit < WRONG_ROLE_BELOW:
+        raw = min(raw, WRONG_ROLE_CAP)
+    if parts["coverage"] < THIN_COVERAGE_BELOW:
+        raw = min(raw, THIN_COVERAGE_CAP)
     if answers.eligible < NOT_ELIGIBLE_BELOW:
         raw *= NOT_ELIGIBLE_FACTOR
     return max(0, min(100, round(raw * 100)))
+
+
+def gap_lines(answers: MatchAnswers) -> tuple[str, ...]:
+    """The model's gaps, or (when it gave none) the must-haves the resume does not show."""
+    if answers.gaps:
+        return tuple(answers.gaps)
+    missing = [m.need for m in answers.must_haves if not m.shown]
+    return (f"Not shown on your resume: {', '.join(missing[:4])}",) if missing else ()
 
 
 def blocker_for(answers: MatchAnswers, years: float | None) -> str | None:
@@ -165,4 +236,5 @@ class LlmMatchScorer:
             log.info("AI score skipped for %s: %s", job.url, error)
             return None
         blocker = blocker_for(answers, profile.preferences.years_experience)
-        return AiScore(combine(answers), answers.confidence, tuple(answers.reasons), blocker)
+        reasons = (*answers.strengths, *(GAP + gap for gap in gap_lines(answers)))
+        return AiScore(combine(answers), answers.confidence, reasons, blocker)

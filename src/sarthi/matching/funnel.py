@@ -16,7 +16,6 @@ from sarthi.matching.prefilter import prefilter
 from sarthi.matching.rules import check_rules
 from sarthi.profile.models import Profile
 
-AI_WEIGHT = 0.6
 # A job is worth a look only if its title is one of the user's roles, or it asks for several of their skills.
 # Without this, location and recency points alone lift unrelated jobs ("Java Developer") into the digest.
 MIN_SKILLS_WITHOUT_TITLE = 4  # the AI's read of the full job counts more than keyword overlap
@@ -33,6 +32,7 @@ class MatchResult:
     reasons: tuple[str, ...]
     notes: tuple[str, ...]
     ai_used: bool
+    ai_missing: bool = False  # the AI should have read this job but could not answer (busy, limit reached)
 
     @property
     def decision(self) -> Decision:
@@ -75,9 +75,11 @@ async def evaluate(
     if ai_verdict is None:
         score, confidence = free_score, None
     else:
-        score = _clamp((1 - AI_WEIGHT) * free_score + AI_WEIGHT * ai_verdict.score)
+        # The shown match is the AI's evidence-based fit. Keyword, recency and location points only decided
+        # whether the job was worth reading; adding them back would lift a wrong role into the 70s.
+        score = ai_verdict.score
         confidence = ai_verdict.confidence
-        reasons = ai_verdict.reasons + reasons
+        reasons = ai_verdict.reasons + tuple(r for r in reasons if r.startswith("Title"))
 
     outcome = decide(rules, score, thresholds, confidence)
     if outcome.decision is Decision.ALERT and free.title_share == 0:
@@ -94,4 +96,11 @@ async def evaluate(
         # Only a title to go on (the posting's text could not be read): nothing about years, level or skills
         # was checked, so it is not sure enough to interrupt; the daily digest shows it.
         outcome = Outcome(Decision.DIGEST, "no_details")
-    return MatchResult(score, outcome, reasons[:MAX_REASONS], rules.notes, ai_used=ai_verdict is not None)
+    return MatchResult(
+        score,
+        outcome,
+        reasons[:MAX_REASONS],
+        rules.notes,
+        ai_used=ai_verdict is not None,
+        ai_missing=ai_wanted and ai_verdict is None,
+    )

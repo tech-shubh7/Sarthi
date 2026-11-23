@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from html import escape
 
+from sarthi.ai.scoring import GAP
 from sarthi.db.matches import MatchRecord
 from sarthi.jobs.geo import country_name
 from sarthi.jobs.models import JobPosting, RemoteType, Salary
@@ -49,6 +50,13 @@ def salary_text(salary: Salary | None) -> str | None:
     return f"{salary.currency} {amount} / {salary.period.value}"
 
 
+def _reason_line(reason: str) -> str:
+    """✓ for what fits, ✗ for what is missing (the AI's gaps arrive already marked)."""
+    if reason.startswith(GAP):
+        return f"{GAP}{escape(_clip(reason.removeprefix(GAP), MAX_LINE_CHARS))}"
+    return f"✓ {escape(_clip(reason, MAX_LINE_CHARS))}"
+
+
 def job_card(job: JobPosting, match: MatchRecord | None) -> str:
     """The message text for one job (Telegram HTML)."""
     title = escape(_clip(job.title, MAX_TITLE_CHARS))
@@ -56,8 +64,11 @@ def job_card(job: JobPosting, match: MatchRecord | None) -> str:
     if salary := salary_text(job.salary):
         lines.append(escape(salary))
     if match is not None:
-        lines.append(f"\nMatch: <b>{match.score}%</b>")
-        lines += [f"✓ {escape(_clip(reason, MAX_LINE_CHARS))}" for reason in match.reasons]
+        if match.ai_used:
+            lines.append(f"\nMatch: <b>{match.score}%</b>")
+        else:  # only the title and keywords were compared: not a fit percentage
+            lines.append(f"\nKeyword match: <b>{match.score}%</b> (not read by the AI yet)")
+        lines += [_reason_line(reason) for reason in match.reasons]
         lines += [f"• {escape(_clip(note, MAX_LINE_CHARS))}" for note in match.notes]
     url = escape(str(job.apply_url or job.url), quote=True)
     lines.append(f'\n<a href="{url}">Open the job</a>')

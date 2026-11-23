@@ -307,7 +307,7 @@ def guarded(step: Step, *, one_click: bool) -> Step:
     if step.state not in ("go", "ready") or button is None:
         return step
     if NEVER.search(button.text):
-        return Step("stuck", None, f"refused to press {button.text!r}")
+        return Step("stuck", None, f"the only way on was {button.text!r}, which Sarthi never presses")
     if step.state == "go" and (FINAL.search(button.text) or (one_click and APPLY.search(button.text))):
         return Step("ready", button, "that press would send the application")
     return step
@@ -339,7 +339,7 @@ class ApplicationBrowser:
         self._decide = decide
         self._max_steps = max_steps
 
-    async def walk(self, page: Page, start: str, ctx: FormContext, *, one_click: bool = False) -> Walked:  # noqa: PLR0912  (each way a walk can stop)
+    async def walk(self, page: Page, start: str, ctx: FormContext, *, one_click: bool = False) -> Walked:  # noqa: PLR0912, PLR0915  (each way a walk can stop)
         """From ``page`` (already at ``start``) to the filled last page of the form, or to why not.
 
         ``one_click``: a job board with the user's login, where "Apply" may send the application at once.
@@ -396,6 +396,13 @@ class ApplicationBrowser:
             if step.state == "closed":
                 raise FillError(f"the job is closed or this is not an application ({step.why or 'no form'})")
             if step.state != "go" or step.button is None:
+                if one_click and not fields:
+                    # A board shows a guest no usable Apply (Shine offers only "Upload your resume"): most
+                    # often the user is signed out there.
+                    raise LoginWallError(
+                        f"{urlparse(page.url).hostname or 'the site'} showed no Apply button Sarthi can use; "
+                        "you are probably signed out there"
+                    )
                 if fields and not buttons:
                     raise FillError("the form has no button to go on")
                 raise FillError(step.why or "nothing on the page leads to the application form")

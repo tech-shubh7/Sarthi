@@ -269,3 +269,27 @@ def test_values_found_inside_sentences() -> None:
     assert parse_remote_text("hmm") is None
     assert first_country("I moved to Dubai") == "AE"
     assert first_country("nowhere") is None
+
+
+def test_profile_links_behind_clickable_words_are_kept() -> None:
+    # A resume header "Pune, India | GitHub | LinkedIn" where the words are links: the addresses are only in
+    # the PDF link annotations, so the tailored resume used to lose them.
+    typst = pytest.importorskip("typst")
+    source = (
+        b'Aarav Mehta\n\nPune, India | #link("https://github.com/aarav-example")[GitHub] | '
+        b'#link("https://www.linkedin.com/in/aarav-example")[LinkedIn]\n\nBackend developer.'
+    )
+    text = extract_text(typst.compile(source))
+    assert "https://github.com/aarav-example" in text
+    assert "https://www.linkedin.com/in/aarav-example" in text
+    assert text.count("https://github.com/aarav-example") == 1
+
+
+def test_the_header_place_and_links_reach_the_contact_line() -> None:
+    from sarthi.profile.master import contact_from  # noqa: PLC0415
+
+    contact = contact_from(
+        "Aarav Mehta\nPune, India | aarav@example.com | +91 90000 00000\nhttps://github.com/aarav"
+    )
+    assert (contact.location, contact.links) == ("Pune, India", ("https://github.com/aarav",))
+    assert contact_from("Ravi Kumar\nravi@example.com\nSkills: Java, Python").location == ""

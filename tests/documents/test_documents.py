@@ -352,13 +352,26 @@ def test_reviewer_claims_remove_only_their_paragraphs() -> None:
 def test_plain_letter_reads_like_a_person() -> None:
     text = " ".join(plain_letter(master(), "AI Engineer", "Gamma"))
     assert text.startswith(
-        "I'd like to apply for the AI Engineer role at Gamma. I'm currently a Software Engineer at Acme Labs, where I "
+        "I'd like to apply for the AI Engineer role at Gamma. I'm currently a Software Engineer at Acme Labs."
     )
+    assert "At Acme Labs I " in text
     assert "Recently:" not in text
     assert "My main skills are" not in text
     assert all(
         not fact_problems(p, RESUME_TEXT, master().all_skills())
         for p in plain_letter(master(), "AI Engineer", "Gamma")
+    )
+
+
+def test_plain_letter_shows_the_resume_lines_the_job_asks_about() -> None:
+    # The fallback once read "My main skills are Python, TypeScript...": now the lines that fit this job.
+    job = "We need Redis caching experience and Python. You will tune slow APIs."
+    text = " ".join(plain_letter(master(), "Backend Engineer", "Gamma", job))
+    assert "Your posting asks for" in text
+    assert "Redis" in text.split("Your posting asks for", 1)[1]
+    assert all(
+        not fact_problems(p, RESUME_TEXT, master().all_skills())
+        for p in plain_letter(master(), "X", "G", job)
     )
 
 
@@ -559,9 +572,9 @@ def test_plain_letter_says_the_role_plainly_and_names_the_jobs_skills() -> None:
         )
     )
     assert text.startswith("I'd like to apply for the Full-Stack Developer role at Gamma.")
-    assert "where I built a chatbot used by 1,000 staff." in text
+    assert "At Acme Labs I built a chatbot used by 1,000 staff." in text
     assert "Rebuilt it" not in text  # a sentence with no subject after "where I ..."
-    named = text.split("day-to-day work is in ")[1].split(". ")[0].replace(" and ", ", ").split(", ")
+    named = text.split("Your posting asks for ")[1].split(", which")[0].replace(" and ", ", ").split(", ")
     assert named[:2] == ["Node.js", "Docker"], named  # the job's skills first (Express.js is not hers)
 
 
@@ -581,3 +594,17 @@ def test_short_role(role: str, short: str) -> None:
     from sarthi.documents.build import _short_role  # noqa: PLC0415
 
     assert _short_role(role) == short
+
+
+def test_a_long_own_summary_is_cut_to_two_whole_sentences() -> None:
+    from sarthi.documents.build import short_summary  # noqa: PLC0415
+
+    long = (
+        "Backend engineer building AI features and Node.js services. Built a chatbot used by 1,000 staff and a "
+        "policy assistant used by 100 companies, cutting cost per question by 92 percent with no drop in quality. "
+        "Also builds the Node.js side of a fintech product."
+    )
+    short = short_summary(long)
+    assert short.endswith(".") and "fintech" not in short
+    assert len(short.split()) <= 50
+    assert short_summary("One line only.") == "One line only."

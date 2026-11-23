@@ -24,7 +24,14 @@ from sarthi.clock import Clock, utcnow
 from sarthi.db.documents import DocumentRecord, DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
-from sarthi.documents.build import Letter, cover_letter, plain_letter, tailored_resume, without_claims
+from sarthi.documents.build import (
+    Letter,
+    cover_letter,
+    plain_letter,
+    short_summary,
+    tailored_resume,
+    without_claims,
+)
 from sarthi.documents.keywords import keyword_report
 from sarthi.documents.render import (
     RenderError,
@@ -121,7 +128,14 @@ class DocumentMaker:
         path = master_path(self.data_dir)
         saved = load_master(path)
         if saved is not None and saved.source_hash == resume_hash(text):
-            return saved
+            found = contact_from(text)  # read again: newer versions find more (place, links behind PDF links)
+            contact = saved.contact.model_copy(
+                update={
+                    "location": saved.contact.location or found.location,
+                    "links": saved.contact.links or found.links,
+                }
+            )
+            return saved if contact == saved.contact else saved.model_copy(update={"contact": contact})
         if not self.ai.available:
             raise PermanentError(NO_AI)
         draft = await read_master(self.ai, text)
@@ -140,12 +154,24 @@ class DocumentMaker:
         profile = self._load_profile()
         if profile is None:
             raise DeferError(WAIT_FOR_PROFILE_S)
+        if task.payload.get("apply") and self._made_already(task.key, profile):
+            self._ready(task, {"error": None, "reused": True})  # sent before: not made or sent again
+            return
         try:
             report = await self.make(task.key, profile, tries=Tries(task.attempts))
         except PermanentError as error:
             self._ready(task, {"error": str(error)})
             return
         self._ready(task, {"error": None, **report})
+
+    def _made_already(self, job_id: str, profile: Profile) -> bool:
+        """True when this job's documents exist for the current profile (e.g. from "Tailored resume")."""
+        record = self.documents.get(job_id)
+        return (
+            record is not None
+            and record.profile_version == profile.version
+            and all((self.data_dir / path).is_file() for path in (record.resume_file, record.letter_file))
+        )
 
     def _ready(self, task: TaskRecord, result: dict[str, Any]) -> None:
         self.queue.enqueue(
@@ -239,11 +265,12 @@ class DocumentMaker:
     async def _checked_summary(self, master: MasterResume, built: Any, tries: Tries) -> Any:
         """The tailored summary, or the master's when the reviewer finds a claim the resume lacks."""
         summary = built.resume.summary
-        if summary == master.summary or not summary:
+        own = short_summary(master.summary)
+        if summary in (master.summary, own) or not summary:
             return built
         problems = await self._claims(master, summary, tries)
         if problems:
-            built.resume = built.resume.model_copy(update={"summary": master.summary})
+            built.resume = built.resume.model_copy(update={"summary": own})
             built.reverted += [f"summary: {p}" for p in problems[:3]]
         return built
 

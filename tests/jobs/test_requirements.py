@@ -7,6 +7,11 @@ from sarthi.jobs.requirements import min_years_required
     ("text", "years"),
     [
         ("5+ years of experience in Python", 5),
+        # a range from zero welcomes freshers: no minimum (seen live: "0-2" was read as "2+")
+        ("With 0-2 years of backend experience and knowledge of Node.js or Python", None),
+        ("0-2 years of backend development experience.", None),
+        ("Experience: 0 to 3 years", None),
+        ("With 2-4 years of backend experience", 2),
         ("3-5 years experience", 3),
         ("3–5 years of experience", 3),
         ("Minimum 2 yrs of backend development experience", 2),

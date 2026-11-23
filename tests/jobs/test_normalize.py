@@ -42,6 +42,32 @@ def test_remote_worldwide_stays_open_to_everyone() -> None:
     assert job.location_text == "Remote (worldwide)"
 
 
+def test_a_country_in_the_title_beats_the_boards_worldwide_default() -> None:
+    # Seen live on weworkremotely: region "Anywhere in the World", title limited to Bulgaria.
+    job = complete(
+        make(
+            title="Software Engineer (Remote Eligible in Bulgaria)",
+            location_text="Anywhere in the World",
+            remote_type=RemoteType.REMOTE,
+        )
+    )
+    assert job.remote_countries == {"BG"}
+    assert not job.is_remote_anywhere
+    assert job.location_text == "Bulgaria"
+
+
+def test_a_title_part_without_a_place_word_names_no_country() -> None:
+    job = complete(
+        make(
+            title="Backend Engineer (Java)",
+            location_text="Anywhere in the World",
+            remote_type=RemoteType.REMOTE,
+        )
+    )
+    assert job.is_remote_anywhere
+    assert job.location_text == "Anywhere in the World"
+
+
 def test_source_values_always_win() -> None:
     job = make(
         location_text="London",

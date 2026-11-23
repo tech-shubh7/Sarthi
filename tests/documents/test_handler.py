@@ -244,6 +244,38 @@ async def test_ready_documents_are_sent_then_the_application_is_queued(
     assert queue.active(names.FORM_CHECK) == 1
 
 
+async def test_apply_after_tailored_resume_reuses_the_documents_without_sending_them_twice(
+    bot: TelegramBot,
+    chats: ChatStore,
+    clock: FakeClock,
+    job_store: JobStore,
+    documents: DocumentStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+) -> None:
+    # Seen live: "Tailored resume", then "Apply", sent the same two PDFs again.
+    pair(bot, chats, clock)
+    job_id = saved(job_store)
+    ai = FakeAi(good_answers())
+    make = maker(job_store, documents, queue, tmp_path, ai, profile())
+    await make.make(job_id, profile())
+    asked = len(ai.asked)
+    await make.handle(TaskRecord(2, names.DOCUMENTS, job_id, {"apply": True}, 1))
+    assert len(ai.asked) == asked  # nothing made again
+    await bot.handle_documents_ready(ready(queue))
+    api: Any = bot.api
+    assert api.files == []
+    assert "tailored resume and cover letter I sent" in api.texts()[-1]
+    assert queue.active(names.FORM_CHECK) == 1
+    # A changed profile makes them again; so do files that are gone.
+    assert make._made_already(job_id, profile())
+    assert not make._made_already(job_id, profile(RESUME_TEXT + "\nAwards\n- Prize"))
+    record = documents.get(job_id)
+    assert record is not None
+    (tmp_path / record.letter_file).unlink()
+    assert not make._made_already(job_id, profile())
+
+
 async def test_errors_and_missing_files_are_explained(
     bot: TelegramBot,
     chats: ChatStore,

@@ -12,6 +12,7 @@ import io
 import re
 import zipfile
 from enum import StrEnum
+from typing import Any
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -58,12 +59,35 @@ def _tidy(text: str) -> str:
     return _BLANK_LINES.sub("\n\n", "\n".join(lines)).strip()[:MAX_TEXT_CHARS]
 
 
+MAX_LINKS = 6
+
+
+def _link_targets(pages: Any) -> list[str]:
+    """The web addresses behind a PDF's clickable links (profiles, portfolio), in page order."""
+    found: list[str] = []
+    for page in pages:
+        for ref in page.get("/Annots") or []:
+            try:
+                annotation: Any = ref.get_object()
+                action: Any = annotation.get("/A")
+                uri = str(action.get_object().get("/URI") or "").strip() if action is not None else ""
+            except (AttributeError, KeyError, TypeError, ValueError, PdfReadError):
+                continue
+            if uri.lower().startswith(("http://", "https://")) and uri not in found:
+                found.append(uri)
+    return found[:MAX_LINKS]
+
+
 def _pdf_text(data: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(data))
         if reader.is_encrypted:
             raise ResumeError("This PDF is password-protected. Please send an unlocked copy.")
-        return "\n".join(page.extract_text() or "" for page in reader.pages[:MAX_PDF_PAGES])
+        pages = reader.pages[:MAX_PDF_PAGES]
+        text = "\n".join(page.extract_text() or "" for page in pages)
+        hidden = [link for link in _link_targets(pages) if link not in text]
+        # "LinkedIn | GitHub" printed as clickable words: the addresses are only in the links, not the text.
+        return text + ("\n" + " ".join(hidden) if hidden else "")
     except (PdfReadError, ValueError, KeyError, TypeError) as error:
         if isinstance(error, ResumeError):
             raise

@@ -9,6 +9,7 @@ FILL_TEXT = "fill_text"  # read the full description from a job's own page, then
 ALERT = "alert"  # send one strong match to the user now
 DIGEST = "digest"  # send the day's best unseen matches
 APPLY = "apply"  # the user tapped Apply
+AUTO_APPLY = "auto_apply"  # an auto-apply whose veto window ended: start applying unless it was cancelled
 CATCHUP = "catchup"  # search every source over a past window (catch-up mode)
 CATCHUP_REPORT = "catchup_report"  # send the catch-up results as one batch
 DOCUMENTS = "documents"  # make the tailored resume and cover letter for one job

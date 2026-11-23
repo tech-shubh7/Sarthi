@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -45,6 +46,7 @@ MAX_ROLES = 8
 MIN_LOOK_BACK = timedelta(days=2)  # the snapshot is refreshed about daily; reposts are merged later
 INTERRUPT_WAIT_S = 10.0  # how long a stopped scan gets to end
 QUERY_TIMEOUT_S = 300.0
+EXTENSIONS_ENV = "SARTHI_DUCKDB_EXTENSIONS"
 COLUMNS = (
     "url", "title", "company", "ats_type", "ats_id", "location", "country_iso", "is_remote", "workplace_type",
     "salary_min", "salary_max", "salary_currency", "salary_period", "employment_type", "apply_url",
@@ -136,7 +138,10 @@ class CatalogSource:
 
 async def _run(sql: str, params: list[Any]) -> list[dict[str, Any]]:
     """Run the query in a worker thread with capped memory; interrupted when it takes too long."""
-    con = duckdb.connect()
+    # The Docker image ships DuckDB's httpfs extension here: its home folder is a no-exec tmpfs, where a
+    # downloaded extension could not be loaded.
+    folder = os.environ.get(EXTENSIONS_ENV)
+    con = duckdb.connect(config={"extension_directory": folder} if folder else {})
     try:
         con.execute(
             f"SET memory_limit='{MEMORY_LIMIT}'; SET threads={THREADS}; SET preserve_insertion_order=false;"

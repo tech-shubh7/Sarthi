@@ -58,7 +58,7 @@ def test_card_shows_the_match_and_escapes_job_site_text() -> None:
         url='https://example.com/jobs/1?a=1&b="x"',
     )
     match = MatchRecord(
-        "j", "v", 78, "alert", "strong", None, ("Mentions python <script>",), ("Visa note",), False
+        "j", "v", 78, "alert", "strong", None, ("Mentions python <script>",), ("Visa note",), True
     )
     card = job_card(job, match)
     assert card.startswith(
@@ -76,6 +76,23 @@ def test_card_without_match_or_location() -> None:
     card = job_card(make_job(country_codes=[], remote_type="unknown", location_text=""), None)
     assert "Location not stated" in card
     assert "Match" not in card
+
+
+def test_a_gap_is_shown_as_missing_not_as_a_match() -> None:
+    # Seen live: "LangGraph ... missing from the resume" was shown with a check mark.
+    match = MatchRecord("j", "v", 70, "alert", "strong", None, ("Python fits", "✗ No <b>Kafka</b>"), (), True)
+    card = job_card(make_job(), match)
+    assert "✓ Python fits" in card
+    assert "✗ No &lt;b&gt;Kafka&lt;/b&gt;" in card
+    assert "✓ ✗" not in card
+
+
+def test_a_score_the_ai_never_checked_is_not_called_a_match() -> None:
+    # Seen live: keyword-only scores of 100% while the AI's daily limit was spent.
+    match = MatchRecord("j", "v", 100, "digest", "fair", None, ("Mentions python",), (), False)
+    card = job_card(make_job(), match)
+    assert "Keyword match: <b>100%</b> (not read by the AI yet)" in card
+    assert "\nMatch:" not in card
 
 
 def test_display_company() -> None:

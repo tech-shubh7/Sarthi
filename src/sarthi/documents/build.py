@@ -93,6 +93,7 @@ def tailored_resume(
     strict: bool = False,
 ) -> Built:
     """The resume for one job. Facts from ``master``; wording and order from ``answer`` where it is true."""
+    master = master.model_copy(update={"summary": short_summary(master.summary)})
     built = Built(master)
     if answer is None:
         return built
@@ -116,6 +117,24 @@ def tailored_resume(
         }
     )
     return built
+
+
+SUMMARY_WORDS = 50
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
+
+
+def short_summary(text: str, max_words: int = SUMMARY_WORDS) -> str:
+    """The person's own summary cut to whole sentences, at most two and about ``max_words`` words.
+
+    A recruiter reads the summary in seconds; a five-line one that repeats the first bullet is skipped.
+    """
+    sentences = [s.strip() for s in _SENTENCE_END.split(text.strip()) if s.strip()]
+    kept: list[str] = []
+    for sentence in sentences[:2]:
+        if kept and len(" ".join([*kept, sentence]).split()) > max_words:
+            break
+        kept.append(sentence)
+    return " ".join(kept)
 
 
 def _skills_first(master: MasterResume, first: list[str]) -> tuple[SkillGroup, ...]:
@@ -180,22 +199,39 @@ def _mentioned(skill: str, text: str) -> bool:
     return bool(re.search(rf"(?<![\w.+#]){re.escape(skill)}(?![\w+#])", text, re.IGNORECASE))
 
 
+def _relevant_lines(master: MasterResume, job_text: str, n: int = 2) -> list[tuple[str, str]]:
+    """The ``n`` resume bullets (with their employer) that name most of what the job asks for."""
+    asked = [skill for skill in master.all_skills() if _mentioned(skill, job_text)]
+    words = set(re.findall(r"[a-z][a-z+#.]{4,}", job_text.lower()))
+    scored = []
+    for rank, job in enumerate(master.experience):
+        for order, bullet in enumerate(job.bullets):
+            hits = sum(_mentioned(skill, bullet) for skill in asked)
+            overlap = len(words & set(re.findall(r"[a-z][a-z+#.]{4,}", bullet.lower())))
+            scored.append((-(hits * 3 + overlap), rank, order, job.company, bullet))
+    scored.sort()
+    return [(company, bullet) for *_, company, bullet in scored[:n]]
+
+
 def plain_letter(master: MasterResume, role: str, company: str, job_text: str = "") -> list[str]:
     """A short, true letter built from the resume alone (used only when no AI letter passes the checks).
 
-    The skills named are the ones ``job_text`` asks for first, so a React job does not read "Python and SQL".
+    It names the skills the job asks for that the person has, then the two resume lines that show them best,
+    each said once and in the person's own words.
     """
     latest = master.experience[0] if master.experience else None
     opening = f"I'd like to apply for the {_short_role(role)} role at {company}."
     if latest:
-        opening += f" I'm currently a {latest.title} at {latest.company}"
-        opening += f", where I {_as_clause(_first_sentence(latest.bullets[0]))}." if latest.bullets else "."
+        opening += f" I'm currently a {latest.title} at {latest.company}."
     every = master.all_skills()
-    skills = sorted(every, key=lambda s: (not _mentioned(s, job_text), every.index(s)))[:4]
-    middle = f"Most of my day-to-day work is in {_and_list(skills)}." if skills else ""
-    if master.projects and master.projects[0].description:
+    asked = [s for s in every if _mentioned(s, job_text)][:4]
+    middle = f"Your posting asks for {_and_list(asked)}, which is the work I do." if len(asked) >= 2 else ""  # noqa: PLR2004
+    for i, (employer, bullet) in enumerate(_relevant_lines(master, job_text)):
+        lead = f"At {employer} I" if i == 0 else "I also"
+        middle += f" {lead} {_as_clause(_first_sentence(bullet))}."
+    if not middle and master.projects and master.projects[0].description:
         project = master.projects[0]
-        middle += f" Outside work I built {project.name}, which {_lower_rest(project.description)}."
+        middle = f"Outside work I built {project.name}, which {_lower_rest(project.description)}."
     closing = f"I'd be glad to talk about how I could help the team at {company}. Thank you for your time."
     return [p.strip() for p in (opening, middle, closing) if p.strip()]
 

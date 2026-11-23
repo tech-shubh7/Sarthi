@@ -33,8 +33,8 @@ class Decision(StrEnum):
 class Thresholds:
     """Score cut-offs (0-100)."""
 
-    hide_below: int = 35
-    alert_at: int = 60
+    hide_below: int = 50
+    alert_at: int = 75  # the AI's evidence score: a strong fit, not "mentions a few of your skills"
     ai_from: int = 50  # only jobs this close to an alert are worth an AI read (saves a laptop CPU hours)
     min_ai_confidence: float = 0.6
 

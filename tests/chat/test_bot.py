@@ -5,7 +5,7 @@ import pytest
 
 from sarthi.chat.pairing import new_code
 from sarthi.chat.telegram.api import Markup
-from sarthi.chat.telegram.bot import APPLY_TASK, HELP, PAUSED_KEY, TelegramBot
+from sarthi.chat.telegram.bot import ALERTS_PER_HOUR, APPLY_TASK, HELP, PAUSED_KEY, TelegramBot
 from sarthi.db.chat import ChatStore, JobStatus
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchRecord, MatchStore
@@ -90,7 +90,7 @@ def saved_job(bot: TelegramBot, score: int = 80, decision: str = "alert", n: int
         make_job(url=f"https://boards.greenhouse.io/razorpay/jobs/{n}", title=f"Backend Engineer {n}")
     ).job_id
     bot.matches.save(
-        MatchRecord(job_id, "v", score, decision, "strong", None, ("Mentions python",), (), False)
+        MatchRecord(job_id, "v", score, decision, "strong", None, ("Mentions python",), (), True)
     )
     return job_id
 
@@ -172,6 +172,23 @@ async def test_alert_sends_a_card_once(
     ]
     assert chats.job_status(job_id) is JobStatus.ALERTED
     assert chats.message_id(job_id) == 1001
+
+
+async def test_a_burst_of_strong_matches_buzzes_a_few_times_then_waits(
+    bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock
+) -> None:
+    # Seen live: saving a profile matched the backlog and sent 63 alerts in a few minutes.
+    pair(bot, chats, clock)
+    jobs = [saved_job(bot, n=n) for n in range(ALERTS_PER_HOUR + 3)]
+    for i, job_id in enumerate(jobs):
+        await bot.handle_alert(TaskRecord(i, "alert", job_id, {}, 1))
+    cards = [t for t in api.texts() if "Match:" in t]
+    assert len(cards) == ALERTS_PER_HOUR
+    assert sum("/today" in t and "waiting" in t for t in api.texts()) == 1  # one note, not one per match
+    assert chats.job_status(jobs[-1]) is None  # not sent: /today and the digest still have it
+    clock.advance(3601)
+    await bot.handle_alert(TaskRecord(99, "alert", jobs[-1], {}, 1))
+    assert chats.job_status(jobs[-1]) is JobStatus.ALERTED  # a new hour, a new alert
 
 
 async def test_paused_alerts_wait_for_today(
@@ -298,6 +315,7 @@ async def test_poll_sets_the_slash_command_menu(bot: TelegramBot, api: FakeApi) 
         "resume",
         "cancel",
         "login",
+        "autoapply",
         "help",
     ]
     assert all(

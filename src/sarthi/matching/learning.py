@@ -20,7 +20,7 @@ RECENT = 20
 MIN_CHOICES = 8
 MAX_SHIFT = 10
 MAX_EASE = 5
-ALERT_BOUNDS = (55, 80)
+ALERT_BOUNDS = (70, 88)
 AI_BELOW_ALERT = 10  # the AI reads jobs from this many points under the alert line
 AI_FROM_FLOOR = 40
 

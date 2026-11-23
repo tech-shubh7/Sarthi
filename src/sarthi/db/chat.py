@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 
 from sarthi.clock import Clock, to_iso, utcnow
@@ -20,6 +21,8 @@ class JobStatus(StrEnum):
     LATER = "later"
     APPLIED = "applied"
 
+
+_AUTO = "auto_apply.job."
 
 ANSWERED = frozenset({JobStatus.APPLY, JobStatus.SKIPPED, JobStatus.LATER, JobStatus.APPLIED})
 
@@ -90,6 +93,22 @@ class ChatStore:
             {"version": profile_version, "limit": limit},
         )
         return [DigestItem(row["job_id"], row["score"]) for row in rows]
+
+    def alerted_since(self, since: datetime) -> int:
+        """How many instant alerts went out since ``since`` (and still wait for the user's answer)."""
+        row = self._conn.execute(
+            "SELECT count(*) AS n FROM job_user WHERE status = 'alerted' AND updated_at >= ?",
+            (to_iso(since),),
+        ).fetchone()
+        return int(row["n"])
+
+    def set_auto(self, job_id: str, *, on: bool) -> None:
+        """Mark (or unmark) a job for auto-apply: its filled form may be sent without a tap."""
+        self.set_state(f"{_AUTO}{job_id}", "1" if on else None)
+
+    def is_auto(self, job_id: str) -> bool:
+        """True while a job is marked for auto-apply."""
+        return self.get_state(f"{_AUTO}{job_id}") == "1"
 
     def status_counts(self) -> dict[str, int]:
         """How many jobs are in each user status."""

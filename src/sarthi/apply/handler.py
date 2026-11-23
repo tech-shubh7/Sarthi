@@ -23,6 +23,7 @@ from sarthi.apply.linkedin import LimitReachedError, LoginNeededError
 from sarthi.clock import Clock, utcnow
 from sarthi.db.answers import AnswerStore
 from sarthi.db.applications import ApplicationStatus, ApplicationStore
+from sarthi.db.chat import ChatStore
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
@@ -38,7 +39,7 @@ WAIT_FOR_PROFILE_S = 3600
 # Naukri are filled with the login the user saves once with `sarthi login`.
 LOGIN_BOARDS = (
     "indeed.", "glassdoor.", "ziprecruiter.", "seek.com", "bayt.com", "foundit.", "monster.", "instahyre.",
-    "wellfound.com", "hirist.",
+    "wellfound.com", "hirist.", "shine.com",
 )  # fmt: skip
 LIMIT_WAIT_S = 6 * 3600
 DAY = timedelta(days=1)
@@ -86,9 +87,13 @@ class Applier:
         load_profile: Callable[[], Profile | None],
         data_dir: Path,
         daily_limit: int = 30,
+        chats: ChatStore | None = None,
         clock: Clock = utcnow,
     ) -> None:
-        """Fill forms with ``engine``; record outcomes in ``applications``; tell the chat via ``queue``."""
+        """Fill forms with ``engine``; record outcomes in ``applications``; tell the chat via ``queue``.
+
+        ``chats`` says which jobs are marked for auto-apply.
+        """
         self.engine = engine
         self.jobs = jobs
         self.documents = documents
@@ -98,6 +103,7 @@ class Applier:
         self._load_profile = load_profile
         self.data_dir = data_dir
         self.daily_limit = daily_limit
+        self.chats = chats
         self._clock = clock
 
     def _result(self, job_id: str, outcome: str, detail: str, **extra: Any) -> None:
@@ -166,6 +172,9 @@ class Applier:
         except FillError as error:
             self._hand_over(task.key, url, f"The form could not be filled: {error}")
             return
+        auto = self.chats is not None and self.chats.is_auto(task.key)
+        if auto and self.chats is not None:
+            self.chats.set_auto(task.key, on=False)  # one try: whatever happens next, the user decides
         if result.blanks:
             self.answers.set_pending(
                 task.key, result.blanks
@@ -183,6 +192,13 @@ class Applier:
             self._hand_over(task.key, url, f"Some required fields could not be entered: {fields}")
             return
         self.applications.record(task.key, ApplicationStatus.FILLED, site=site_of(url))
+        if auto and not board:
+            # Every answer came from the profile, a saved answer or the posting (questions only the user can
+            # answer stop above), and this is not a job board: sent without a tap, as the user chose.
+            self.queue.enqueue(
+                names.SUBMIT, task.key, {"code": result.code, "auto": True}, priority=Priority.ALERT
+            )
+            return
         self.queue.enqueue(
             names.APPLY_PREVIEW,
             task.key,
@@ -213,5 +229,8 @@ class Applier:
             "submitted": ApplicationStatus.SUBMITTED,
             "needs_human": ApplicationStatus.NEEDS_HUMAN,
         }.get(outcome.outcome, ApplicationStatus.FAILED)
-        self.applications.record(task.key, status, site=site_of(url), detail=outcome.detail, screenshot=shot)
-        self._result(task.key, outcome.outcome, outcome.detail, url=url, screenshot=shot)
+        detail = outcome.detail
+        if task.payload.get("auto") and outcome.outcome == "submitted":
+            detail = f"🤖 Sent by auto-apply. {detail}"
+        self.applications.record(task.key, status, site=site_of(url), detail=detail, screenshot=shot)
+        self._result(task.key, outcome.outcome, detail, url=url, screenshot=shot)

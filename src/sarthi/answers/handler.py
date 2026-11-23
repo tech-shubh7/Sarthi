@@ -16,6 +16,7 @@ import httpx
 
 from sarthi.answers.questions import posting_for, read_questions
 from sarthi.db.answers import AnswerStore
+from sarthi.db.chat import ChatStore
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
@@ -43,6 +44,7 @@ class FormChecker:
         *,
         data_dir: Path,
         transport: httpx.AsyncBaseTransport | None = None,
+        chats: ChatStore | None = None,
     ) -> None:
         """Read jobs, documents and the answer bank; queue the next step on ``queue``."""
         self.jobs = jobs
@@ -52,6 +54,7 @@ class FormChecker:
         self._load_profile = load_profile
         self.data_dir = data_dir
         self._transport = transport
+        self.chats = chats
 
     def context(self, job_id: str, profile: Profile) -> FormContext | None:
         """What this job's form may be filled with, or None when the job is gone."""
@@ -77,6 +80,8 @@ class FormChecker:
         fields = await read_questions(posting, self._transport) if posting else None
         missing = unanswered(fields, ctx) if fields else []
         if missing:
+            if self.chats is not None:
+                self.chats.set_auto(task.key, on=False)  # the user answers, so the user also approves
             self.answers.set_pending(task.key, missing)
             self.queue.enqueue(names.ASK_QUESTIONS, task.key, priority=Priority.ALERT)
             log.info("%s: %d question(s) for the user before applying", job.company, len(missing))

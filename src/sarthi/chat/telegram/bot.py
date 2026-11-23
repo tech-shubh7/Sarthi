@@ -9,12 +9,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from html import escape
 from pathlib import Path
 from typing import Any
 
 from sarthi.ai.intent import Kind
 from sarthi.chat.applying import ApplyingFlow
+from sarthi.chat.autoapply import AutoApply, AutoApplySettings
 from sarthi.chat.cards import display_company, job_card
 from sarthi.chat.catchup import ASK as ASK_CATCHUP
 from sarthi.chat.catchup import CatchUp, window_buttons
@@ -27,7 +29,7 @@ from sarthi.chat.source_notice import source_notice_text
 from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
 from sarthi.chat.tracking import followup_text, reply_text
 from sarthi.chat.understand import Route, route, route_by_rules
-from sarthi.clock import Clock, utcnow
+from sarthi.clock import Clock, to_iso, utcnow
 from sarthi.db.answers import AnswerStore
 from sarthi.db.applications import ApplicationStore
 from sarthi.db.chat import ANSWERED, ChatStore, JobStatus
@@ -45,6 +47,15 @@ PAUSED_KEY = "alerts.paused"
 OFFSET_KEY = "telegram.offset"
 WAIT_FOR_PAIRING_S = 600
 DIGEST_SIZE = 10
+# Instant alerts per hour. A first run (or a new profile) can find dozens of strong matches at once: the phone
+# buzzes for the best few, the rest wait in /today and the digest, and one message says so.
+ALERTS_PER_HOUR = 5
+CAPPED_KEY = "alerts.capped_at"
+REUSED_TEXT = "📄 Applying with the tailored resume and cover letter I sent you for this job."
+CAPPED_TEXT = (
+    "⭐ More strong matches are waiting. To keep your phone quiet I send at most {n} an hour: "
+    "see them all with /today."
+)
 DETAILS_CHARS = 1500
 _POLL_ERROR_WAIT_S = 5.0
 
@@ -103,6 +114,7 @@ COMMANDS: tuple[tuple[str, str], ...] = (
     ("resume", "Start instant alerts again"),
     ("cancel", "Stop the profile setup you are in"),
     ("login", "Log in to a job site once (LinkedIn, Naukri, Indeed, ...), so Sarthi can apply there"),
+    ("autoapply", "Apply by itself to matches above your line, after a 2-hour veto (e.g. /autoapply 85)"),
     ("help", "What Sarthi does and these commands"),
 )
 # Sites /login offers (the apply step has their login pages): (key, name), two to a row.
@@ -165,6 +177,7 @@ class TelegramBot:
         answers: AnswerStore | None = None,
         applications: ApplicationStore | None = None,
         data_dir: Path | None = None,
+        auto_apply: AutoApplySettings | None = None,
         clock: Clock = utcnow,
     ) -> None:
         """Send with ``api``; read jobs and matches; record choices in ``chats``; queue applications."""
@@ -188,6 +201,7 @@ class TelegramBot:
         # Opens a job site's login page (set by the app): (chat id, site) -> None; it reports back itself.
         self.site_login: Callable[[int, str], Awaitable[None]] | None = None
         self._stopping = asyncio.Event()
+        self.auto = AutoApply(chats, jobs, queue, auto_apply or AutoApplySettings(), clock=clock)
         self.catchup = CatchUp(api, chats, jobs, matches, queue, send_job=self.send_job, clock=clock)
 
     # ---- sending ----------------------------------------------------------------------------------------
@@ -214,7 +228,30 @@ class TelegramBot:
             return  # re-matched since (e.g. the profile changed): the alert is out of date
         if self.catchup.running():
             return  # a catch-up is collecting results: this match comes in its batch
+        match = self.matches.get(task.key)
+        if match is not None and self.auto.wanted(match):
+            if await self.send_job(chat_id, task.key, JobStatus.ALERTED):
+                text, markup = self.auto.schedule(task.key, match.score)
+                await self.api.send_message(chat_id, text, markup)
+            return
+        hour_ago = self._clock() - timedelta(hours=1)
+        if self.chats.alerted_since(hour_ago) >= ALERTS_PER_HOUR:
+            noted = self.chats.get_state(CAPPED_KEY)
+            if noted is None or noted < to_iso(hour_ago):  # once an hour at most
+                self.chats.set_state(CAPPED_KEY, to_iso(self._clock()))
+                await self.api.send_message(chat_id, CAPPED_TEXT.format(n=ALERTS_PER_HOUR))
+            return  # the match stays unsent: /today and the digest show it
         await self.send_job(chat_id, task.key, JobStatus.ALERTED)
+
+    async def handle_auto_apply(self, task: TaskRecord) -> None:
+        """``auto_apply`` task: the veto window ended; apply unless it was cancelled or answered meanwhile."""
+        if not self.chats.is_auto(task.key) or self.chats.job_status(task.key) in ANSWERED:
+            return
+        self._start_applying(task.key)
+
+    def _start_applying(self, job_id: str) -> None:
+        self.chats.set_job_status(job_id, JobStatus.APPLY)
+        self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
 
     def _still_strong(self, job_id: str) -> bool:
         """True when the job's current match is an alert made with the current profile."""
@@ -230,6 +267,10 @@ class TelegramBot:
         if chat_id is None:
             raise DeferError(WAIT_FOR_PAIRING_S)
         error = task.payload.get("error")
+        if task.payload.get("reused") and task.payload.get("apply"):
+            await self.api.send_message(chat_id, REUSED_TEXT)
+            self.queue.enqueue(names.FORM_CHECK, task.key, priority=Priority.NORMAL)
+            return
         record = self.documents.get(task.key) if self.documents is not None else None
         if error or record is None or self.data_dir is None:
             await self.api.send_message(
@@ -354,6 +395,9 @@ class TelegramBot:
                 await self.inbox.put(chat_id, message)  # grouped and handled in the background
             else:
                 await self._handle_batch(chat_id, [message])
+            return
+        if command == "/autoapply":
+            await self.api.send_message(chat_id, self.auto.set_line(argument))
             return
         if not await self._on_setup_command(chat_id, command):
             await self._on_command(chat_id, command)
@@ -492,6 +536,7 @@ class TelegramBot:
         if current not in ANSWERED:  # the first answer counts; a second tap changes nothing
             current = _ACTIONS[action]
             self.chats.set_job_status(job_id, current)
+            self.auto.cancel(job_id)  # the user's own tap: they get the usual preview, nothing sent by itself
             if current is JobStatus.APPLY:  # documents first; the application follows them
                 self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
         label = _LABELS[current]
@@ -528,6 +573,8 @@ class TelegramBot:
             label = await self.applying.on_button(chat_id, data)
             await self.api.answer_callback(callback_id, label)
             await self.api.edit_buttons(chat_id, message_id, _done(label) if label else None)
+        elif data.startswith("auto:"):
+            await self._on_auto_button(callback_id, chat_id, message_id, data)
         elif data.startswith("catchup:"):
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)
@@ -539,6 +586,19 @@ class TelegramBot:
         else:
             return False
         return True
+
+    async def _on_auto_button(self, callback_id: str, chat_id: int, message_id: int, data: str) -> None:
+        """Cancel or Apply now under an auto-apply notice."""
+        _, action, job_id = [*data.split(":", 2), "", ""][:3]
+        label = ""
+        if action == "cancel":
+            self.auto.cancel(job_id)
+            label = "Auto-apply cancelled"
+        elif action == "now" and self.chats.is_auto(job_id) and self.chats.job_status(job_id) not in ANSWERED:
+            self._start_applying(job_id)
+            label = "🚀 Applying now"
+        await self.api.answer_callback(callback_id, label)
+        await self.api.edit_buttons(chat_id, message_id, _done(label) if label else None)
 
     async def _send_details(self, chat_id: int, job_id: str) -> None:
         job = self.jobs.get(job_id)
@@ -560,8 +620,8 @@ class TelegramBot:
             f"Jobs found: {found}\n"
             f"Strong matches: {decided.get('alert', 0)} · fair: {decided.get('digest', 0)} · "
             f"hidden: {decided.get('hide', 0)}\n"
-            f"You chose: apply {yours.get('apply', 0)} · skip {yours.get('skipped', 0)} · "
-            f"later {yours.get('later', 0)}"
+            f"Applied: {yours.get('applied', 0)} · applying now: {yours.get('apply', 0)}\n"
+            f"You chose: skip {yours.get('skipped', 0)} · later {yours.get('later', 0)}"
         )
 
     # ---- polling ----------------------------------------------------------------------------------------

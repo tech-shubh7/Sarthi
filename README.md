@@ -26,6 +26,11 @@ To apply on LinkedIn or Naukri with your account, send `/login` to the bot once:
 shows the site's login page in your browser (http://127.0.0.1:6080). You type your password into the
 site itself; Sarthi keeps only the site's session, in `./data`.
 
+Auto-apply is off unless you turn it on: send `/autoapply 85` and Sarthi applies to matches of 85% or
+more by itself, after telling you and waiting two hours for a Cancel. It sends a form without your tap
+only when every answer came from your profile, never on job boards such as LinkedIn or Naukri, and at
+most 10 a day. `/autoapply off` turns it off.
+
 ## Run without Docker
 
 ```bash

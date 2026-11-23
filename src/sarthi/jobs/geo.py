@@ -614,6 +614,24 @@ def location_codes(location: str) -> set[str]:
     return codes
 
 
+# A part of a title that limits where the job is open: "(Remote Eligible in Bulgaria)", "[US Only]",
+# "- Remote, LATAM". Only a part with one of these words counts: "(Java)" or "- Payments" names no place.
+_TITLE_PART = re.compile(
+    r"\(([^()]{2,60})\)|\[([^\[\]]{2,60})\]|\s[-\u2013\u2014|]\s+([^-\u2013\u2014|]{2,60})$"
+)
+_PLACE_CUE = re.compile(r"\b(?:remote|only|based|eligible|residents?|in|from|within)\b", re.IGNORECASE)
+
+
+def title_countries(title: str) -> set[str]:
+    """The countries a job title limits the job to ("Engineer (Remote Eligible in Bulgaria)" -> {BG})."""
+    codes: set[str] = set()
+    for match in _TITLE_PART.finditer(title or ""):
+        part = next(group for group in match.groups() if group)
+        if _PLACE_CUE.search(part):
+            codes |= location_codes(part)
+    return codes
+
+
 _LEVELLED = r"\b(?:engineer|developer|sde|swe|programmer|analyst|scientist|consultant)\s*[-\u2013(]?\s*"
 _NOT_YEARS = r"(?!\s*(?:[-\u2013+]|to\b|\(|years?\b|yrs?\b))"  # "Engineer 5-8 yrs" is years, not level 5
 _SENIORITY = [

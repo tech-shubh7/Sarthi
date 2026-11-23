@@ -24,7 +24,7 @@ RESUME_CHARS = 14_000
 JOB_CHARS = 8_000
 
 
-def _at_most(n: int) -> BeforeValidator:
+def at_most(n: int) -> BeforeValidator:
     """A list cut to its first ``n`` items: one item too many from a model must not lose the whole answer."""
     return BeforeValidator(lambda v: v[:n] if isinstance(v, list) else v)
 
@@ -93,7 +93,7 @@ class TailoredJob(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     index: int = Field(ge=0, le=30)
-    bullets: Annotated[list[Text], _at_most(8)] = Field(default_factory=list)
+    bullets: Annotated[list[Text], at_most(8)] = Field(default_factory=list)
 
 
 class TailorAnswer(BaseModel):
@@ -103,9 +103,9 @@ class TailorAnswer(BaseModel):
 
     headline: Headline = ""
     summary: Summary = ""
-    experience: Annotated[list[TailoredJob], _at_most(20)] = Field(default_factory=list)
-    project_order: Annotated[list[int], _at_most(15)] = Field(default_factory=list)
-    skills_first: Annotated[list[SkillName], _at_most(25)] = Field(default_factory=list)
+    experience: Annotated[list[TailoredJob], at_most(20)] = Field(default_factory=list)
+    project_order: Annotated[list[int], at_most(15)] = Field(default_factory=list)
+    skills_first: Annotated[list[SkillName], at_most(25)] = Field(default_factory=list)
 
 
 TAILOR_PROMPT = Prompt(
@@ -186,7 +186,7 @@ class CoverAnswer(BaseModel):
 
     paragraphs: Annotated[
         list[Paragraph],
-        _at_most(4),
+        at_most(4),
         BeforeValidator(_paragraph_list),
     ] = Field(min_length=2)
 

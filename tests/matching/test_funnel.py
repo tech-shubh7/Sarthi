@@ -10,10 +10,10 @@ from sarthi.db.tasks import TaskRecord
 from sarthi.jobs.models import JobPosting
 from sarthi.matching.decide import Decision, Thresholds, decide
 from sarthi.matching.funnel import evaluate
-from sarthi.matching.handler import ALERT_TASK, Matcher, match_version
+from sarthi.matching.handler import AI_TRIES, AI_WAIT_S, ALERT_TASK, Matcher, match_version
 from sarthi.matching.rules import RulesResult
 from sarthi.profile.models import Profile
-from sarthi.queue.tasks import DeferError, PermanentError, TaskQueue
+from sarthi.queue.tasks import DeferError, PermanentError, RetryableError, TaskQueue
 from tests.conftest import FakeClock
 from tests.matching.conftest import NOW, make_job, make_profile
 
@@ -147,6 +147,33 @@ async def test_handler_judges_the_full_text_not_the_snippet(matcher: Any, job_st
     assert (record.decision, record.hidden_because) == ("hide", "Asks for 9+ years of experience; you have 3")
 
 
+async def test_a_job_the_ai_could_not_read_waits_for_it_before_a_keyword_score_is_kept(
+    job_store: JobStore, conn: Any, queue: TaskQueue, clock: FakeClock
+) -> None:
+    # Seen live: with the day's AI limit spent, keyword-only scores of 100% reached the digest.
+    saved = job_store.save(make_job())
+    matcher = Matcher(
+        job_store, MatchStore(conn, clock=clock), queue, make_profile, ai=FakeAi(None), clock=clock
+    )
+    for attempt in range(1, AI_TRIES):
+        with pytest.raises(RetryableError) as caught:
+            await matcher.handle(TaskRecord(1, "match", saved.job_id, {}, attempt))
+        assert caught.value.retry_after == AI_WAIT_S * attempt
+        assert matcher.matches.get(saved.job_id) is None
+    await matcher.handle(TaskRecord(1, "match", saved.job_id, {}, AI_TRIES))
+    record = matcher.matches.get(saved.job_id)
+    assert record is not None
+    assert (record.decision, record.ai_used) == ("digest", False)  # kept, marked unread, never an alert
+
+
+async def test_the_shown_score_is_the_ais_not_keywords_plus_ai() -> None:
+    # A wrong role scored 40 by the AI must not be lifted by title, recency and location points.
+    result = await evaluate(make_job(), make_profile(), NOW, ai=FakeAi(AiScore(40, 0.9)))
+    assert (result.score, result.decision) == (40, Decision.HIDE)
+    result = await evaluate(make_job(), make_profile(), NOW, ai=FakeAi(AiScore(82, 0.9)))
+    assert (result.score, result.decision) == (82, Decision.ALERT)
+
+
 async def test_background_scoring_waits_while_the_user_is_chatting(
     job_store: JobStore, conn: Any, queue: TaskQueue, clock: FakeClock
 ) -> None:
@@ -178,4 +205,4 @@ async def test_ai_is_only_used_near_the_alert_line() -> None:
     )
     result = await evaluate(fair, make_profile(), NOW, ai=ai)
     assert ai.calls == 0
-    assert Thresholds().hide_below <= result.score < Thresholds().ai_from
+    assert result.score < Thresholds().ai_from  # too far from the alert line to spend an AI call on

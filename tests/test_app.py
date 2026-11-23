@@ -47,6 +47,7 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
             "fill_text",
             "match",
             "alert",
+            "auto_apply",
             "digest",
             "catchup",
             "catchup_report",

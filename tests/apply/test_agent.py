@@ -126,7 +126,7 @@ async def test_a_page_that_tries_to_steer_the_ai_cannot_make_it_press_anything_b
 ) -> None:
     for bad in ("Delete account",):
         engine.browser = ApplicationBrowser(ScriptedAi(press=bad))
-        with pytest.raises(FillError, match="refused to press"):
+        with pytest.raises(FillError, match="which Sarthi never presses"):
             await engine.fill("job-5", url("agent_pages.html") + "#trick", ctx(resume))
     # "Send" pressed as "go" is held as the final press: the walk stops, nothing is sent.
     engine.browser = ApplicationBrowser(ScriptedAi(press="Send"))
@@ -262,6 +262,17 @@ async def test_a_signed_out_board_asks_for_a_login_instead_of_pressing_apply(
     engine.browser = ApplicationBrowser(None)
     with pytest.raises(LoginWallError, match="signed out"):
         await engine.fill("job-12", url("agent_pages.html") + "#board", ctx(resume), one_click=True)
+
+
+async def test_a_board_with_no_usable_apply_asks_for_a_login(engine: ApplyEngine, resume: Path) -> None:
+    # Seen live on Shine, signed out: only "Upload Your Resume"; the user got "refused to press ...".
+    engine.browser = ApplicationBrowser(ScriptedAi(press="Upload Your Resume We'll auto-fill your details"))
+    with pytest.raises(LoginWallError, match="signed out"):
+        await engine.fill("job-14", url("agent_pages.html") + "#guest", ctx(resume), one_click=True)
+    # On an employer's own site (no account to sign in to) it stays a plain hand-over.
+    with pytest.raises(FillError, match="never presses") as caught:
+        await engine.fill("job-15", url("agent_pages.html") + "#guest", ctx(resume))
+    assert not isinstance(caught.value, LoginWallError)
 
 
 async def test_buttons_inside_web_components_are_found(engine: ApplyEngine, resume: Path) -> None:

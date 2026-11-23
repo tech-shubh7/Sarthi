@@ -183,7 +183,7 @@ _UNDERSTOOD: dict[Field, tuple[str, Callable[[dict[str, Any]], str]]] = {
     Field.COUNTRIES: ("Other countries", lambda d: _names(d.get("countries") or [])),
     Field.VISA_FREE: ("No visa needed in (besides home)", lambda d: _names(d.get("visa_free") or [])),
     Field.REMOTE: ("Remote", lambda d: _REMOTE_LABELS[RemotePreference(d["remote"])]),
-    Field.YEARS: ("Experience", lambda d: f"{d['years']:g} years"),
+    Field.YEARS: ("Experience", lambda d: years_text(d["years"])),
     Field.SKILLS: ("Skills", lambda d: ", ".join(d.get("skills") or []) or "none"),
     Field.SALARY: ("Minimum salary", _salary_text),
 }
@@ -195,6 +195,11 @@ def understood(field: Field, draft: dict[str, Any]) -> str:
     return f"✓ {label}: <b>{escape(render(draft))}</b>"
 
 
+def years_text(years: float) -> str:
+    """Years for people: 1 year, 1.5 years, 0 years."""
+    return f"{years:g} year" + ("" if years == 1 else "s")
+
+
 def summary(profile: Profile) -> str:
     """The profile as a short message."""
     p = profile.preferences
@@ -202,7 +207,7 @@ def summary(profile: Profile) -> str:
     salary_text = "not set"
     if salary is not None and salary.minimum:
         salary_text = f"{salary.currency} {salary.minimum:,.0f} / {salary.period.value}"
-    years = f"{p.years_experience:g}" if p.years_experience is not None else "not set"
+    years = years_text(p.years_experience) if p.years_experience is not None else "not set"
     lines = [
         "<b>Your Sarthi profile</b>",
         f"Roles: {escape(', '.join(p.roles))}",
@@ -210,7 +215,7 @@ def summary(profile: Profile) -> str:
         f"Would work in: {escape(_names(sorted(p.work_countries)))}",
         f"No visa needed in: {escape(_names(sorted(p.visa_free_countries)))}",
         f"Remote: {_REMOTE_LABELS[p.remote]}",
-        f"Experience: {years} years",
+        f"Experience: {years}",
         f"Skills: {escape(', '.join((*profile.skills, *p.keywords)) or 'none')}",
         f"Minimum salary: {escape(salary_text)}",
         f"Resume: {'saved' if profile.resume_text else 'not uploaded'}",
@@ -668,7 +673,7 @@ class SetupFlow:
         shown = {
             Step.ROLES: ", ".join(suggest.get("roles") or []),
             Step.HOME: country_name(suggest["home"]) if suggest.get("home") else "",
-            Step.YEARS: f"{suggest['years']:g} years" if suggest.get("years") is not None else "",
+            Step.YEARS: years_text(suggest["years"]) if suggest.get("years") is not None else "",
             Step.SKILLS: ", ".join((suggest.get("skills") or [])[:SHOWN_SKILLS]),
         }.get(step, "")
         return f"\n\nSuggested: <b>{escape(shown)}</b>\n{EDIT_HINT}" if shown else ""

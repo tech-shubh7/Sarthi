@@ -14,19 +14,23 @@ from sarthi.matching.decide import Decision, Thresholds
 from sarthi.matching.funnel import evaluate
 from sarthi.profile.models import Profile
 from sarthi.queue import names
-from sarthi.queue.tasks import DeferError, PermanentError, Priority, TaskQueue
+from sarthi.queue.tasks import DeferError, PermanentError, Priority, RetryableError, TaskQueue
 
 log = logging.getLogger(__name__)
 
 ALERT_TASK = names.ALERT
 WAIT_FOR_PROFILE_S = 3600
+AI_TRIES = 4  # then the keyword score is kept, marked as not read by the AI (never an instant alert)
+AI_WAIT_S = 1800  # 30 min, 1 h, 1.5 h: a free tier's minute and hourly limits reset in between
 CHAT_FIRST_WAIT_S = 20  # the user's own messages use the (local) AI first
 # Raised whenever the matching rules change meaning, so stored results (and alerts queued from them) are
 # recognised as out of date and redone.
 # 3: a job the AI could not read is never an instant alert. 4: "II" and manager titles are levels too.
 # 5: years read from labelled postings ("Experience: 3-5 Years"), VP titles, testing and embedded families,
 #    and a title with no posting text is never an instant alert.
-LOGIC_VERSION = "5"
+# 6: the AI names strengths and gaps apart; "0-2 years" asks no minimum; a title limits the countries.
+#    The score is the AI's must-have rubric; a job the AI could not read waits for it.
+LOGIC_VERSION = "6"
 
 
 def match_version(profile: Profile) -> str:
@@ -80,6 +84,9 @@ class Matcher:
 
         thresholds = self._learned() if self._learned is not None else self.thresholds
         result = await evaluate(job, profile, self._clock(), thresholds, self.ai)
+        if result.ai_missing and task.attempts < AI_TRIES:
+            # The AI is busy or its daily limit is spent: wait for it rather than show a keyword-only score.
+            raise RetryableError("the AI could not read the job yet", retry_after=AI_WAIT_S * task.attempts)
         self.matches.save(
             MatchRecord(
                 job_id=task.key,

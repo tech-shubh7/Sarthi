@@ -8,6 +8,7 @@ wins.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sarthi.jobs import geo
@@ -21,6 +22,8 @@ from sarthi.jobs.models import (
 )
 
 _UNKNOWN = "unknown"
+_WORLDWIDE = re.compile(r"worldwide|anywhere|global|^\s*$", re.IGNORECASE)
+_MAX_PLACES_CHARS = 80
 
 
 def snippet(text: str, limit: int = DESCRIPTION_SNIPPET_CHARS) -> tuple[str, bool]:
@@ -38,11 +41,21 @@ def complete(job: JobPosting) -> JobPosting:
     updates: dict[str, Any] = {}
 
     if not job.country_codes:
-        codes = geo.location_codes(job.location_text) or ({found["country"]} if "country" in found else set())
+        in_title = geo.title_countries(job.title)
+        codes = (
+            geo.location_codes(job.location_text)
+            or in_title
+            or ({found["country"]} if "country" in found else set())
+        )
         if codes:
             updates["country_codes"] = frozenset(codes)
+        if in_title and codes == in_title and _WORLDWIDE.search(job.location_text):
+            # A board's own "Anywhere in the World" is its default; the title's "(Remote in Bulgaria)" is what
+            # this employer said.
+            places = ", ".join(sorted(geo.country_name(c) for c in in_title))
+            updates["location_text"] = places if len(places) <= _MAX_PLACES_CHARS else "Some countries only"
 
-    if not job.location_text and "location_text" in found:
+    if not job.location_text and "location_text" in found and "location_text" not in updates:
         updates["location_text"] = found["location_text"]
 
     defaults: list[tuple[str, str, type[Any]]] = [

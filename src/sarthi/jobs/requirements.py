@@ -46,8 +46,8 @@ _OVERALL = re.compile(
 # A skill with its years in brackets: Node.js (4+ years), React (3+ yrs).
 _IN_BRACKETS = re.compile(rf"\(\s*(\d{{1,2}})\s*\+\s*{_YEARS}\s*\)", re.IGNORECASE)
 # A skill line: Back-end development: 3 years (Required), Automation Engineering: 4+ years, BDD - 4+ yrs.
-_SKILL_LINE = re.compile(
-    rf"^\W*([A-Za-z][\w ./+#&()-]{{1,40}}?)\s*[:\-\u2013]\s*(\d{{1,2}})\s*\+?\s*"
+_SKILL_LINE = re.compile(  # the label never ends in a digit: "With 0-2 years" is a range, not "With 0": 2
+    rf"^\W*([A-Za-z][\w ./+#&()-]{{1,40}}?)(?<!\d)\s*[:\-\u2013]\s*(\d{{1,2}})\s*\+?\s*"
     rf"(?:{_DASH}\s*\d{{1,2}}\s*)?\+?\s*{_YEARS}",
     re.IGNORECASE | re.MULTILINE,
 )
@@ -93,6 +93,8 @@ def min_years_required(text: str) -> int | None:
     years += [int(m.group(1)) for m in _HANDS_ON.finditer(text)]
     years += [int(m.group(2)) for m in _SKILL_LINE.finditer(text) if not _NOT_EXPERIENCE.search(m.group(1))]
     years += [int(m.group(1)) for m in _BARE_RANGE.finditer(text)]
+    if 0 in years:
+        return None  # "0-2 years": freshers are welcome, so there is no minimum to fall short of
     plausible = [n for n in years if 0 < n <= _MAX_PLAUSIBLE_YEARS]
     if not plausible:
         return None

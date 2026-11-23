@@ -29,6 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 xvfb
 # (without it Typst falls back to a serif font).
 RUN /app/.venv/bin/playwright install --with-deps chromium && rm -rf /var/lib/apt/lists/*
 
+# DuckDB's httpfs extension (the job catalog reads a remote Parquet file), installed now: at run time the
+# home folder is a no-exec tmpfs, where a downloaded extension cannot be loaded.
+ENV SARTHI_DUCKDB_EXTENSIONS=/app/duckdb-extensions
+RUN /app/.venv/bin/python -c "import duckdb; duckdb.connect(config={'extension_directory': '/app/duckdb-extensions'}).install_extension('httpfs')"
+
 # A non-root user that can write only its data folder; the app files stay owned by root.
 RUN useradd --create-home --uid 1000 sarthi && mkdir -p /app/data && chown sarthi:sarthi /app/data
 USER sarthi

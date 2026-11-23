@@ -14,6 +14,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
+from sarthi.jobs import geo
+
 Line = Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]
 Short = Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)]
 Bullet = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=600)]
@@ -138,7 +140,27 @@ def contact_from(text: str) -> Contact:
         link = found.rstrip(".,;")
         if "@" not in link and link not in links:
             links.append(link)
-    return Contact(email=email, phone=phone, links=tuple(links[:4]))
+    return Contact(email=email, phone=phone, location=_header_place(text), links=tuple(links[:4]))
+
+
+_HEADER_LINES = 8
+_MAX_PLACE_CHARS = 40
+_SEPARATORS = re.compile(r"[|•·●	]")
+
+
+def _header_place(text: str) -> str:
+    """The city or country in the resume's header ("Ahmedabad, India"), "" when none is written there."""
+    for line in text.splitlines()[:_HEADER_LINES]:
+        for part in _SEPARATORS.split(line):
+            place = part.strip(" ,-")
+            if (
+                place
+                and len(place) <= _MAX_PLACE_CHARS
+                and not re.search(r"@|\d{3}|https?:|www\.|\.com", place)
+                and geo.location_codes(place)
+            ):
+                return place
+    return ""
 
 
 def name_from(text: str) -> str:
