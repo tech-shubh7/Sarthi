@@ -31,6 +31,12 @@ class Settings(BaseSettings):
         default=None,
         description="Only for a bot of your own; without it Sarthi uses the shared bot (relay_url).",
     )
+    telegram_connect_url: str = Field(
+        default="",
+        description=(
+            "The Sarthi connector (one-tap setup): makes the user a Telegram bot of their own, no @BotFather."
+        ),
+    )
     relay_url: str = Field(
         default="",
         description="The shared Sarthi bot's relay. Nothing to create: open the link Sarthi shows.",

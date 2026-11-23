@@ -22,7 +22,8 @@ class Overview:
     replies: dict[str, int]  # reply kinds
     tasks_waiting: dict[str, int]  # pending or running tasks by type
     ai_tokens_today: dict[str, int]  # provider -> tokens
-    pair_link: str | None = None  # shared bot: the t.me link that connects Telegram, until it is used
+    pair_link: str | None = None  # the t.me link that connects Telegram, until it is used
+    pair_step: str = "start"  # "create": make your own bot first; "start": tap Start in the bot
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +97,12 @@ class DashboardQueries:
                 (to_iso(today_start),),
             ),
             pair_link=self._pair_link(),
+            pair_step=self._state("telegram.pair_step") or "start",
         )
+
+    def _state(self, key: str) -> str | None:
+        row = self._conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+        return str(row[0]) if row and row[0] else None
 
     def _pair_link(self) -> str | None:
         row = self._conn.execute("SELECT value FROM app_state WHERE key = 'telegram.pair_link'").fetchone()

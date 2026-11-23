@@ -10,8 +10,13 @@
 {% if ov.pair_link %}
 <section class="panel connect" aria-label="Connect Telegram">
   <h2>Connect Telegram</h2>
-  <p>Open this link on the phone or computer where you use Telegram, then tap <b>Start</b>.
-     Sarthi will message you there. (A new link appears here every 15 minutes until you connect.)</p>
+  {% if ov.pair_step == 'create' %}
+  <p><b>Step 1 of 2.</b> Open this link on the phone or computer where you use Telegram, tap <b>Start</b>,
+     then <b>Create my Sarthi bot</b> and confirm. You get a bot of your own: no setup, no token to copy.</p>
+  {% else %}
+  <p>{% if ov.pair_step == 'start2' %}<b>Step 2 of 2.</b> Your bot is ready. {% endif %}Open this link and tap
+     <b>Start</b>. Sarthi will message you there. (A new link appears here every 15 minutes until you connect.)</p>
+  {% endif %}
   <p><a class="connect-link" href="{{ ov.pair_link }}" rel="noreferrer">{{ ov.pair_link }}</a></p>
 </section>
 {% endif %}

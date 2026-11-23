@@ -1,0 +1,16 @@
+# Cloudflare Worker for Sarthi's one-tap Telegram setup. Free plan is enough; see README.md to deploy.
+name = "sarthi-connect"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+BOT_USERNAME = "SarthiiAiBot"   # the manager bot (Bot Management Mode on, webhook pointing here)
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sarthi-connect"
+database_id = "REPLACE_WITH_THE_ID_FROM_wrangler_d1_create"
+
+# Secrets (never in this file): set them with
+#   npx wrangler secret put BOT_TOKEN        the manager bot's token from @BotFather
+#   npx wrangler secret put WEBHOOK_SECRET   any long random text; Telegram sends it with every update

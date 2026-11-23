@@ -61,10 +61,11 @@ docker compose up -d
 
 Then open **http://127.0.0.1:8765**.
 
-1. **Connect Telegram.** Either use the shared Sarthi bot (set `SARTHI_RELAY_URL` to the project's relay
-   address, then tap *Connect Telegram* on the dashboard), or create your own bot with
-   [@BotFather](https://t.me/BotFather) in two minutes and put its token in `SARTHI_TELEGRAM_BOT_TOKEN`.
-   [docs/RELAY.md](docs/RELAY.md) explains how the shared bot keeps every user's chat separate.
+1. **Connect Telegram.** Tap the *Connect Telegram* link on the dashboard. In Telegram, tap **Start**, then
+   **Create my Sarthi bot**, and finally **Start** in your new bot. That's it: you get a bot of your own,
+   with no @BotFather and no token to copy, and it talks only to the Sarthi on your computer
+   ([how it works](deploy/telegram-connect/README.md)). Prefer to make the bot yourself? Create one with
+   [@BotFather](https://t.me/BotFather) and put its token in `SARTHI_TELEGRAM_BOT_TOKEN`.
 2. **Set up your profile.** Send `/setup` to the bot and upload your resume, or fill in **Settings** on the
    dashboard. Sarthi suggests job titles and skills from your resume; you confirm or edit them.
 3. **Wait for matches.** The first ones usually arrive within the hour.

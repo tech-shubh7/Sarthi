@@ -107,7 +107,7 @@ async def close(sarthi: app_module.App) -> None:
 
 
 async def test_no_bot_at_all_is_a_setup_error(tmp_path: Path) -> None:
-    with pytest.raises(SetupError, match="SARTHI_RELAY_URL"):
+    with pytest.raises(SetupError, match="SARTHI_TELEGRAM_CONNECT_URL"):
         build(settings(tmp_path))
 
 
@@ -196,8 +196,9 @@ async def test_the_link_is_shown_until_the_user_opens_it(
         await close(sarthi)
 
 
-async def test_no_link_is_offered_with_an_own_bot(tmp_path: Path) -> None:
+async def test_no_link_is_offered_once_an_own_bot_is_paired(tmp_path: Path) -> None:
     sarthi = build(settings(tmp_path, telegram_bot_token=SecretStr("1:x")))
+    sarthi.bot.chats.set_state(OWNER_KEY, "111")
     try:
         await asyncio.wait_for(sarthi.offer_pairing(), 1)
         assert sarthi.bot.chats.get_state(PAIR_LINK_KEY) is None

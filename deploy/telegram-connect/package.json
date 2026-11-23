@@ -1,0 +1,11 @@
+{
+  "name": "sarthi-connect",
+  "private": true,
+  "type": "module",
+  "description": "One-tap Telegram setup for Sarthi (Cloudflare Worker, Telegram managed bots)",
+  "scripts": {
+    "test": "node --test test/connect.test.js",
+    "deploy": "wrangler deploy"
+  },
+  "engines": { "node": ">=22.13" }
+}

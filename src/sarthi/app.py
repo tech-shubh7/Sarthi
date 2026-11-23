@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pydantic import SecretStr
+
 from sarthi.ai.browser import next_step
 from sarthi.ai.client import AiClient
 from sarthi.ai.providers import resolve
@@ -27,6 +29,13 @@ from sarthi.chat.pairing import CODE_LIFETIME, OWNER_KEY, code_hash, new_code, o
 from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import TelegramApi
 from sarthi.chat.telegram.bot import OFFSET_KEY, PAUSED_KEY, TelegramBot
+from sarthi.chat.telegram.connect import (
+    STEP_KEY,
+    ConnectError,
+    Connector,
+    save_bot,
+    saved_bot,
+)
 from sarthi.chat.telegram.link import MODE_KEY, PAIR_LINK_KEY, RelayError, RelayLink, relay_link
 from sarthi.clock import Clock, from_iso, to_iso, utcnow
 from sarthi.config import Settings
@@ -82,6 +91,9 @@ SNIPPET_CHARS = 300  # a saved description this short is a title and a line: its
 TICK_SECONDS = 60
 PAIR_CHECK_S = 3.0
 PAIR_RETRY_S = 30.0
+CONNECT_CHECK_S = 3.0  # one-tap setup: how often to ask whether the user's bot was made
+CONNECT_SESSION = timedelta(minutes=15)  # a setup link's life (the connector's own limit)
+NOT_CONNECTED = "0:waiting-for-one-tap-setup"  # stands in until the user's bot token arrives
 
 
 class SetupError(Exception):
@@ -190,6 +202,7 @@ class App:
     ai_clients: tuple[AiClient, ...]
     clock: Clock
     relay: RelayLink | None = None  # the shared bot's relay, when no bot token of one's own is set
+    connector: Connector | None = None  # one-tap setup still to do: no bot yet
     _login: asyncio.Task[None] | None = None
 
     def schedule_digest(self) -> None:
@@ -299,11 +312,10 @@ class App:
         worker, user = self.worker(), self.user_worker()
         self.bot.site_login = self.site_login
         tasks = [
-            asyncio.create_task(self.bot.poll()),
+            asyncio.create_task(self._telegram()),
             asyncio.create_task(worker.run()),
             asyncio.create_task(user.run()),
             asyncio.create_task(self._tick_sources(worker)),
-            asyncio.create_task(self.offer_pairing()),
         ]
         dashboard = self._dashboard()
         if dashboard is not None:
@@ -355,9 +367,53 @@ class App:
             else f"Not logged in to {name} (the window was closed or 10 minutes passed). Try /login again.",
         )
 
+    async def _telegram(self) -> None:
+        """Make the user's bot first when one-tap setup is still to do; then serve the chat."""
+        if self.connector is not None:
+            await self.connect_bot(self.connector)
+        await asyncio.gather(self.bot.poll(), self.offer_pairing())
+
+    async def connect_bot(self, connector: Connector) -> None:
+        """One-tap setup: show the connector's link until the user's new bot arrives, then switch to it."""
+        chats = self.bot.chats
+        while True:
+            try:
+                session = await connector.session()
+            except ConnectError as error:
+                log.warning("one-tap Telegram setup is not reachable: %s", error)
+                await asyncio.sleep(PAIR_RETRY_S)
+                continue
+            chats.set_state(PAIR_LINK_KEY, session.link)
+            chats.set_state(STEP_KEY, "create")
+            log.info(
+                "Connect Telegram: open %s and tap Create my Sarthi bot (or see http://127.0.0.1:%d)",
+                session.link,
+                self.settings.dashboard_port,
+            )
+            renew_at = self.clock() + CONNECT_SESSION - timedelta(minutes=1)
+            made = None
+            while made is None and self.clock() < renew_at:
+                await asyncio.sleep(CONNECT_CHECK_S)
+                try:
+                    made = await connector.collect(session)
+                except ConnectError as error:
+                    log.warning("one-tap Telegram setup: %s", error)
+            if made is not None:
+                break
+        save_bot(self.settings.data_dir, made)
+        self.bot.api.use_token(made.token)
+        for key in (OFFSET_KEY, OWNER_KEY, PAIR_LINK_KEY):  # a new bot: nothing carries over
+            chats.set_state(key, None)
+        chats.set_state(MODE_KEY, f"managed:{made.username}")
+        chats.set_state(STEP_KEY, "start2")
+        self.connector = None
+        await connector.aclose()
+        log.info("Your Telegram bot @%s is ready", made.username)
+
     async def offer_pairing(self) -> None:
-        """Shared bot: keep a fresh link to connect Telegram on show (log and dashboard) until one is used."""
+        """Keep a fresh link to connect Telegram on show (log and dashboard) until one is used."""
         if self.relay is None:
+            await self._offer_own_link()
             return
         chats = self.bot.chats
         while owner_chat(chats) is None:
@@ -379,6 +435,31 @@ class App:
             while owner_chat(chats) is None and self.clock() < renew_at:
                 await asyncio.sleep(PAIR_CHECK_S)
         chats.set_state(PAIR_LINK_KEY, None)
+
+    async def _offer_own_link(self) -> None:
+        """A bot of the user's own (one-tap or @BotFather): a t.me link with a one-time code, until used."""
+        chats = self.bot.chats
+        username = ""
+        while owner_chat(chats) is None and not username:
+            try:
+                username = await self.bot.api.username()
+            except (RetryableError, PermanentError) as error:
+                log.warning("could not ask Telegram for the bot's name: %s", error)
+                await asyncio.sleep(PAIR_RETRY_S)
+        while owner_chat(chats) is None:
+            code = new_code(chats, self.clock())
+            link = f"https://t.me/{username}?start={code}"
+            chats.set_state(PAIR_LINK_KEY, link)
+            log.info(
+                "Connect Telegram: open %s and tap Start (or see http://127.0.0.1:%d)",
+                link,
+                self.settings.dashboard_port,
+            )
+            renew_at = self.clock() + CODE_LIFETIME - timedelta(minutes=1)
+            while owner_chat(chats) is None and self.clock() < renew_at:
+                await asyncio.sleep(PAIR_CHECK_S)
+        chats.set_state(PAIR_LINK_KEY, None)
+        chats.set_state(STEP_KEY, None)
 
     def _dashboard(self) -> Any:
         """The local dashboard's server, or None when it is off or no port is free (Sarthi runs on)."""
@@ -499,21 +580,42 @@ def repair_saved_profile(path: Path) -> None:
         log.info("cleaned leftover instructions from the saved profile's roles and skills")
 
 
-def build(settings: Settings, clock: Clock = utcnow) -> App:
-    """Wire Sarthi from ``settings``. Raises ``SetupError`` when the bot token is missing."""
+def _telegram_api(settings: Settings) -> tuple[TelegramApi, str, RelayLink | None, Connector | None]:
+    """The bot Sarthi talks through, chosen in a fixed order.
+
+    A token of the user's own (@BotFather); the bot one-tap setup made earlier; the shared bot's relay; or
+    one-tap setup still to do (the token arrives while Sarthi runs).
+    """
     relay: RelayLink | None = None
+    connector: Connector | None = None
+    made = saved_bot(settings.data_dir)
     if settings.telegram_bot_token is not None:
         api, mode = TelegramApi(settings.telegram_bot_token), "own"
+    elif made is not None:  # made earlier by one-tap setup
+        api, mode = TelegramApi(made.token), f"managed:{made.username}"
     elif settings.relay_url:
         try:
             relay = relay_link(settings.data_dir, settings.relay_url)
         except RelayError as error:
             raise SetupError(f"the shared Sarthi bot ({settings.relay_url}): {error}") from None
         api, mode = TelegramApi(relay.secret, base_url=relay.url), f"relay:{relay.url}"
+    elif settings.telegram_connect_url:
+        try:
+            connector = Connector(settings.telegram_connect_url)
+        except ConnectError as error:
+            raise SetupError(f"one-tap Telegram setup ({settings.telegram_connect_url}): {error}") from None
+        api, mode = TelegramApi(SecretStr(NOT_CONNECTED)), "connect"  # a real token arrives during setup
     else:
         raise SetupError(
-            "no Telegram bot: set SARTHI_RELAY_URL (the shared Sarthi bot) or SARTHI_TELEGRAM_BOT_TOKEN"
+            "no Telegram bot: set SARTHI_TELEGRAM_CONNECT_URL (one-tap setup), or SARTHI_TELEGRAM_BOT_TOKEN"
+            " (a bot of your own from @BotFather)"
         )
+    return api, mode, relay, connector
+
+
+def build(settings: Settings, clock: Clock = utcnow) -> App:
+    """Wire Sarthi from ``settings``. Raises ``SetupError`` when the bot token is missing."""
+    api, mode, relay, connector = _telegram_api(settings)
     conn = connect(settings.db_path)
     queue = TaskQueue(TaskStore(conn, clock=clock), clock=clock)
     jobs, matches = JobStore(conn, clock=clock), MatchStore(conn, clock=clock)
@@ -675,4 +777,5 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         (fast, quality, matching_ai),
         clock,
         relay,
+        connector,
     )

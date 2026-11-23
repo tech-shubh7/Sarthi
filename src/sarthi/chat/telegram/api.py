@@ -53,6 +53,16 @@ class TelegramApi:
         """Close the HTTP connection pool."""
         await self._http.aclose()
 
+    def use_token(self, token: SecretStr, base_url: str = API_BASE) -> None:
+        """From now on, be the bot owning ``token`` (one-tap setup hands it over while Sarthi runs)."""
+        self._token = token
+        self._base = base_url.rstrip("/")
+
+    async def username(self) -> str:
+        """This bot's @username (getMe), for t.me links."""
+        me = await self._call("getMe", {})
+        return str((me or {}).get("username") or "")
+
     async def _call(self, method: str, payload: dict[str, Any]) -> Any:
         url = f"{self._base}/bot{self._token.get_secret_value()}/{method}"
         try:
