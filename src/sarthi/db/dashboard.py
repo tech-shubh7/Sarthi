@@ -56,6 +56,7 @@ class ApplicationRow:
     updated_at: str
     submitted_at: str | None
     reply_kind: str | None
+    detail: str = ""  # why it ended this way (e.g. why the user must apply on the site)
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +168,7 @@ class DashboardQueries:
     def applications(self, limit: int = MAX_ROWS, *, offset: int = 0) -> list[ApplicationRow]:
         """Applications, most recently changed first, each with the latest reply's kind (one page)."""
         rows = self._conn.execute(
-            "SELECT a.job_id, j.title, j.company, j.canonical_url, a.status, a.site, a.updated_at,"
+            "SELECT a.job_id, j.title, j.company, j.canonical_url, a.status, a.site, a.updated_at, a.detail,"
             " a.submitted_at, (SELECT r.kind FROM reply r WHERE r.job_id = a.job_id"
             " ORDER BY r.received_at DESC LIMIT 1) AS kind"
             " FROM application a JOIN job j ON j.id = a.job_id ORDER BY a.updated_at DESC LIMIT ? OFFSET ?",
@@ -184,6 +185,7 @@ class DashboardQueries:
                 r["updated_at"],
                 r["submitted_at"],
                 r["kind"],
+                r["detail"] or "",
             )
             for r in rows
         ]

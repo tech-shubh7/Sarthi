@@ -30,7 +30,7 @@
   <thead><tr><th>Match</th><th>Role</th><th>Found</th><th>Source</th><th>Your answer</th></tr></thead>
   <tbody>
   {% for r in rows %}
-    <tr>
+    <tr id="job-{{ r.job_id }}">
       <td data-label="Match">{{ score(r.score, r.ai_used) }}</td>
       <td>{{ job_link(r.title, r.url) }}<span class="job-sub">{{ r.company }}</span></td>
       <td data-label="Found" class="faint">{{ ago(r.first_seen_at) }}</td>
@@ -38,11 +38,11 @@
       <td data-label="Answer">
         {% if can_edit and r.status in (none, 'alerted', 'digested', 'later') %}
         <div class="row-actions">
-          <form method="post" action="/jobs/{{ r.job_id }}/apply"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small" type="submit">Apply</button></form>
+          <form method="post" action="/jobs/{{ r.job_id }}/apply"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small" type="submit">Apply</button></form>
           {% if r.status != 'later' %}
-          <form method="post" action="/jobs/{{ r.job_id }}/later"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small quiet" type="submit">Later</button></form>
+          <form method="post" action="/jobs/{{ r.job_id }}/later"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small quiet" type="submit">Later</button></form>
           {% else %}<span class="pill s-later">Saved for later</span>{% endif %}
-          <form method="post" action="/jobs/{{ r.job_id }}/skip"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small ghost" type="submit">Skip</button></form>
+          <form method="post" action="/jobs/{{ r.job_id }}/skip"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small ghost" type="submit">Skip</button></form>
         </div>
         {% elif r.status %}<span class="pill s-{{ r.status }}">{{ label(r.status) }}</span>{% endif %}
       </td>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, label, reply, job_link, pager, empty %}
+{% from "_macros.html" import icon, label, reply, job_link, pager, empty, reason %}
 {% block title %}Applications · Sarthi{% endblock %}
 {% block main %}
 <header class="page-head">
@@ -39,9 +39,25 @@
   <thead><tr><th>Role</th><th>Status</th><th>Reply</th><th>Site</th><th>Updated</th></tr></thead>
   <tbody>
   {% for r in rows %}
-    <tr>
+    <tr id="job-{{ r.job_id }}">
       <td>{{ job_link(r.title, r.url) }}<span class="job-sub">{{ r.company }}</span></td>
-      <td data-label="Status"><span class="pill s-{{ r.status }}">{{ label(r.status) }}</span></td>
+      <td data-label="Status">
+        <span class="pill s-{{ r.status }}">{{ label(r.status) }}</span>
+        {% if r.status == 'filled' and r.job_id not in pending and can_edit %}
+        <p class="why">The filled form was closed when Sarthi restarted. Fill it again to check and submit it.</p>
+        <div class="row-actions">
+          <form method="post" action="/applications/{{ r.job_id }}/refill"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small" type="submit">Fill it again</button></form>
+          <a class="button small ghost" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">Open job</a>
+        </div>
+        {% endif %}
+        {% if r.status in ('needs_human', 'failed') and r.detail %}<p class="why">{{ reason(r.detail) }}</p>{% endif %}
+        {% if r.status == 'needs_human' and can_edit %}
+        <div class="row-actions">
+          <a class="button small" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">Open &amp; apply</a>
+          <form method="post" action="/applications/{{ r.job_id }}/applied"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small quiet" type="submit">I applied</button></form>
+        </div>
+        {% endif %}
+      </td>
       <td data-label="Reply">{{ reply(r.reply_kind) or '' }}</td>
       <td data-label="Site"><span class="chip">{{ r.site or '' }}</span></td>
       <td data-label="Updated" class="faint">{{ ago(r.updated_at) }}</td>

@@ -34,6 +34,8 @@ class FakeActions:
         self.waiting = {"job-1": Pending("job-1", "screenshots/job-1.png")}
         self.sent: list[str] = []
         self.cancelled: list[str] = []
+        self.applied: list[str] = []
+        self.refilled: list[str] = []
 
     def profile(self) -> Profile | None:
         return self.current
@@ -73,6 +75,14 @@ class FakeActions:
     def submit(self, job_id: str) -> bool:
         self.sent.append(job_id)
         return self.waiting.pop(job_id, None) is not None
+
+    def refill(self, job_id: str) -> bool:
+        self.refilled.append(job_id)
+        return True
+
+    def mark_applied(self, job_id: str) -> bool:
+        self.applied.append(job_id)
+        return job_id != "gone"
 
     def cancel(self, job_id: str) -> bool:
         self.cancelled.append(job_id)
@@ -257,7 +267,7 @@ def test_apply_skip_and_later_from_the_matches_page(
     response = client.post(
         f"/jobs/{job_id}/apply", data={"csrf": good, "next": "/matches"}, headers=HERE, follow_redirects=False
     )
-    assert response.headers["location"] == "/matches?done=apply"
+    assert response.headers["location"] == f"/matches?done=apply#job-{job_id}"
     assert actions.chosen == [(job_id, "apply")]
     # Only known actions and only back to the dashboard's own pages.
     assert client.post(f"/jobs/{job_id}/delete", data={"csrf": good}, headers=HERE).status_code == 404
@@ -267,7 +277,7 @@ def test_apply_skip_and_later_from_the_matches_page(
         headers=HERE,
         follow_redirects=False,
     )
-    assert elsewhere.headers["location"] == "/matches?done=skip"
+    assert elsewhere.headers["location"] == f"/matches?done=skip#job-{job_id}"
     assert client.post("/jobs/gone/later", data={"csrf": good}, headers=HERE).status_code == 404
 
 
@@ -311,3 +321,68 @@ def test_only_screenshots_inside_the_data_folder_are_served(
     assert client.get("/applications/job-x/form.png").status_code == 404
     assert client.get("/applications/job-y/form.png").status_code == 404
     assert client.get("/applications/nope/form.png").status_code == 404
+
+
+def test_after_apply_you_land_back_on_the_same_tab_page_and_job(
+    client: TestClient, actions: FakeActions, conn: sqlite3.Connection, job_store: JobStore, clock: FakeClock
+) -> None:
+    # Seen live: Apply on page 2 of "Strong" sent the user back to page 1 of "All".
+    job_id = job_store.save(make_job(title="AI Engineer", company="Acme")).job_id
+    MatchStore(conn, clock=clock).save(MatchRecord(job_id, "1", 88, "alert", "strong", None, (), (), True))
+    page = client.get("/matches?show=alert&q=AI&page=1").text
+    assert 'value="/matches?show=alert&amp;q=AI&amp;page=1"' in page  # the form carries where it is
+    assert f'id="job-{job_id}"' in page
+    good = token(client, "/matches")
+    response = client.post(
+        f"/jobs/{job_id}/apply",
+        data={"csrf": good, "next": "/matches?show=alert&q=AI&page=1&evil=1"},
+        headers=HERE,
+        follow_redirects=False,
+    )
+    assert response.headers["location"] == f"/matches?show=alert&q=AI&page=1&done=apply#job-{job_id}"
+    for bad in ("https://evil.example/matches", "//evil.example/x", "/elsewhere"):
+        r = client.post(
+            f"/jobs/{job_id}/skip", data={"csrf": good, "next": bad}, headers=HERE, follow_redirects=False
+        )
+        assert r.headers["location"].startswith("/matches?done=skip")
+
+
+def test_apply_yourself_says_why_and_takes_i_applied(
+    client: TestClient, actions: FakeActions, conn: sqlite3.Connection, job_store: JobStore, clock: FakeClock
+) -> None:
+    from sarthi.db.applications import ApplicationStatus, ApplicationStore  # noqa: PLC0415
+
+    job_id = job_store.save(make_job(title="Backend Engineer", company="Beta")).job_id
+    ApplicationStore(conn, clock=clock).record(
+        job_id, ApplicationStatus.NEEDS_HUMAN, site="in.indeed.com",
+        detail="in.indeed.com needs your own logged-in account to apply.",
+    )  # fmt: skip
+    page = client.get("/applications").text
+    assert "Apply yourself" in page and "Needs you" not in page
+    assert "This site needs you signed in" in page
+    assert "Open &amp; apply" in page and f"/applications/{job_id}/applied" in page
+    good = token(client, "/applications")
+    response = client.post(
+        f"/applications/{job_id}/applied", data={"csrf": good, "next": "/applications?page=1"}, headers=HERE,
+        follow_redirects=False,
+    )  # fmt: skip
+    assert response.headers["location"] == "/applications?page=1&done=applied"
+    assert actions.applied == [job_id]
+
+
+def test_a_filled_form_lost_in_a_restart_offers_to_fill_it_again(
+    client: TestClient, actions: FakeActions, conn: sqlite3.Connection, job_store: JobStore, clock: FakeClock
+) -> None:
+    from sarthi.db.applications import ApplicationStatus, ApplicationStore  # noqa: PLC0415
+
+    job_id = job_store.save(make_job(title="Backend Engineer", company="Gamma")).job_id
+    ApplicationStore(conn, clock=clock).record(job_id, ApplicationStatus.FILLED, site="jobs.lever.co")
+    actions.waiting = {}  # its filled page is gone
+    page = client.get("/applications").text
+    assert "closed when Sarthi restarted" in page and f"/applications/{job_id}/refill" in page
+    good = token(client, "/applications")
+    response = client.post(
+        f"/applications/{job_id}/refill", data={"csrf": good}, headers=HERE, follow_redirects=False
+    )
+    assert response.headers["location"].startswith("/applications?done=refill")
+    assert actions.refilled == [job_id]

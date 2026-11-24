@@ -113,7 +113,7 @@ class Settings(BaseSettings):
     # line in the chat (/autoapply 85, /autoapply off).
     auto_apply_min_score: int | None = Field(default=None, ge=75, le=100)
     auto_apply_daily_limit: int = Field(default=10, ge=1, le=50)
-    auto_apply_wait_minutes: int = Field(default=120, ge=0, le=1440)
+    auto_apply_wait_minutes: int = Field(default=5, ge=0, le=1440)
 
     # Reply tracking: Sarthi reads (never changes) your mailbox over IMAP.
     # Gmail: imap.gmail.com and an app password.

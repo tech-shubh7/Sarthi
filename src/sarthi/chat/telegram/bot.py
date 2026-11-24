@@ -114,7 +114,7 @@ COMMANDS: tuple[tuple[str, str], ...] = (
     ("resume", "Start instant alerts again"),
     ("cancel", "Stop the profile setup you are in"),
     ("login", "Log in to a job site once (LinkedIn, Naukri, Indeed, ...), so Sarthi can apply there"),
-    ("autoapply", "Apply by itself to matches above your line, after a 2-hour veto (e.g. /autoapply 85)"),
+    ("autoapply", "Apply by itself to matches above your line, after a 5-minute veto (e.g. /autoapply 85)"),
     ("help", "What Sarthi does and these commands"),
 )
 # Sites /login offers (the apply step has their login pages): (key, name), two to a row.

@@ -175,6 +175,21 @@ class WebActions:
         flow.submit(job_id, waiting[0])
         return True
 
+    def refill(self, job_id: str) -> bool:
+        """Fill the form again: a filled page does not survive a restart of Sarthi."""
+        if self._app.bot.jobs.get(job_id) is None:
+            return False
+        self._app.queue.enqueue(names.APPLY, job_id, priority=Priority.ALERT)
+        return True
+
+    def mark_applied(self, job_id: str) -> bool:
+        """The user applied on the site themselves, as the Telegram "I applied" button records it."""
+        flow = self._app.bot.applying
+        if flow is None or self._app.bot.jobs.get(job_id) is None:
+            return False
+        flow.mark_applied(job_id)
+        return True
+
     def cancel(self, job_id: str) -> bool:
         """Drop a waiting form."""
         flow = self._app.bot.applying

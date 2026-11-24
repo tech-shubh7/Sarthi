@@ -44,7 +44,7 @@ into one more form. Sarthi does that part, and leaves the decisions to you.
 | 📲 **Alerts you on Telegram** | Strong matches come straight away (at most a few an hour), the rest in a daily digest. Tap Apply, Skip or Later. |
 | 📄 **Tailors your documents** | A resume reordered and reworded for the job, and a short cover letter, both checked so they never claim anything your resume does not say. |
 | 📝 **Fills applications** | Greenhouse, Lever and Ashby forms directly, other career sites through a careful AI browser. Questions only you can answer are asked once in the chat and remembered. |
-| 🤖 **Auto-apply (optional)** | Above a match % you choose, with a two-hour veto window, a daily cap, and never on job boards. |
+| 🤖 **Auto-apply (optional)** | Above a match % you choose, with a 5-minute window to cancel, a daily cap, and never on job boards. |
 | 📬 **Tracks replies** | Reads (never sends or deletes) your mailbox and tells you about interviews, tests and rejections. |
 | 🖥️ **Dashboard** | A local web page to see everything, change your profile and settings, apply, and approve filled forms. |
 
@@ -113,7 +113,7 @@ session cookie, in `./data`, and never sees or stores your password.
 ### Auto-apply
 
 Off by default. When you set a line (say 85%), each new match at or above it is announced in Telegram:
-*"I'll apply to Backend Engineer at Acme in 2 hours unless you cancel."* If you do nothing, Sarthi prepares
+*"I'll apply to Backend Engineer at Acme in 5 minutes unless you cancel."* If you do nothing, Sarthi prepares
 the documents and fills the form. It submits by itself only if every answer came from your profile or your
 saved answers, the site is a company career page (never LinkedIn, Naukri or another job board), and fewer
 than 10 have gone out today. Anything else comes back to you as a normal preview. Tapping Apply yourself

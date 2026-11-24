@@ -69,6 +69,14 @@ class DashboardActions(Protocol):
         """Send the filled form (the user approved it on the dashboard). False when nothing is waiting."""
         ...
 
+    def refill(self, job_id: str) -> bool:
+        """Fill a form again whose filled page is gone (Sarthi restarted). False for an unknown job."""
+        ...
+
+    def mark_applied(self, job_id: str) -> bool:
+        """The user applied on the site themselves ("I applied"). False for an unknown job."""
+        ...
+
     def cancel(self, job_id: str) -> bool:
         """Drop the filled form; nothing is sent. False when nothing is waiting."""
         ...

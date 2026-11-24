@@ -105,8 +105,7 @@ class ApplyingFlow:
             self.cancel(job_id)
             return "Cancelled: nothing was sent."
         if action == "applied":
-            self.applications.record(job_id, ApplicationStatus.APPLIED_BY_USER, detail="applied by the user")
-            self.chats.set_job_status(job_id, JobStatus.APPLIED)
+            self.mark_applied(job_id)
             return "✅ Marked as applied"
         return ""
 
@@ -126,6 +125,12 @@ class ApplyingFlow:
         """Send the approved form (from a Telegram tap or the dashboard)."""
         self.chats.set_state(PENDING + job_id, None)
         self.queue.enqueue(names.SUBMIT, job_id, {"code": code}, priority=Priority.ALERT)
+
+    def mark_applied(self, job_id: str) -> None:
+        """The user applied on the site themselves."""
+        self.chats.set_state(PENDING + job_id, None)
+        self.applications.record(job_id, ApplicationStatus.APPLIED_BY_USER, detail="applied by the user")
+        self.chats.set_job_status(job_id, JobStatus.APPLIED)
 
     def cancel(self, job_id: str) -> None:
         """Drop the filled form; nothing is sent."""

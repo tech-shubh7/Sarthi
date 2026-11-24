@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
@@ -54,6 +54,7 @@ MAX_RESUME_BYTES = 5_000_000
 PAGE_SIZE = 25
 JOB_ACTIONS = ("apply", "skip", "later")
 BACK_TO = ("/matches", "/", "/applications")
+KEPT_PARAMS = ("show", "q", "page")  # what a page's address may carry back after a change
 # What a change did, by a fixed key in the address: nothing a page elsewhere puts in a link is ever shown.
 DONE = {
     "profile": "Saved. Recent jobs are being matched again with your new profile.",
@@ -64,6 +65,8 @@ DONE = {
     "submitted": "Submitting. The result shows here and in Telegram.",
     "cancelled": "Cancelled: nothing was sent.",
     "gone": "That is no longer waiting.",
+    "applied": "Marked as applied. Good luck!",
+    "refill": "Filling the form again. It shows here for your Submit in a minute or two.",
 }
 
 
@@ -112,6 +115,14 @@ def _page(asked: int, total: int) -> tuple[int, int]:
     return min(max(asked, 1), pages), pages
 
 
+def _own_page(target: str, default: str = "/matches") -> str:
+    """``target`` when it is one of the dashboard's own pages (path and query only); else ``default``."""
+    parts = urlparse(target)
+    if parts.scheme or parts.netloc or parts.path not in BACK_TO:
+        return default  # never a redirect to another site, whatever a form says
+    return parts.path + (f"?{parts.query}" if parts.query else "")
+
+
 def _text_fields(form: FormData) -> dict[str, str]:
     return {key: value for key, value in form.items() if isinstance(value, str)}
 
@@ -156,6 +167,8 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
                 "csrf": token,
                 "can_edit": actions is not None,
                 "done": done,
+                # The page's own address: a form posted from it brings the user back to the same tab and page.
+                "here": request.url.path + (f"?{request.url.query}" if request.url.query else ""),
                 **context,
             },
             status_code=status,
@@ -172,8 +185,12 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
             raise HTTPException(403, "This page is out of date: reload it and try again.")
         return actions, form
 
-    def back(path: str, done: str) -> RedirectResponse:
-        return RedirectResponse(f"{path}?done={done}", status_code=303)
+    def back(path: str, done: str, anchor: str = "") -> RedirectResponse:
+        """Back to the page the form was on (its tab, page and search kept), scrolled to the same row."""
+        target = urlparse(path)
+        query = [(k, v) for k, v in parse_qsl(target.query) if k in KEPT_PARAMS]
+        url = target.path + "?" + urlencode([*query, ("done", done)])
+        return RedirectResponse(url + (f"#{anchor}" if anchor else ""), status_code=303)
 
     # ---- pages ----
 
@@ -276,16 +293,22 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         act, form = await checked_form(request)
         if action not in JOB_ACTIONS or not act.choose(job_id, action):
             raise HTTPException(404, "No such job or action.")
-        target = str(form.get("next", "/matches"))
-        return back(target if target in BACK_TO else "/matches", action)
+        return back(_own_page(str(form.get("next", ""))), action, f"job-{job_id}")
 
     @app.post("/applications/{job_id}/{decision}", response_model=None)
     async def decide(request: Request, job_id: str, decision: str) -> Response:
-        act, _ = await checked_form(request)
+        act, form = await checked_form(request)
         if decision == "submit":
             return back("/applications", "submitted" if act.submit(job_id) else "gone")
         if decision == "cancel":
             return back("/applications", "cancelled" if act.cancel(job_id) else "gone")
+        if decision == "refill":
+            back_to = _own_page(str(form.get("next", "")), "/applications")
+            return back(back_to, "refill" if act.refill(job_id) else "gone")
+        if decision == "applied":
+            return back(
+                _own_page(str(form.get("next", ""))), "applied" if act.mark_applied(job_id) else "gone"
+            )
         raise HTTPException(404, "No such action.")
 
     @app.get("/applications/{job_id}/form.png", response_model=None)

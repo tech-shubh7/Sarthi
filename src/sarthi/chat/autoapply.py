@@ -1,7 +1,7 @@
 """Auto-apply with a veto window (opt-in, off by default).
 
 When a strong match is at or above the user's own line (``/autoapply 85``), Sarthi says so in the chat and
-waits (two hours by default) with Cancel and Apply now buttons. If nobody cancels, the usual steps run:
+waits (5 minutes by default) with Cancel and Apply now buttons. If nobody cancels, the usual steps run:
 tailored documents, the form's questions, the fill. The form is sent without a tap only when every answer came
 from the profile, a saved answer or the posting, and the site is not a job board that bans bulk applying;
 anything else comes back as the usual preview with Submit. At most ``daily_limit`` a day, never below
@@ -41,7 +41,7 @@ class AutoApplySettings:
 
     line: int | None = None
     daily_limit: int = 10
-    wait_s: float = 7200
+    wait_s: float = 300
 
 
 class AutoApply:

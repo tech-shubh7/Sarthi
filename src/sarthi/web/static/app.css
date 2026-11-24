@@ -231,6 +231,7 @@ meter.bar.saffron::-moz-meter-bar { background: var(--brand-saffron); }
 .job-title { display: block; font-weight: 650; color: var(--ink); text-decoration: none; line-height: 1.35; }
 .job-title:hover { color: var(--accent); text-decoration: underline; }
 .job-sub { display: block; margin-top: 2px; color: var(--muted); font-size: 13.5px; }
+.why { margin: 8px 0 10px; max-width: 46ch; color: var(--muted); font-size: 13px; line-height: 1.45; }
 .err { max-width: 46ch; overflow-wrap: anywhere; color: var(--faint); font-size: 13px; }
 
 /* ---------- pagination ---------- */
