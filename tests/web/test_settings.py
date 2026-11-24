@@ -36,6 +36,7 @@ class FakeActions:
         self.cancelled: list[str] = []
         self.applied: list[str] = []
         self.refilled: list[str] = []
+        self.finished: list[str] = []
 
     def profile(self) -> Profile | None:
         return self.current
@@ -75,6 +76,10 @@ class FakeActions:
     def submit(self, job_id: str) -> bool:
         self.sent.append(job_id)
         return self.waiting.pop(job_id, None) is not None
+
+    def finish(self, job_id: str) -> bool:
+        self.finished.append(job_id)
+        return job_id != "busy"
 
     def refill(self, job_id: str) -> bool:
         self.refilled.append(job_id)
@@ -386,3 +391,54 @@ def test_a_filled_form_lost_in_a_restart_offers_to_fill_it_again(
     )
     assert response.headers["location"].startswith("/applications?done=refill")
     assert actions.refilled == [job_id]
+
+
+def test_a_captcha_form_offers_to_finish_it_on_this_computer(
+    client: TestClient, actions: FakeActions, conn: sqlite3.Connection, job_store: JobStore, clock: FakeClock
+) -> None:
+    from sarthi.db.applications import ApplicationStatus, ApplicationStore  # noqa: PLC0415
+
+    job_id = job_store.save(
+        make_job(title="Data Engineer", company="Delta", url="https://jobs.example.org/delta/1")
+    ).job_id
+    other = job_store.save(
+        make_job(title="QA Engineer", company="Echo", url="https://jobs.example.org/echo/2")
+    ).job_id
+    store = ApplicationStore(conn, clock=clock)
+    store.record(
+        job_id,
+        ApplicationStatus.NEEDS_HUMAN,
+        site="x.example",
+        detail="The form has a CAPTCHA, which only you can solve.",
+    )
+    store.record(
+        other, ApplicationStatus.NEEDS_HUMAN, site="y.example", detail="Workday forms need your own account."
+    )
+    page = client.get("/applications").text
+    assert "Finish it myself" in page and "only you can solve" in page
+    assert f"/applications/{job_id}/finish" in page and f"/applications/{other}/finish" not in page
+    good = token(client, "/applications")
+    response = client.post(
+        f"/applications/{job_id}/finish", data={"csrf": good, "next": "/applications?page=1"}, headers=HERE,
+        follow_redirects=False,
+    )  # fmt: skip
+    assert response.headers["location"] == "/applications?page=1&done=finish"
+    assert actions.finished == [job_id]
+    page = client.get(response.headers["location"]).text
+    assert "Solve the CAPTCHA" in page
+
+
+def test_finishing_by_hand_needs_a_free_browser(client: TestClient, actions: FakeActions) -> None:
+    good = token(client)
+    response = client.post(
+        "/applications/busy/finish", data={"csrf": good}, headers=HERE, follow_redirects=False
+    )
+    assert response.headers["location"].startswith("/applications?done=busy")
+
+
+def test_finishing_by_hand_checks_the_csrf_token(client: TestClient, actions: FakeActions) -> None:
+    response = client.post(
+        "/applications/job-1/finish", data={"csrf": "wrong"}, headers=HERE, follow_redirects=False
+    )
+    assert response.status_code == 403
+    assert actions.finished == []

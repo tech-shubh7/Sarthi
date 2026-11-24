@@ -67,6 +67,10 @@ DONE = {
     "gone": "That is no longer waiting.",
     "applied": "Marked as applied. Good luck!",
     "refill": "Filling the form again. It shows here for your Submit in a minute or two.",
+    "finish": "Opening the form, filled, on this computer (in Docker the link arrives in Telegram). Solve "
+    "the CAPTCHA and press Submit there: Sarthi sees it and records it.",
+    "busy": "A browser window is already open (a login or another form), or Telegram is not connected yet. "
+    "Finish that one first.",
 }
 
 
@@ -302,6 +306,9 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
             return back("/applications", "submitted" if act.submit(job_id) else "gone")
         if decision == "cancel":
             return back("/applications", "cancelled" if act.cancel(job_id) else "gone")
+        if decision == "finish":
+            back_to = _own_page(str(form.get("next", "")), "/applications")
+            return back(back_to, "finish" if act.finish(job_id) else "busy")
         if decision == "refill":
             back_to = _own_page(str(form.get("next", "")), "/applications")
             return back(back_to, "refill" if act.refill(job_id) else "gone")

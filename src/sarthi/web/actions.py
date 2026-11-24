@@ -69,6 +69,10 @@ class DashboardActions(Protocol):
         """Send the filled form (the user approved it on the dashboard). False when nothing is waiting."""
         ...
 
+    def finish(self, job_id: str) -> bool:
+        """Open the filled form on this computer to finish by hand (a CAPTCHA). False when it cannot start."""
+        ...
+
     def refill(self, job_id: str) -> bool:
         """Fill a form again whose filled page is gone (Sarthi restarted). False for an unknown job."""
         ...

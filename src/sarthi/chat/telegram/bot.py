@@ -200,6 +200,8 @@ class TelegramBot:
         )
         # Opens a job site's login page (set by the app): (chat id, site) -> None; it reports back itself.
         self.site_login: Callable[[int, str], Awaitable[None]] | None = None
+        # Opens a filled form on the user's screen to finish by hand (a CAPTCHA): (chat id, job id) -> None.
+        self.finish_by_hand: Callable[[int, str], Awaitable[None]] | None = None
         self._stopping = asyncio.Event()
         self.auto = AutoApply(chats, jobs, queue, auto_apply or AutoApplySettings(), clock=clock)
         self.catchup = CatchUp(api, chats, jobs, matches, queue, send_job=self.send_job, clock=clock)
@@ -552,6 +554,25 @@ class TelegramBot:
                 self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
         return current
 
+    async def _on_window_button(self, callback_id: str, chat_id: int, message_id: int, data: str) -> None:
+        """Buttons that open a browser on the user's computer: a site login, or a CAPTCHA form to finish."""
+        kind, _, value = data.partition(":")
+        await self.api.answer_callback(
+            callback_id, "Opening the form on your computer..." if kind == "finish" else ""
+        )
+        await self.api.edit_buttons(chat_id, message_id, None)
+        if kind == "login":
+            if self.site_login is None:
+                await self.api.send_message(
+                    chat_id, "Logging in from here is not available; run sarthi login."
+                )
+            else:
+                await self.site_login(chat_id, value)
+        elif self.finish_by_hand is None:
+            await self.api.send_message(chat_id, "Finishing a form from here is not available right now.")
+        else:
+            await self.finish_by_hand(chat_id, value)
+
     async def _on_flow_button(self, callback_id: str, chat_id: int, message_id: int, data: str) -> bool:
         """Buttons of the setup and catch-up conversations. True when handled here."""
         if data == "profile:undo" and self.setup is not None:
@@ -569,15 +590,8 @@ class TelegramBot:
             await self.api.answer_callback(callback_id)
             await self.api.edit_buttons(chat_id, message_id, None)
             await self.questions.on_button(chat_id, data)
-        elif data in {f"login:{key}" for key, _ in LOGIN_SITES}:
-            await self.api.answer_callback(callback_id)
-            await self.api.edit_buttons(chat_id, message_id, None)
-            if self.site_login is None:
-                await self.api.send_message(
-                    chat_id, "Logging in from here is not available; run sarthi login."
-                )
-            else:
-                await self.site_login(chat_id, data.split(":", 1)[1])
+        elif data in {f"login:{key}" for key, _ in LOGIN_SITES} or data.startswith("finish:"):
+            await self._on_window_button(callback_id, chat_id, message_id, data)
         elif data.split(":", 1)[0] in ("submit", "cancel", "applied") and self.applying is not None:
             label = await self.applying.on_button(chat_id, data)
             await self.api.answer_callback(callback_id, label)

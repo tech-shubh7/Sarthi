@@ -182,6 +182,13 @@ class WebActions:
         self._app.queue.enqueue(names.APPLY, job_id, priority=Priority.ALERT)
         return True
 
+    def finish(self, job_id: str) -> bool:
+        """Open the filled form on this computer to finish by hand (its CAPTCHA). False if it cannot."""
+        chat_id = owner_chat(self._app.bot.chats)
+        if chat_id is None or self._app.bot.jobs.get(job_id) is None:
+            return False
+        return self._app.start_finish(chat_id, job_id)
+
     def mark_applied(self, job_id: str) -> bool:
         """The user applied on the site themselves, as the Telegram "I applied" button records it."""
         flow = self._app.bot.applying
@@ -326,6 +333,7 @@ class App:
             log.warning("could not start the catch-up after a break: %s", error)
         worker, user = self.worker(), self.user_worker()
         self.bot.site_login = self.site_login
+        self.bot.finish_by_hand = self.finish_by_hand
         tasks = [
             asyncio.create_task(self._telegram()),
             asyncio.create_task(worker.run()),
@@ -341,6 +349,57 @@ class App:
             if dashboard is not None:
                 dashboard.should_exit = True
             await self._shutdown((worker, user), tasks)
+
+    def start_finish(self, chat_id: int, job_id: str) -> bool:
+        """Start finishing a form by hand; False while another browser window (a login, a form) is open."""
+        if self._login is not None and not self._login.done():
+            return False
+        self._login = asyncio.create_task(self._finish(chat_id, job_id))
+        return True
+
+    async def finish_by_hand(self, chat_id: int, job_id: str) -> None:
+        """Telegram's "Finish it myself": the filled form on the user's screen for CAPTCHA and Submit."""
+        if not self.start_finish(chat_id, job_id):
+            await self.bot.api.send_message(
+                chat_id, "A browser window is already open (a login or another form): finish that one first."
+            )
+
+    async def _finish(self, chat_id: int, job_id: str) -> None:
+        send = self.bot.api.send_message
+        # One browser profile, one browser at a time: the hidden one closes (waiting forms refill on a tap).
+        await self.applier.engine.aclose()
+        try:
+            async with login_screen(self.settings.screen_port, self.settings.dashboard_host) as screen:
+                where = (
+                    "A browser window is opening on your computer."
+                    if screen.url is None
+                    else f"Open this on the computer running Sarthi (works for 10 minutes):\n{screen.url}"
+                )
+                await send(
+                    chat_id, f"🧩 {where}\nSarthi fills the form; you solve the CAPTCHA and press Submit."
+                )
+                visible = ApplyEngine(
+                    self.settings.data_dir / "screenshots",
+                    profile_dir=self.settings.data_dir / BROWSER_PROFILE,
+                    headless=False,
+                    browser=self.applier.engine.browser,
+                    env=screen.env,
+                )
+                try:
+                    outcome = await self.applier.finish_by_hand(job_id, visible)
+                finally:
+                    await visible.aclose()
+        except ScreenError as error:
+            await send(chat_id, f"Could not open a browser for the form: {error}")
+            return
+        except Exception:  # a browser that fails must not stop Sarthi
+            log.exception("finishing %s by hand failed", job_id)
+            await send(
+                chat_id, "The form could not be opened. Tap Finish it myself again, or apply on the site."
+            )
+            return
+        if outcome is None:
+            await send(chat_id, "That job (or your profile) is no longer stored.")
 
     async def site_login(self, chat_id: int, site: str) -> None:
         """/login from Telegram: open the site's login page, on a screen in the browser when in Docker."""

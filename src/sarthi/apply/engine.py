@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 
 PAGE_IDLE_S = 30 * 60  # a filled form waits this long for Submit; then it must be filled again
 SUBMIT_WAIT_S = 20.0
+HAND_WAIT_S = 600.0  # finishing a form by hand (a CAPTCHA, then Submit): ten minutes
 NAV_TIMEOUT_MS = 45_000
 SETTLE_TIMEOUT_MS = 10_000
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -89,16 +90,18 @@ class ApplyEngine:
         profile_dir: Path | None = None,
         headless: bool = True,
         browser: ApplicationBrowser | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         """Screenshots go to ``shots_dir``; ``profile_dir`` keeps the user's site logins between runs.
 
         ``browser`` walks the sites no adapter knows (and boards with a saved login); None: they are handed
-        over.
+        over. ``env`` shows a visible browser on another screen (the virtual one of ``sarthi.apply.screen``).
         """
         self.shots_dir = shots_dir
         self.browser = browser
         self.profile_dir = profile_dir
         self.headless = headless
+        self.env = env
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -119,7 +122,9 @@ class ApplyEngine:
                     str(self.profile_dir),
                     headless=self.headless,
                     locale="en-US",
-                    viewport={"width": 1280, "height": 1600},
+                    viewport={"width": 1280, "height": 1600} if self.headless else None,
+                    env=_browser_env(self.env),
+                    args=["--window-position=0,0", "--window-size=1280,900"] if self.env else [],
                 )
             else:
                 self._browser = await self._playwright.chromium.launch(headless=self.headless)
@@ -351,6 +356,35 @@ class ApplyEngine:
             if outcome == "submitted":
                 await self.close_job(job_id)
             return SubmitResult(outcome, detail, shot)
+
+    async def watch(self, job_id: str, wait_s: float = HAND_WAIT_S) -> SubmitResult:
+        """The user finishes a filled form themselves (solves its CAPTCHA, presses Submit): wait and tell.
+
+        Submitted when the site confirms or shows a thank-you page; needs_human when the window was closed or
+        ``wait_s`` passed first. Sarthi presses nothing here.
+        """
+        opened = self._open.get(job_id)
+        if opened is None:
+            return SubmitResult("expired", "The filled form is no longer open.")
+        page, adapter, form_url = opened.page, opened.adapter, opened.url
+        before = await adapters.body_text(page)
+        end = time.monotonic() + wait_s
+        while time.monotonic() < end:
+            if page.is_closed():
+                return SubmitResult("needs_human", "The window was closed before the form was sent.")
+            try:
+                if await adapters.confirmed(page, adapter):
+                    shot = await self._screenshot(page, job_id, "submitted")
+                    return SubmitResult("submitted", f"You sent it; confirmation seen at {page.url}", shot)
+                now = await adapters.body_text(page)
+                moved = page.url.split("#")[0] != form_url.split("#", maxsplit=1)[0]
+                if adapters.THANKS.search(now) and (moved or not adapters.THANKS.search(before)):
+                    shot = await self._screenshot(page, job_id, "submitted")
+                    return SubmitResult("submitted", f"You sent it; thank-you page seen at {page.url}", shot)
+            except PlaywrightError:
+                pass  # the page is navigating: look again in a moment
+            await asyncio.sleep(1.5)
+        return SubmitResult("needs_human", f"Not sent within {round(wait_s / 60)} minutes.")
 
     async def _outcome(
         self, page: Page, adapter: Adapter, form_url: str, before: str = ""

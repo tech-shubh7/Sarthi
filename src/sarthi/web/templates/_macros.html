@@ -66,7 +66,7 @@
 {% macro reason(detail) -%}
 {%- set d = (detail or '')|replace('The form could not be filled: ', '') -%}
 {%- if 'logged-in account' in d or 'signed out' in d or 'sign in' in d -%}This site needs you signed in. Log in once (/login in Telegram) and tap Apply again, or apply there yourself.
-{%- elif 'CAPTCHA' in d -%}The form has a CAPTCHA, which Sarthi never solves: apply there yourself.
+{%- elif 'CAPTCHA' in d -%}The form has a CAPTCHA, which only you can solve. Tap Finish it myself: Sarthi fills the form in a window on this computer, and you solve the CAPTCHA and press Submit.
 {%- elif 'Workday' in d -%}Workday needs your own account with this employer: apply there yourself.
 {%- elif 'no Easy Apply' in d -%}This job applies on the company's own site: apply there yourself.
 {%- elif d -%}{{ d[:1]|upper }}{{ d[1:180] }}

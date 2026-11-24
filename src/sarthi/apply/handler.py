@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from sarthi.apply import adapters
 from sarthi.apply.adapters import FillError
 from sarthi.apply.agent import LoginWallError
-from sarthi.apply.engine import ApplyEngine
+from sarthi.apply.engine import ApplyEngine, SubmitResult
 from sarthi.apply.linkedin import LimitReachedError, LoginNeededError
 from sarthi.clock import Clock, utcnow
 from sarthi.db.answers import AnswerStore
@@ -184,7 +184,7 @@ class Applier:
             return
         if result.captcha:
             await self.engine.close_job(task.key)
-            self._hand_over(task.key, url, "The form has a CAPTCHA, which Sarthi never solves.")
+            self._hand_over(task.key, url, "The form has a CAPTCHA, which only you can solve.")
             return
         if result.failed:
             await self.engine.close_job(task.key)
@@ -210,6 +210,44 @@ class Applier:
             },
             priority=Priority.ALERT,
         )
+
+    async def finish_by_hand(self, job_id: str, engine: ApplyEngine) -> SubmitResult | None:
+        """Fill the form in ``engine`` (a browser on the user's screen) and wait for their own Submit.
+
+        Sarthi only fills and watches: the user solves the CAPTCHA and presses Submit. Returns how it ended,
+        recorded and sent to the chat, or None when the job or the profile is no longer stored.
+        """
+        profile = self._load_profile()
+        job = self.jobs.get(job_id)
+        ctx = (
+            form_context(
+                job_id,
+                profile,
+                jobs=self.jobs,
+                documents=self.documents,
+                answers=self.answers,
+                data_dir=self.data_dir,
+            )
+            if job is not None and profile is not None
+            else None
+        )
+        if job is None or ctx is None:
+            return None
+        url = str(job.apply_url or job.url)
+        await engine.fill(
+            job_id, url, ctx, one_click=needs_login(url)
+        )  # blanks: the user fills them there too
+        outcome = await engine.watch(job_id)
+        status = (
+            ApplicationStatus.SUBMITTED if outcome.outcome == "submitted" else ApplicationStatus.NEEDS_HUMAN
+        )
+        detail = (
+            outcome.detail if outcome.outcome == "submitted" else f"CAPTCHA form not sent: {outcome.detail}"
+        )
+        shot = self._relative(outcome.screenshot)
+        self.applications.record(job_id, status, site=site_of(url), detail=detail, screenshot=shot)
+        self._result(job_id, outcome.outcome, detail, url=url, screenshot=shot)
+        return outcome
 
     async def handle_submit(self, task: TaskRecord) -> None:
         """Submit the fill the user approved (the task carries its one-time code)."""

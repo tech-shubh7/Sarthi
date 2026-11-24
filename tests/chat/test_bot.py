@@ -362,3 +362,20 @@ async def test_login_without_the_app_says_how(
     pair(bot, chats, clock)
     await bot.handle_update(tap(OWNER, "login:linkedin"))
     assert "sarthi login" in api.texts()[-1]
+
+
+async def test_finish_it_myself_opens_the_form_on_the_computer(
+    bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock
+) -> None:
+    pair(bot, chats, clock)
+    await bot.handle_update(tap(OWNER, "finish:job-1"))
+    assert "not available" in api.texts()[-1]  # no app hook (sarthi run sets it)
+    opened: list[tuple[int, str]] = []
+
+    async def finish_by_hand(chat_id: int, job_id: str) -> None:
+        opened.append((chat_id, job_id))
+
+    bot.finish_by_hand = finish_by_hand
+    await bot.handle_update(tap(OWNER + 1, "finish:job-1"))  # not the owner
+    await bot.handle_update(tap(OWNER, "finish:job-1"))
+    assert opened == [(OWNER, "job-1")]

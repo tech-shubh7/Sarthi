@@ -1,5 +1,6 @@
 """The apply engine in a real headless browser, against local test forms (no network)."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -122,3 +123,33 @@ def test_adapters_and_form_pages(given: str, adapter: str, page: str) -> None:
 def test_workday_is_recognised() -> None:
     assert is_workday("https://acme.wd5.myworkdayjobs.com/en-US/careers/job/1")
     assert not is_workday("https://myworkdayjobs.com.evil.example/x")
+
+
+async def test_watch_sees_the_users_own_submit(engine: ApplyEngine) -> None:
+    await engine.fill("job-7", url("captcha.html"), FormContext(ASHA, answers={"Full name": "Asha Rao"}))
+    page = engine._open["job-7"].page
+
+    async def user_sends() -> None:
+        await asyncio.sleep(0.5)
+        await page.evaluate("document.body.innerHTML = '<h1>Thank you for applying!</h1>'")
+
+    sending = asyncio.create_task(user_sends())
+    done = await engine.watch("job-7", wait_s=10)
+    await sending
+    assert done.outcome == "submitted", done.detail
+    assert done.screenshot is not None and done.screenshot.is_file()
+
+
+async def test_watch_gives_up_and_never_presses_submit(engine: ApplyEngine) -> None:
+    await engine.fill("job-8", url("captcha.html"), FormContext(ASHA, answers={"Full name": "Asha Rao"}))
+    done = await engine.watch("job-8", wait_s=1)
+    assert done.outcome == "needs_human"
+    assert "thank" not in (await engine._open["job-8"].page.content()).lower()
+    assert (await engine.watch("no-such-job", wait_s=1)).outcome == "expired"
+
+
+async def test_watch_stops_when_the_window_is_closed(engine: ApplyEngine) -> None:
+    await engine.fill("job-9", url("captcha.html"), FormContext(ASHA, answers={"Full name": "Asha Rao"}))
+    await engine._open["job-9"].page.close()
+    done = await engine.watch("job-9", wait_s=5)
+    assert done.outcome == "needs_human" and "closed" in done.detail

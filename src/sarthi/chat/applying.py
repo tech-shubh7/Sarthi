@@ -155,6 +155,16 @@ class ApplyingFlow:
             text = f"ℹ️ {detail}"
         elif outcome == "expired":
             text = f"⏳ {what}: {detail} Filling it again for a fresh approval…"
+        elif "CAPTCHA" in str(task.payload.get("detail") or ""):
+            text = (
+                f"🧩 {what} has a CAPTCHA, which only you can solve.\n\n"
+                "When you are at your computer, tap <b>Finish it myself</b>: Sarthi opens the form there "
+                "with every field filled; you solve the CAPTCHA and press Submit, and Sarthi records it."
+            )
+            markup = buttons(
+                [("🧩 Finish it myself", f"finish:{task.key}")],
+                [("✅ I applied myself", f"applied:{task.key}")],
+            )
         else:
             text = (
                 f"🙋 {what} needs you: {detail}\n\n"

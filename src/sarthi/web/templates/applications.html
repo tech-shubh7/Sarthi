@@ -53,7 +53,10 @@
         {% if r.status in ('needs_human', 'failed') and r.detail %}<p class="why">{{ reason(r.detail) }}</p>{% endif %}
         {% if r.status == 'needs_human' and can_edit %}
         <div class="row-actions">
-          <a class="button small" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">Open &amp; apply</a>
+          {% if 'CAPTCHA' in r.detail %}
+          <form method="post" action="/applications/{{ r.job_id }}/finish"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small" type="submit">Finish it myself</button></form>
+          {% endif %}
+          <a class="button small{{ ' ghost' if 'CAPTCHA' in r.detail else '' }}" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">Open &amp; apply</a>
           <form method="post" action="/applications/{{ r.job_id }}/applied"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small quiet" type="submit">I applied</button></form>
         </div>
         {% endif %}

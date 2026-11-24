@@ -48,6 +48,9 @@ class FakeEngine:
     async def close_job(self, job_id: str) -> None:
         self.closed.append(job_id)
 
+    async def watch(self, job_id: str) -> SubmitResult:
+        return self.outcome
+
 
 PROFILE = Profile(preferences=Preferences(roles=("Backend Engineer",), home_country="IN"), resume_text="x")
 
@@ -366,12 +369,22 @@ async def test_results(flow: ApplyingFlow, job_store: JobStore) -> None:
     api: Any = flow.api
     await flow.result(
         TaskRecord(
-            1, names.APPLY_RESULT, job_id, {"outcome": "needs_human", "detail": "CAPTCHA", "url": LEVER}, 1
+            1, names.APPLY_RESULT, job_id, {"outcome": "needs_human", "detail": "Workday", "url": LEVER}, 1
         ),
         OWNER,
     )
-    assert "needs you: CAPTCHA" in api.texts()[-1]
+    assert "needs you: Workday" in api.texts()[-1]
     assert api.sent[-1][2]["inline_keyboard"][0][0]["callback_data"] == f"applied:{job_id}"
+    await flow.result(
+        TaskRecord(1, names.APPLY_RESULT, job_id, {"outcome": "needs_human", "detail": "has a CAPTCHA"}, 1),
+        OWNER,
+    )
+    assert "Finish it myself" in api.texts()[-1] and "only you can solve" in api.texts()[-1]
+    rows = api.sent[-1][2]["inline_keyboard"]
+    assert [rows[0][0]["callback_data"], rows[1][0]["callback_data"]] == [
+        f"finish:{job_id}",
+        f"applied:{job_id}",
+    ]
     await flow.result(
         TaskRecord(1, names.APPLY_RESULT, job_id, {"outcome": "submitted", "detail": "Confirmation seen"}, 1),
         OWNER,
@@ -476,3 +489,48 @@ async def test_auto_apply_never_sends_on_a_job_board_or_with_questions_left(
     await worker.handle_apply(TaskRecord(2, names.APPLY, asks, {}, 1))
     assert queue.claim([names.SUBMIT]) is None
     assert not chats.is_auto(asks)  # the user answers, so the user approves
+
+
+@pytest.mark.parametrize(
+    ("outcome", "status", "detail"),
+    [
+        (SubmitResult("submitted", "You sent it"), ApplicationStatus.SUBMITTED, "You sent it"),
+        (
+            SubmitResult("needs_human", "Not sent within 10 minutes."),
+            ApplicationStatus.NEEDS_HUMAN,
+            "CAPTCHA",
+        ),
+    ],
+)
+async def test_finishing_by_hand_records_what_the_user_did(
+    conn: sqlite3.Connection,
+    job_store: JobStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+    clock: FakeClock,
+    outcome: SubmitResult,
+    status: ApplicationStatus,
+    detail: str,
+) -> None:
+    job_id = job_at(job_store, LEVER)
+    engine = FakeEngine(FillResult("lever", captcha=True, code="X"), outcome)
+    done = await applier(conn, job_store, queue, tmp_path, engine, clock).finish_by_hand(job_id, engine)  # type: ignore[arg-type]
+    assert done == outcome
+    assert engine.filled == [LEVER]
+    record = ApplicationStore(conn).get(job_id)
+    assert record is not None
+    assert record.status is status
+    assert detail in record.detail
+    sent = payload(queue, names.APPLY_RESULT)
+    assert sent["outcome"] == outcome.outcome and sent["url"] == LEVER
+    assert detail in sent["detail"]  # not sent: the chat offers Finish it myself again
+
+
+async def test_finishing_a_job_no_longer_stored_does_nothing(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    engine = FakeEngine(FILLED)
+    assert (
+        await applier(conn, job_store, queue, tmp_path, engine, clock).finish_by_hand("gone", engine) is None
+    )  # type: ignore[arg-type]
+    assert engine.filled == []
