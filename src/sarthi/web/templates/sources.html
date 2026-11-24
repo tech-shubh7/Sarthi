@@ -1,28 +1,37 @@
 {% extends "base.html" %}
+{% from "_macros.html" import empty %}
 {% block title %}Sources · Sarthi{% endblock %}
-{% block main_class %}wide{% endblock %}
 {% block main %}
-<div class="head">
-  <p class="eyebrow">Where jobs come from</p>
-  <h1>Sources</h1>
-  <p class="lede">Each job source and its health. A failing source is tried less often until it works again.</p>
-</div>
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Where jobs come from</p>
+    <h1>Sources</h1>
+    <p class="lede">Each job source and its health. A failing source is tried less often until it works again.</p>
+  </div>
+</header>
 {% if rows %}
+<section class="stats" aria-label="Source health">
+  <div class="card stat teal"><span class="stat-label">Working</span><b class="stat-n">{{ rows|selectattr('failures', 'eq', 0)|list|length }}</b></div>
+  <div class="card stat saffron"><span class="stat-label">Struggling</span><b class="stat-n">{{ rows|selectattr('failures', 'gt', 0)|selectattr('failures', 'lt', 3)|list|length }}</b></div>
+  <div class="card stat"><span class="stat-label">Failing</span><b class="stat-n">{{ rows|selectattr('failures', 'ge', 3)|list|length }}</b></div>
+</section>
+<div class="card table-card">
 <table class="table">
-  <thead><tr><th>Source</th><th>Health</th><th>Last worked</th><th>Last checked</th><th>Last error</th></tr></thead>
+  <thead><tr><th>Source</th><th>Health</th><th>Last worked</th><th>Last checked</th><th>Last problem</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
-      <td class="mono">{{ r.name }}</td>
-      <td>{% if r.failures == 0 %}<span class="pill ok">Working</span>{% elif r.failures < 3 %}<span class="pill warn">{{ r.failures }} failure{{ '' if r.failures == 1 else 's' }}</span>{% else %}<span class="pill bad">Failing ({{ r.failures }} in a row)</span>{% endif %}</td>
-      <td class="faint">{{ ago(r.last_ok_at) or 'never' }}</td>
-      <td class="faint">{{ ago(r.last_checked_at) }}</td>
-      <td class="faint err">{{ (r.last_error or '')[:160] }}</td>
+      <td data-label="Source"><b>{{ r.name.split(':')[-1] }}</b><span class="job-sub">{{ r.name.split(':')[0] if ':' in r.name else '' }}</span></td>
+      <td data-label="Health">{% if r.failures == 0 %}<span class="pill ok">Working</span>{% elif r.failures < 3 %}<span class="pill warn">{{ r.failures }} failure{{ '' if r.failures == 1 else 's' }}</span>{% else %}<span class="pill bad">Failing · {{ r.failures }} in a row</span>{% endif %}</td>
+      <td data-label="Worked" class="faint">{{ ago(r.last_ok_at) or 'never' }}</td>
+      <td data-label="Checked" class="faint">{{ ago(r.last_checked_at) }}</td>
+      <td data-label="Problem" class="err">{{ (r.last_error or '')[:160] }}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
-<div class="empty"><h2>No source read yet</h2><p>Start Sarthi with <code>uv run sarthi run</code>.</p></div>
+{{ empty('No source read yet', 'Sources are read as soon as Sarthi runs (sarthi run).') }}
 {% endif %}
 {% endblock %}

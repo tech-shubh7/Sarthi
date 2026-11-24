@@ -386,7 +386,7 @@ class App:
             chats.set_state(PAIR_LINK_KEY, session.link)
             chats.set_state(STEP_KEY, "create")
             log.info(
-                "Connect Telegram: open %s and tap Create my Sarthi bot (or see http://127.0.0.1:%d)",
+                "Connect Telegram: open %s and tap Create (or use the button at http://127.0.0.1:%d)",
                 session.link,
                 self.settings.dashboard_port,
             )

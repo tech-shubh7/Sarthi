@@ -20,9 +20,9 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -51,6 +51,7 @@ MATCH_DAYS = 7
 DECISIONS = {"alert": ("alert",), "digest": ("digest",), "all": ("alert", "digest")}
 MINUTES_PER_HOUR, HOURS_SHOWN = 60, 48
 MAX_RESUME_BYTES = 5_000_000
+PAGE_SIZE = 25
 JOB_ACTIONS = ("apply", "skip", "later")
 BACK_TO = ("/matches", "/", "/applications")
 # What a change did, by a fixed key in the address: nothing a page elsewhere puts in a link is ever shown.
@@ -103,6 +104,12 @@ def _from_here(request: Request) -> bool:
     source = request.headers.get("origin") or request.headers.get("referer") or ""
     host = (urlparse(source).hostname or "").lower()
     return host in LOCAL_NAMES
+
+
+def _page(asked: int, total: int) -> tuple[int, int]:
+    """(this page, number of pages): an out-of-range page number shows the nearest real page."""
+    pages = max(1, -(-total // PAGE_SIZE))
+    return min(max(asked, 1), pages), pages
 
 
 def _text_fields(form: FormData) -> dict[str, str]:
@@ -175,17 +182,37 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         return page(request, "overview.html", "overview")
 
     @app.get("/matches", response_class=HTMLResponse)
-    async def matches(request: Request, show: str = "all") -> HTMLResponse:
+    async def matches(
+        request: Request, show: str = "all", q: str = "", page_no: int = Query(1, alias="page")
+    ) -> HTMLResponse:
         show = show if show in DECISIONS else "all"
-        rows = queries.matches(DECISIONS[show], clock() - timedelta(days=MATCH_DAYS))
-        return page(request, "matches.html", "matches", rows=rows, show=show, days=MATCH_DAYS)
+        q = q.strip()[:80]
+        since = clock() - timedelta(days=MATCH_DAYS)
+        counts = {key: queries.count_matches(kinds, since, q) for key, kinds in DECISIONS.items()}
+        total = counts[show]
+        number, pages = _page(page_no, total)
+        rows = queries.matches(DECISIONS[show], since, PAGE_SIZE, offset=(number - 1) * PAGE_SIZE, query=q)
+
+        def link(show: str = show, page: int = number) -> str:
+            return "/matches?" + urlencode({"show": show, **({"q": q} if q else {}), "page": page})
+
+        return page(
+            request, "matches.html", "matches", rows=rows, show=show, q=q, counts=counts, days=MATCH_DAYS,
+            page=number, pages=pages, total=total, size=PAGE_SIZE, link=link,
+            link_page=lambda n: link(page=n),
+        )  # fmt: skip
 
     @app.get("/applications", response_class=HTMLResponse)
-    async def applications(request: Request) -> HTMLResponse:
+    async def applications(request: Request, page_no: int = Query(1, alias="page")) -> HTMLResponse:
         pending = actions.pending() if actions is not None else {}
+        total = queries.count_applications()
+        number, pages = _page(page_no, total)
+        rows = queries.applications(PAGE_SIZE, offset=(number - 1) * PAGE_SIZE)
         return page(
-            request, "applications.html", "applications", rows=queries.applications(), pending=pending
-        )
+            request, "applications.html", "applications", rows=rows, pending=pending,
+            waiting=queries.applications_for(list(pending)), page=number, pages=pages, total=total,
+            size=PAGE_SIZE, link_page=lambda n: f"/applications?page={n}",
+        )  # fmt: skip
 
     @app.get("/sources", response_class=HTMLResponse)
     async def sources(request: Request) -> HTMLResponse:

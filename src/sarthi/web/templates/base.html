@@ -1,9 +1,10 @@
-<!doctype html>
+{% from "_macros.html" import icon %}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Sarthi{% endblock %}</title>
+<link rel="preload" href="{{ asset('fonts/InterVariable.woff2') }}" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ asset('app.css') }}">
 <link rel="icon" href="{{ asset('brand/favicon.ico') }}" sizes="any">
 <link rel="icon" type="image/svg+xml" href="{{ asset('brand/sarthi-s.svg') }}">
@@ -13,26 +14,32 @@
 <body>
 <div class="shell">
 <aside class="side">
-  <a class="brand" href="/"><img src="{{ asset('brand/sarthi-wordmark.svg') }}" alt="Sarthi" width="150" height="47"></a>
-  <nav class="nav" aria-label="Pages">
-    <a href="/" {% if nav == 'overview' %}aria-current="page"{% endif %}><span>Overview</span></a>
-    <a href="/matches" {% if nav == 'matches' %}aria-current="page"{% endif %}><span>Matches</span><b class="badge hot">{{ ov.decisions.get('alert', 0) }}</b></a>
-    <a href="/applications" {% if nav == 'applications' %}aria-current="page"{% endif %}><span>Applications</span><b class="badge">{{ ov.applications.values()|sum }}</b></a>
-    <a href="/sources" {% if nav == 'sources' %}aria-current="page"{% endif %}><span>Sources</span></a>
-    <a href="/settings" {% if nav == 'settings' %}aria-current="page"{% endif %}><span>Settings</span></a>
+  <a class="brand" href="/" aria-label="Sarthi home"><img src="{{ asset('brand/sarthi-wordmark.svg') }}" alt="Sarthi" width="156" height="49"></a>
+  <nav aria-label="Pages">
+    <p class="nav-label">Your search</p>
+    <div class="nav">
+      <a href="/" {% if nav == 'overview' %}aria-current="page"{% endif %}>{{ icon('overview') }}<span>Overview</span></a>
+      <a href="/matches" {% if nav == 'matches' %}aria-current="page"{% endif %}>{{ icon('matches') }}<span>Matches</span>{% if ov.decisions.get('alert', 0) %}<b class="count hot">{{ ov.decisions.get('alert', 0) }}</b>{% endif %}</a>
+      <a href="/applications" {% if nav == 'applications' %}aria-current="page"{% endif %}>{{ icon('applications') }}<span>Applications</span>{% if ov.applications.values()|sum %}<b class="count">{{ ov.applications.values()|sum }}</b>{% endif %}</a>
+      <a href="/sources" {% if nav == 'sources' %}aria-current="page"{% endif %}>{{ icon('sources') }}<span>Sources</span></a>
+      <a href="/settings" {% if nav == 'settings' %}aria-current="page"{% endif %}>{{ icon('settings') }}<span>Settings</span></a>
+    </div>
   </nav>
-  {% if can_edit %}
-  <p class="side-note">Everything here works in Telegram too. A change made in one shows in the other.</p>
-  {% else %}
-  <p class="side-note">Read-only: Sarthi is not running. Start it with <code>sarthi run</code> to change things here.</p>
-  {% endif %}
+  <div class="side-foot">
+    {% if can_edit %}
+    <div class="status-card"><span class="dot"></span><p><b>Sarthi is running</b>Everything here also works in Telegram.</p></div>
+    {% else %}
+    <div class="status-card"><span class="dot off"></span><p><b>Read-only</b>Start Sarthi (<code>sarthi run</code>) to change things here.</p></div>
+    {% endif %}
+    <p class="version">Sarthi {{ version }} · this computer only</p>
+  </div>
 </aside>
 <div class="content">
-<main class="{% block main_class %}{% endblock %}">
-{% if done %}<p class="notice" role="status">{{ done }}</p>{% endif %}
+<main>
+{% if done %}<p class="notice" role="status">{{ icon('check') }}{{ done }}</p>{% endif %}
 {% block main %}{% endblock %}
 </main>
-<footer>Sarthi {{ version }} · runs on this computer only; nothing on this page is sent anywhere.</footer>
+<footer>Your data stays on this computer. Nothing on this page is sent anywhere.</footer>
 </div>
 </div>
 </body>

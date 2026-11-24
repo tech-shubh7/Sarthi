@@ -36,6 +36,12 @@ copied into [`licenses/`](licenses/) and listed below. Every adapted file also c
 | JobDrop | [licenses/JobDrop-MIT.txt](licenses/JobDrop-MIT.txt) | `src/sarthi/sources/aggregators.py` (Adzuna and Jooble) |
 | ATS-Scrapers | [licenses/ATS-Scrapers-MIT.txt](licenses/ATS-Scrapers-MIT.txt) | `src/sarthi/sources/catalog.py` (snapshot query, from its README); also a library dependency |
 
+## Fonts
+
+| Font | Licence | Used for |
+|---|---|---|
+| [Inter](https://github.com/rsms/inter) 4.1 | SIL OFL 1.1 ([licenses/Inter-OFL.txt](licenses/Inter-OFL.txt)) | The dashboard's typeface (`src/sarthi/web/static/fonts/InterVariable.woff2`) |
+
 ## Libraries used at run time (not copied)
 
 - [typst-py](https://github.com/messense/typst-py) (Apache-2.0): PDF rendering of resumes and cover letters.

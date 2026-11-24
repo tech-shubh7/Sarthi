@@ -1,46 +1,61 @@
 {% extends "base.html" %}
-{% from "_macros.html" import label, score, job_link %}
+{% from "_macros.html" import icon, label, score, job_link, pager, empty %}
 {% block title %}Matches · Sarthi{% endblock %}
-{% block main_class %}wide{% endblock %}
 {% block main %}
-<div class="head">
-  <p class="eyebrow">Last {{ days }} days</p>
-  <h1>Matches</h1>
-  <p class="lede">Jobs that fit your profile, best first. Answer them here or in Telegram.</p>
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Last {{ days }} days</p>
+    <h1>Matches</h1>
+    <p class="lede">Jobs that fit your profile, best first. Answer them here or in Telegram: both stay in step.</p>
+  </div>
+</header>
+
+<div class="toolbar">
+  <nav class="tabs" aria-label="Which matches">
+    {% for key, name in [('all', 'All'), ('alert', 'Strong'), ('digest', 'Fair')] %}
+    <a href="{{ link(show=key, page=1) }}" {% if show == key %}aria-current="page"{% endif %}>{{ name }}<span class="count">{{ '{:,}'.format(counts[key]) }}</span></a>
+    {% endfor %}
+  </nav>
+  <form class="search" method="get" action="/matches" role="search">
+    <input type="hidden" name="show" value="{{ show }}">
+    <label>{{ icon('search') }}<span class="sr-only">Search roles and companies</span>
+      <input type="search" name="q" value="{{ q }}" placeholder="Search roles or companies" maxlength="80"></label>
+    <button class="button quiet" type="submit">Search</button>
+  </form>
 </div>
-<nav class="tabs" aria-label="Which matches">
-  <a href="/matches?show=all" {% if show == 'all' %}aria-current="page"{% endif %}>All</a>
-  <a href="/matches?show=alert" {% if show == 'alert' %}aria-current="page"{% endif %}>Strong</a>
-  <a href="/matches?show=digest" {% if show == 'digest' %}aria-current="page"{% endif %}>Fair</a>
-</nav>
+
 {% if rows %}
+<div class="card table-card">
 <table class="table">
-  <thead><tr><th>Score</th><th>Role</th><th>Company</th><th>Found</th><th>Source</th><th>Your answer</th></tr></thead>
+  <thead><tr><th>Match</th><th>Role</th><th>Found</th><th>Source</th><th>Your answer</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
-      <td>{{ score(r.score) }}</td>
-      <td>{{ job_link(r.title, r.url) }}</td>
-      <td>{{ r.company }}</td>
-      <td class="faint">{{ ago(r.first_seen_at) }}</td>
-      <td class="faint">{{ r.source }}</td>
-      <td>
+      <td data-label="Match">{{ score(r.score, r.ai_used) }}</td>
+      <td>{{ job_link(r.title, r.url) }}<span class="job-sub">{{ r.company }}</span></td>
+      <td data-label="Found" class="faint">{{ ago(r.first_seen_at) }}</td>
+      <td data-label="Source"><span class="chip">{{ r.source.split(':')[-1] }}</span></td>
+      <td data-label="Answer">
         {% if can_edit and r.status in (none, 'alerted', 'digested', 'later') %}
         <div class="row-actions">
-          {% if r.status == 'later' %}<span class="pill">Later</span>{% endif %}
           <form method="post" action="/jobs/{{ r.job_id }}/apply"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small" type="submit">Apply</button></form>
           {% if r.status != 'later' %}
           <form method="post" action="/jobs/{{ r.job_id }}/later"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small quiet" type="submit">Later</button></form>
-          {% endif %}
-          <form method="post" action="/jobs/{{ r.job_id }}/skip"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small quiet" type="submit">Skip</button></form>
+          {% else %}<span class="pill s-later">Saved for later</span>{% endif %}
+          <form method="post" action="/jobs/{{ r.job_id }}/skip"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/matches"><button class="button small ghost" type="submit">Skip</button></form>
         </div>
-        {% elif r.status %}{{ label(r.status) }}{% endif %}
+        {% elif r.status %}<span class="pill s-{{ r.status }}">{{ label(r.status) }}</span>{% endif %}
       </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+{{ pager(page, pages, total, size, link_page) }}
+</div>
+<p class="hint">Scores with a dashed border were only compared on keywords: the AI has not read that job yet.</p>
+{% elif q %}
+{{ empty('Nothing matches "' ~ q ~ '"', 'Try a shorter word, or another tab.') }}
 {% else %}
-<div class="empty"><h2>No matches in the last {{ days }} days</h2><p>Sarthi keeps looking; strong ones also arrive in Telegram.</p></div>
+{{ empty('No matches in the last ' ~ days ~ ' days', 'Sarthi keeps looking. Strong matches also arrive in Telegram the moment they are found.') }}
 {% endif %}
 {% endblock %}

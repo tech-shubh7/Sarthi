@@ -5,9 +5,12 @@ uses Telegram's [managed bots](https://core.telegram.org/bots/features#managed-b
 as a [Cloudflare Worker](https://developers.cloudflare.com/workers/): nothing to keep switched on, and the
 free plan is plenty (a few requests per new user, once).
 
-**What it sees:** only the setup handshake. It hands each new bot's token to the Sarthi that asked for it
-once, erases it, and deletes every session after 15 minutes. Messages, jobs and resumes never pass through
-it; after setup each Sarthi talks to Telegram directly.
+**What it sees:** only the setup handshake. It never stores a bot token: it asks Telegram for it at the moment
+the Sarthi that asked collects it, once, and deletes every session after 15 minutes. Messages, jobs and
+resumes never pass through it; after setup each Sarthi talks to Telegram directly.
+
+**What the user does:** taps *Create my Sarthi bot* on the dashboard; Telegram opens its own "Create bot"
+window with the name filled in; they tap Create, then Start in the new bot. Nothing to type.
 
 **What users trust:** Telegram lets a manager bot fetch or reset the tokens of the bots made through it. This
 code never does so after the hand-over, and it is open for anyone to check. People who want no manager at all
@@ -17,6 +20,12 @@ can still use a bot of their own from @BotFather (`SARTHI_TELEGRAM_BOT_TOKEN`).
 
 You need [Node.js](https://nodejs.org) 22.13 or later and a free [Cloudflare](https://dash.cloudflare.com/sign-up)
 account. Run these from this folder (`deploy/telegram-connect`).
+
+> **On Windows:** use a normal folder (cmd cannot `cd` into a `\\wsl.localhost\...` path), for example a copy of
+> this folder in your user folder, and install Wrangler there: `npm install --save-dev wrangler`. If it then says
+> *"@cloudflare/workerd-windows-64 could not be found"* (an npm bug with optional packages), install the version
+> it names: `npm install --save-dev @cloudflare/workerd-windows-64@<version>`. Type secrets at Wrangler's prompt
+> rather than piping them from PowerShell, which adds an invisible line break (the worker trims it anyway).
 
 1. **Log in to Cloudflare** (opens your browser):
 
@@ -40,7 +49,8 @@ account. Run these from this folder (`deploy/telegram-connect`).
    npx wrangler secret put WEBHOOK_SECRET
    ```
 
-4. **Deploy.** It prints the address, like `https://sarthi-connect.<your-name>.workers.dev`:
+4. **Deploy.** The first time, Cloudflare asks for a `workers.dev` name for your account (it becomes part of the
+   address). It prints the address, like `https://sarthi-connect.<your-name>.workers.dev`:
 
    ```bash
    npx wrangler deploy

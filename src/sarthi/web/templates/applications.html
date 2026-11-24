@@ -1,26 +1,28 @@
 {% extends "base.html" %}
-{% from "_macros.html" import label, reply, job_link %}
+{% from "_macros.html" import icon, label, reply, job_link, pager, empty %}
 {% block title %}Applications · Sarthi{% endblock %}
-{% block main_class %}wide{% endblock %}
 {% block main %}
-<div class="head">
-  <p class="eyebrow">Your search</p>
-  <h1>Applications</h1>
-  <p class="lede">Every form Sarthi filled or sent for you, and the latest reply about it.</p>
-</div>
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Your search</p>
+    <h1>Applications</h1>
+    <p class="lede">Every form Sarthi filled or sent for you, and the latest reply about it.</p>
+  </div>
+</header>
 
-{% set waiting = rows|selectattr('job_id', 'in', pending)|list %}
 {% if waiting %}
-<section class="waiting" aria-label="Waiting for your Submit">
-  <h2>Waiting for your Submit</h2>
+<section class="section" aria-label="Waiting for your Submit">
+  <h2 class="card-title">{{ icon('applications') }}Waiting for your Submit · {{ waiting|length }}</h2>
   {% for r in waiting %}
-  <article class="panel pending">
+  <article class="card pending">
     <div>
-      <p class="pending-title">{{ job_link(r.title, r.url) }} <span class="faint">at {{ r.company }}</span></p>
+      <h3>{{ job_link(r.title, r.url) }}</h3>
+      <span class="job-sub">{{ r.company }} · filled {{ ago(r.updated_at) }}</span>
       <p class="hint">Check the filled form, then submit. Nothing is sent until you do.</p>
       <div class="row-actions">
         <form method="post" action="/applications/{{ r.job_id }}/submit"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button" type="submit">Submit application</button></form>
         <form method="post" action="/applications/{{ r.job_id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button quiet" type="submit">Cancel</button></form>
+        {% if pending[r.job_id].screenshot %}<a class="button ghost" href="/applications/{{ r.job_id }}/form.png" target="_blank" rel="noopener">View full form</a>{% endif %}
       </div>
     </div>
     {% if pending[r.job_id].screenshot %}
@@ -32,22 +34,24 @@
 {% endif %}
 
 {% if rows %}
+<div class="card table-card">
 <table class="table">
-  <thead><tr><th>Role</th><th>Company</th><th>Status</th><th>Reply</th><th>Site</th><th>Updated</th></tr></thead>
+  <thead><tr><th>Role</th><th>Status</th><th>Reply</th><th>Site</th><th>Updated</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
-      <td>{{ job_link(r.title, r.url) }}</td>
-      <td>{{ r.company }}</td>
-      <td><span class="pill s-{{ r.status }}">{{ label(r.status) }}</span></td>
-      <td>{{ reply(r.reply_kind) }}</td>
-      <td class="faint">{{ r.site }}</td>
-      <td class="faint">{{ ago(r.updated_at) }}</td>
+      <td>{{ job_link(r.title, r.url) }}<span class="job-sub">{{ r.company }}</span></td>
+      <td data-label="Status"><span class="pill s-{{ r.status }}">{{ label(r.status) }}</span></td>
+      <td data-label="Reply">{{ reply(r.reply_kind) or '' }}</td>
+      <td data-label="Site"><span class="chip">{{ r.site or '' }}</span></td>
+      <td data-label="Updated" class="faint">{{ ago(r.updated_at) }}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+{{ pager(page, pages, total, size, link_page) }}
+</div>
 {% else %}
-<div class="empty"><h2>No applications yet</h2><p>Tap Apply on a match (here or in Telegram); it shows up here once the form is filled.</p></div>
+{{ empty('No applications yet', 'Tap Apply on a match, here or in Telegram. It shows up here once the form is filled.') }}
 {% endif %}
 {% endblock %}

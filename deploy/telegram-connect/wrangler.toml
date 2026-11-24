@@ -2,6 +2,8 @@
 name = "sarthi-connect"
 main = "src/index.js"
 compatibility_date = "2026-11-01"
+workers_dev = true     # https://sarthi-connect.<name>.workers.dev
+preview_urls = false   # no extra public test addresses
 
 [vars]
 BOT_USERNAME = "SarthiiAiBot"   # the manager bot (Bot Management Mode on, webhook pointing here)

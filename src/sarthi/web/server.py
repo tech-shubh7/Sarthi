@@ -31,6 +31,9 @@ class NoFreePortError(Exception):
 
 def _bindable(port: int, host: str = HOST) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # As Uvicorn binds: a port still cooling down from the last run (TIME_WAIT) is free to use, so a quick
+        # restart keeps the dashboard at its usual address instead of moving to the next port.
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind((host, port))
         except OSError as e:

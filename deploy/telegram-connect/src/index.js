@@ -1,19 +1,21 @@
 // Sarthi's Telegram connector: a Cloudflare Worker that gives every Sarthi user their own Telegram bot in
 // one tap, with no @BotFather and no token to copy (Telegram "managed bots", Bot API 9.6).
 //
-// It runs only when called (no server to keep on) and holds nothing for long:
-//   1. A Sarthi asks for a setup session (POST /v1/sessions) and shows the user a link to the manager bot.
-//   2. The user opens it (/start c_<code>): the session is tied to their Telegram account, and the manager
-//      bot shows a "Create my Sarthi bot" button.
-//   3. The user taps it and confirms: Telegram creates the user's own bot and tells this worker
-//      (update "managed_bot"); the worker fetches that bot's token (getManagedBotToken).
-//   4. The Sarthi collects the token once (GET /v1/sessions/<id>); it is erased at once, and every session is
-//      deleted after 15 minutes. From then on that Sarthi talks to Telegram directly, through its own bot.
-// Messages, jobs and resumes never pass through here.
+// It runs only when called (no server to keep on) and stores no bot token at any time:
+//   1. A Sarthi asks for a setup session (POST /v1/sessions) and shows the user its link.
+//   2. The link opens Telegram's own "Create bot" window with the name and a username filled in; the
+//      username carries the session's code (sarthi_<code>_bot). The user taps Create.
+//   3. Telegram tells this worker (update "managed_bot"); the code in the new bot's username finds the
+//      session. (If the user changed the username, opening /start c_<code> on the manager bot finds it.)
+//   4. The Sarthi asks again (GET /v1/sessions/<id>): only then is the bot's token fetched from Telegram
+//      (getManagedBotToken) and handed over, once. Every session is deleted after 15 minutes.
+// From then on that Sarthi talks to Telegram directly, through its own bot. Messages, jobs and resumes
+// never pass through here.
 
 const SESSION_TTL_S = 15 * 60;
 const SESSIONS_PER_IP_PER_HOUR = 10;
 const CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"; // no 0/o, 1/l/i: easy to read back
+const CODE_IN_USERNAME = /^sarthi_([a-z2-9]{10})_bot$/i;
 const API = "https://api.telegram.org";
 
 const json = (body, status = 200) =>
@@ -21,6 +23,9 @@ const json = (body, status = 200) =>
     status,
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
+
+// Secrets set from a terminal can carry an invisible line break; compare and use them trimmed.
+const clean = (value) => String(value || "").trim();
 
 function randomText(length, alphabet = CODE_ALPHABET) {
   const bytes = crypto.getRandomValues(new Uint8Array(length));
@@ -33,8 +38,8 @@ async function sha256(text) {
 }
 
 function sameText(a, b) {
-  // Constant-time comparison of two strings of equal length (hex digests here).
-  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  // Constant-time comparison of two strings of equal length.
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length || a.length === 0) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
@@ -47,7 +52,7 @@ export function nowSeconds() {
 // ---- Telegram ----
 
 export async function telegram(env, method, payload, fetcher = fetch) {
-  const response = await fetcher(`${env.TELEGRAM_API || API}/bot${env.BOT_TOKEN}/${method}`, {
+  const response = await fetcher(`${env.TELEGRAM_API || API}/bot${clean(env.BOT_TOKEN)}/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -57,8 +62,13 @@ export async function telegram(env, method, payload, fetcher = fetch) {
   return body.result;
 }
 
-function say(env, chatId, text, extra = {}, fetcher = fetch) {
-  return telegram(env, "sendMessage", { chat_id: chatId, text, parse_mode: "HTML", ...extra }, fetcher);
+async function say(env, chatId, text, extra = {}, fetcher = fetch) {
+  // A user who made their bot straight from the link never opened this chat: Telegram refuses, and that is fine.
+  try {
+    return await telegram(env, "sendMessage", { chat_id: chatId, text, parse_mode: "HTML", ...extra }, fetcher);
+  } catch {
+    return null;
+  }
 }
 
 // ---- sessions (for Sarthi) ----
@@ -66,6 +76,10 @@ function say(env, chatId, text, extra = {}, fetcher = fetch) {
 async function cleanUp(db, now) {
   await db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now).run();
   await db.prepare("DELETE FROM hits WHERE at < ?").bind(now - 3600).run();
+}
+
+export function createLink(env, code) {
+  return `https://t.me/newbot/${env.BOT_USERNAME}/sarthi_${code}_bot?name=Sarthi`;
 }
 
 export async function createSession(env, ip, now = nowSeconds()) {
@@ -85,24 +99,32 @@ export async function createSession(env, ip, now = nowSeconds()) {
     ok: true,
     id,
     secret,
-    start_link: `https://t.me/${env.BOT_USERNAME}?start=c_${code}`,
+    start_link: createLink(env, code), // opens Telegram's "Create bot" window directly
+    fallback_link: `https://t.me/${env.BOT_USERNAME}?start=c_${code}`,
     expires_in: SESSION_TTL_S,
   });
 }
 
-export async function readSession(env, id, authorization, now = nowSeconds()) {
+export async function readSession(env, id, authorization, now = nowSeconds(), fetcher = fetch) {
   const db = env.DB;
   const row = await db.prepare("SELECT * FROM sessions WHERE id = ? AND expires_at >= ?").bind(id, now).first();
   const given = (authorization || "").replace(/^Bearer\s+/i, "");
   if (!row || !given || !sameText(row.secret_hash, await sha256(given))) return json({ ok: false, error: "unknown or expired session" }, 404);
   if (row.status !== "ready") return json({ ok: true, status: row.status });
-  // Handed over exactly once: the token is erased in the same step it is read.
-  const claimed = await db.prepare("UPDATE sessions SET status = 'claimed', token = NULL WHERE id = ? AND status = 'ready'").bind(id).run();
+  // Handed over exactly once: claimed first, then the token is fetched from Telegram (never stored here).
+  const claimed = await db.prepare("UPDATE sessions SET status = 'claimed' WHERE id = ? AND status = 'ready'").bind(id).run();
   if (!claimed.meta || claimed.meta.changes !== 1) return json({ ok: true, status: "claimed" });
+  let token;
+  try {
+    token = await telegram(env, "getManagedBotToken", { user_id: row.bot_id }, fetcher);
+  } catch (error) {
+    await db.prepare("UPDATE sessions SET status = 'ready' WHERE id = ?").bind(id).run(); // try again next time
+    return json({ ok: false, error: `could not fetch the bot's token: ${String(error.message).slice(0, 120)}` }, 502);
+  }
   return json({
     ok: true,
     status: "ready",
-    token: row.token,
+    token,
     bot_username: row.bot_username,
     bot_id: row.bot_id,
     owner_id: row.tg_user_id,
@@ -111,59 +133,63 @@ export async function readSession(env, id, authorization, now = nowSeconds()) {
 
 // ---- the manager bot's updates (from Telegram) ----
 
-function createButton(code) {
-  return {
-    keyboard: [[{
-      text: "Create my Sarthi bot",
-      request_managed_bot: { request_id: 1, suggested_name: "Sarthi", suggested_username: `sarthi_${code}_bot` },
-    }]],
-    resize_keyboard: true,
-    one_time_keyboard: true,
-  };
-}
-
 const HELP =
-  "Hi! I set up Sarthi bots. Open <b>Connect Telegram</b> on your Sarthi dashboard " +
-  "(http://127.0.0.1:8765) and tap the link there; it brings you back here with your setup code.";
+  "Hi! I make Sarthi bots. Open <b>Connect Telegram</b> on your Sarthi dashboard " +
+  "(http://127.0.0.1:8765) and tap the link there.";
+
+async function liveSession(db, column, value, now) {
+  return db
+    .prepare(`SELECT id, code FROM sessions WHERE ${column} = ? AND status IN ('pending', 'paired') AND expires_at >= ? ORDER BY created_at DESC LIMIT 1`)
+    .bind(value, now)
+    .first();
+}
 
 export async function onUpdate(env, update, now = nowSeconds(), fetcher = fetch) {
   const db = env.DB;
   const message = update.message;
   if (message && message.chat && message.chat.type === "private" && typeof message.text === "string") {
+    // The fallback route: /start c_<code> ties the session to this Telegram user, then the same create link.
     const [command, argument = ""] = message.text.trim().split(/\s+/, 2);
     if (command.split("@")[0] !== "/start") return say(env, message.chat.id, HELP, {}, fetcher);
     const code = argument.startsWith("c_") ? argument.slice(2) : "";
-    const row = code
-      ? await db.prepare("SELECT id FROM sessions WHERE code = ? AND status IN ('pending', 'paired') AND expires_at >= ?").bind(code, now).first()
-      : null;
+    const row = code ? await liveSession(db, "code", code, now) : null;
     if (!row) return say(env, message.chat.id, code ? "That setup link has expired. Open Connect Telegram on your Sarthi dashboard again." : HELP, {}, fetcher);
     await db.prepare("UPDATE sessions SET status = 'paired', tg_user_id = ? WHERE id = ?").bind(message.from.id, row.id).run();
     return say(
       env,
       message.chat.id,
-      "Tap <b>Create my Sarthi bot</b> below, then confirm. It becomes <b>your own</b> bot: only you can talk to it, " +
-        "and it talks only to the Sarthi on your computer.",
-      { reply_markup: createButton(code) },
+      "Tap <b>Create my Sarthi bot</b> and confirm in the window that opens. It becomes <b>your own</b> bot, " +
+        "talking only to the Sarthi on your computer.",
+      { reply_markup: { inline_keyboard: [[{ text: "Create my Sarthi bot", url: createLink(env, code) }]] } },
       fetcher,
     );
   }
   const managed = update.managed_bot;
   if (managed && managed.user && managed.bot) {
-    const row = await db
-      .prepare("SELECT id FROM sessions WHERE tg_user_id = ? AND status = 'paired' AND expires_at >= ? ORDER BY created_at DESC LIMIT 1")
-      .bind(managed.user.id, now)
-      .first();
-    if (!row) return null; // a token change or a bot made without a setup link: nothing to hand over
-    const token = await telegram(env, "getManagedBotToken", { user_id: managed.bot.id }, fetcher);
+    // Which Sarthi asked? The code in the username we suggested, or else the user who opened /start c_<code>.
+    const fromName = CODE_IN_USERNAME.exec(managed.bot.username || "");
+    const row =
+      (fromName && (await liveSession(db, "code", fromName[1].toLowerCase(), now))) ||
+      (await liveSession(db, "tg_user_id", managed.user.id, now));
+    if (!row) {
+      return say(
+        env,
+        managed.user.id,
+        "Your bot was made, but I could not tell which Sarthi it is for (was its username changed?). " +
+          "Open <b>Connect Telegram</b> on your Sarthi dashboard again and keep the suggested username.",
+        {},
+        fetcher,
+      );
+    }
     await db
-      .prepare("UPDATE sessions SET status = 'ready', token = ?, bot_id = ?, bot_username = ? WHERE id = ?")
-      .bind(token, managed.bot.id, managed.bot.username || "", row.id)
+      .prepare("UPDATE sessions SET status = 'ready', tg_user_id = ?, bot_id = ?, bot_username = ? WHERE id = ?")
+      .bind(managed.user.id, managed.bot.id, managed.bot.username || "", row.id)
       .run();
     return say(
       env,
       managed.user.id,
-      `✅ <b>@${managed.bot.username}</b> is yours. Go back to your Sarthi: it connects in a few seconds and then asks you to tap Start in your new bot.`,
-      { reply_markup: { remove_keyboard: true } },
+      `✅ <b>@${managed.bot.username}</b> is yours. Go back to your Sarthi: in a few seconds it shows one last link to open your bot.`,
+      {},
       fetcher,
     );
   }
@@ -179,11 +205,11 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/sessions") {
       return createSession(env, request.headers.get("cf-connecting-ip") || "unknown");
     }
-    const session = url.pathname.match(/^\/v1\/sessions\/([a-z0-9]{24})$/);
+    const session = url.pathname.match(/^\/v1\/sessions\/([a-z2-9]{24})$/);
     if (request.method === "GET" && session) return readSession(env, session[1], request.headers.get("authorization"));
     if (request.method === "POST" && url.pathname === "/telegram") {
       // Only Telegram knows this secret (set with setWebhook): nobody else can post fake updates.
-      if (!sameText(request.headers.get("x-telegram-bot-api-secret-token") || "", env.WEBHOOK_SECRET || "-")) {
+      if (!sameText(clean(request.headers.get("x-telegram-bot-api-secret-token")), clean(env.WEBHOOK_SECRET))) {
         return new Response("forbidden", { status: 403 });
       }
       try {

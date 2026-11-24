@@ -63,13 +63,13 @@ def test_pages_show_matches_applications_replies_and_sources(
     assert "Data Analyst" in matches
     assert "Senior Architect" not in matches  # hidden jobs are not matches
     assert matches.index("AI Backend Engineer") < matches.index("Data Analyst")  # best first
-    assert "Apply tapped" in matches
+    assert "Applying" in matches
     assert "Data Analyst" not in client.get("/matches?show=alert").text
     applications = client.get("/applications").text
     assert "Submitted" in applications
     assert "Interview" in applications
     sources = client.get("/sources").text
-    assert "feed:remotive" in sources
+    assert "remotive" in sources and "feed" in sources
     assert "HTTP 503" in sources
 
 

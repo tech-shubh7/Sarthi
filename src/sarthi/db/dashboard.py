@@ -9,6 +9,7 @@ from datetime import datetime
 from sarthi.clock import to_iso
 
 MAX_ROWS = 200
+MAX_QUERY_CHARS = 80
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,7 @@ class MatchRow:
     status: str | None
     first_seen_at: str
     source: str
+    ai_used: bool = True  # False: only keywords were compared (the AI has not read the job yet)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,20 +111,37 @@ class DashboardQueries:
         link = str(row[0]) if row and row[0] else ""
         return link if link.startswith("https://t.me/") else None  # only ever a Telegram link
 
-    def matches(self, decisions: tuple[str, ...], since: datetime, limit: int = MAX_ROWS) -> list[MatchRow]:
-        """Matches with these decisions among jobs first seen since ``since``, best first."""
+    @staticmethod
+    def _match_filter(decisions: tuple[str, ...], since: datetime, query: str) -> tuple[str, list[object]]:
         marks = ", ".join("?" * len(decisions))  # only "?" marks go into the SQL: the values are parameters
+        where = f"m.decision IN ({marks}) AND j.first_seen_at >= ?"
+        params: list[object] = [*decisions, to_iso(since)]
+        words = query.strip()[:MAX_QUERY_CHARS]
+        if words:
+            # The user's words are a parameter; LIKE's own wildcards in them are escaped with "!".
+            like = "%" + words.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+            where += " AND (j.title LIKE ? ESCAPE '!' OR j.company LIKE ? ESCAPE '!')"
+            params += [like, like]
+        return where, params
+
+    def matches(
+        self,
+        decisions: tuple[str, ...],
+        since: datetime,
+        limit: int = MAX_ROWS,
+        *,
+        offset: int = 0,
+        query: str = "",
+    ) -> list[MatchRow]:
+        """Matches with these decisions among jobs first seen since ``since``, best first (one page)."""
+        where, params = self._match_filter(decisions, since, query)
         sql = (
             "SELECT j.id, j.title, j.company, j.canonical_url, j.source, j.first_seen_at, m.score,"  # noqa: S608
-            " m.decision, u.status FROM job_match m JOIN job j ON j.id = m.job_id"
+            " m.decision, m.ai_used, u.status FROM job_match m JOIN job j ON j.id = m.job_id"
             " LEFT JOIN job_user u ON u.job_id = j.id"
-            f" WHERE m.decision IN ({marks}) AND j.first_seen_at >= ?"
-            " ORDER BY m.score DESC, j.first_seen_at DESC LIMIT ?"
+            f" WHERE {where} ORDER BY m.score DESC, j.first_seen_at DESC LIMIT ? OFFSET ?"
         )
-        rows = self._conn.execute(
-            sql,
-            (*decisions, to_iso(since), min(limit, MAX_ROWS)),
-        )
+        rows = self._conn.execute(sql, (*params, min(limit, MAX_ROWS), max(offset, 0)))
         return [
             MatchRow(
                 r["id"],
@@ -134,18 +153,25 @@ class DashboardQueries:
                 r["status"],
                 r["first_seen_at"],
                 r["source"],
+                bool(r["ai_used"]),
             )
             for r in rows
         ]
 
-    def applications(self, limit: int = MAX_ROWS) -> list[ApplicationRow]:
-        """Applications, most recently changed first, each with the latest reply's kind."""
+    def count_matches(self, decisions: tuple[str, ...], since: datetime, query: str = "") -> int:
+        """How many matches ``matches`` would page through."""
+        where, params = self._match_filter(decisions, since, query)
+        sql = f"SELECT count(*) FROM job_match m JOIN job j ON j.id = m.job_id WHERE {where}"  # noqa: S608
+        return int(self._conn.execute(sql, params).fetchone()[0])
+
+    def applications(self, limit: int = MAX_ROWS, *, offset: int = 0) -> list[ApplicationRow]:
+        """Applications, most recently changed first, each with the latest reply's kind (one page)."""
         rows = self._conn.execute(
             "SELECT a.job_id, j.title, j.company, j.canonical_url, a.status, a.site, a.updated_at,"
             " a.submitted_at, (SELECT r.kind FROM reply r WHERE r.job_id = a.job_id"
             " ORDER BY r.received_at DESC LIMIT 1) AS kind"
-            " FROM application a JOIN job j ON j.id = a.job_id ORDER BY a.updated_at DESC LIMIT ?",
-            (min(limit, MAX_ROWS),),
+            " FROM application a JOIN job j ON j.id = a.job_id ORDER BY a.updated_at DESC LIMIT ? OFFSET ?",
+            (min(limit, MAX_ROWS), max(offset, 0)),
         )
         return [
             ApplicationRow(
@@ -161,6 +187,29 @@ class DashboardQueries:
             )
             for r in rows
         ]
+
+    def count_applications(self) -> int:
+        """How many applications there are."""
+        return int(self._conn.execute("SELECT count(*) FROM application").fetchone()[0])
+
+    def applications_for(self, job_ids: list[str]) -> list[ApplicationRow]:
+        """These jobs' applications (the forms waiting for Submit, whatever page they fall on)."""
+        if not job_ids:
+            return []
+        marks = ", ".join("?" * len(job_ids))
+        rows = self._conn.execute(
+            "SELECT a.job_id, j.title, j.company, j.canonical_url, a.status, a.site, a.updated_at,"  # noqa: S608
+            " a.submitted_at, NULL AS kind FROM application a JOIN job j ON j.id = a.job_id"
+            f" WHERE a.job_id IN ({marks})",
+            job_ids[:MAX_ROWS],
+        )
+        return [
+            ApplicationRow(
+                r["job_id"], r["title"], r["company"], r["canonical_url"], r["status"], r["site"],
+                r["updated_at"], r["submitted_at"], None,
+            )
+            for r in rows
+        ]  # fmt: skip
 
     def sources(self) -> list[SourceRow]:
         """Every source that was ever read: failing ones first."""

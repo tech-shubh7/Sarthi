@@ -1,72 +1,101 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, share %}
 {% block title %}Overview · Sarthi{% endblock %}
 {% block main %}
-<div class="head">
-  <p class="eyebrow">Your search</p>
-  <h1>Overview</h1>
-  <p class="lede">Everything Sarthi has found, matched and sent for you.</p>
-</div>
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Your search</p>
+    <h1>Overview</h1>
+    <p class="lede">Everything Sarthi has found, matched and sent for you.</p>
+  </div>
+  <a class="button quiet" href="/matches?show=alert">{{ icon('matches') }}See strong matches</a>
+</header>
 
 {% if ov.pair_link %}
-<section class="panel connect" aria-label="Connect Telegram">
+<section class="card connect" aria-label="Connect Telegram">
   <h2>Connect Telegram</h2>
   {% if ov.pair_step == 'create' %}
-  <p><b>Step 1 of 2.</b> Open this link on the phone or computer where you use Telegram, tap <b>Start</b>,
-     then <b>Create my Sarthi bot</b> and confirm. You get a bot of your own: no setup, no token to copy.</p>
+  <p class="lede">Telegram opens with your bot's name already filled in. Tap <b>Create</b>: nothing to type, no token to copy.</p>
+  <ol class="steps">
+    <li class="now"><b>1</b>Create your bot</li>
+    <li><b>2</b>Tap Start in it</li>
+  </ol>
+  <div class="connect-actions">
+    <a class="button big" href="{{ ov.pair_link }}" rel="noreferrer">{{ icon('telegram') }}Create my Sarthi bot</a>
+  </div>
   {% else %}
-  <p>{% if ov.pair_step == 'start2' %}<b>Step 2 of 2.</b> Your bot is ready. {% endif %}Open this link and tap
-     <b>Start</b>. Sarthi will message you there. (A new link appears here every 15 minutes until you connect.)</p>
+  <p class="lede">{% if ov.pair_step == 'start2' %}Your bot is ready. {% endif %}Open it and tap <b>Start</b>; Sarthi messages you there from now on.</p>
+  <ol class="steps">
+    {% if ov.pair_step == 'start2' %}<li class="done"><b>✓</b>Bot created</li>{% endif %}
+    <li class="now"><b>{{ 2 if ov.pair_step == 'start2' else 1 }}</b>Tap Start in your bot</li>
+  </ol>
+  <div class="connect-actions">
+    <a class="button big" href="{{ ov.pair_link }}" rel="noreferrer">{{ icon('telegram') }}Open my Sarthi bot</a>
+  </div>
   {% endif %}
-  <p><a class="connect-link" href="{{ ov.pair_link }}" rel="noreferrer">{{ ov.pair_link }}</a></p>
+  <p class="hint">Link not opening? Copy it into Telegram: <span class="copy-link">{{ ov.pair_link }}</span>. A fresh one appears here every 15 minutes until you connect.</p>
 </section>
 {% endif %}
 
 {% set shown = ov.shown %}
 {% set apps = ov.applications %}
-<ol class="pipeline" aria-label="From found to applied">
-  <li class="stage"><span class="stage-name">Jobs found</span><b class="stage-n">{{ ov.jobs }}</b></li>
-  <li class="stage"><span class="stage-name">Fit you</span><b class="stage-n">{{ ov.decisions.get('alert', 0) + ov.decisions.get('digest', 0) }}</b></li>
-  <li class="stage"><span class="stage-name">Sent to you</span><b class="stage-n">{{ shown.values()|sum }}</b></li>
-  <li class="stage"><span class="stage-name">Apply tapped</span><b class="stage-n">{{ shown.get('apply', 0) + shown.get('applied', 0) }}</b></li>
-  <li class="stage"><span class="stage-name">Submitted</span><b class="stage-n">{{ apps.get('submitted', 0) + apps.get('applied_by_user', 0) }}</b></li>
-  <li class="stage"><span class="stage-name">Replies</span><b class="stage-n">{{ ov.replies.values()|sum }}</b></li>
-</ol>
+{% set fit = ov.decisions.get('alert', 0) + ov.decisions.get('digest', 0) %}
+<section class="stats" aria-label="From found to applied">
+  <div class="card stat"><span class="stat-label">Jobs found</span><b class="stat-n">{{ '{:,}'.format(ov.jobs) }}</b><span class="stat-sub">from every source</span></div>
+  <div class="card stat indigo"><span class="stat-label">Fit you</span><b class="stat-n">{{ '{:,}'.format(fit) }}</b><span class="stat-sub">{{ ov.decisions.get('alert', 0) }} strong</span></div>
+  <div class="card stat"><span class="stat-label">Sent to you</span><b class="stat-n">{{ '{:,}'.format(shown.values()|sum) }}</b><span class="stat-sub">alerts and digests</span></div>
+  <div class="card stat saffron"><span class="stat-label">Applying</span><b class="stat-n">{{ shown.get('apply', 0) + shown.get('applied', 0) }}</b><span class="stat-sub">you said yes</span></div>
+  <div class="card stat teal"><span class="stat-label">Submitted</span><b class="stat-n">{{ apps.get('submitted', 0) + apps.get('applied_by_user', 0) }}</b><span class="stat-sub">applications sent</span></div>
+  <div class="card stat"><span class="stat-label">Replies</span><b class="stat-n">{{ ov.replies.values()|sum }}</b><span class="stat-sub">from employers</span></div>
+</section>
 
-<div class="grid">
-  <section class="panel">
-    <h2>Matches</h2>
+{% set total = (ov.decisions.values()|sum) or 1 %}
+<div class="grid grid-3">
+  <section class="card card-pad">
+    <h2 class="card-title">{{ icon('matches') }}Matches</h2>
     <dl class="facts">
-      <dt>Strong (instant alerts)</dt><dd>{{ ov.decisions.get('alert', 0) }}</dd>
-      <dt>Fair (daily digest)</dt><dd>{{ ov.decisions.get('digest', 0) }}</dd>
-      <dt>Hidden (not a fit)</dt><dd>{{ ov.decisions.get('hide', 0) }}</dd>
+      <dt>Strong, sent as alerts</dt><dd>{{ '{:,}'.format(ov.decisions.get('alert', 0)) }}</dd>
+      {{ share(ov.decisions.get('alert', 0), total, 'teal') }}
+      <dt>Fair, in the daily digest</dt><dd>{{ '{:,}'.format(ov.decisions.get('digest', 0)) }}</dd>
+      {{ share(ov.decisions.get('digest', 0), total, 'saffron') }}
+      <dt>Hidden, not a fit</dt><dd>{{ '{:,}'.format(ov.decisions.get('hide', 0)) }}</dd>
     </dl>
   </section>
-  <section class="panel">
-    <h2>Your answers</h2>
+  <section class="card card-pad">
+    <h2 class="card-title">{{ icon('check') }}Your answers</h2>
     <dl class="facts">
       <dt>Apply</dt><dd>{{ shown.get('apply', 0) + shown.get('applied', 0) }}</dd>
-      <dt>Skip</dt><dd>{{ shown.get('skipped', 0) }}</dd>
-      <dt>Later</dt><dd>{{ shown.get('later', 0) }}</dd>
+      <dt>Saved for later</dt><dd>{{ shown.get('later', 0) }}</dd>
+      <dt>Skipped</dt><dd>{{ shown.get('skipped', 0) }}</dd>
       <dt>Not answered yet</dt><dd>{{ shown.get('alerted', 0) + shown.get('digested', 0) }}</dd>
     </dl>
   </section>
-  <section class="panel">
-    <h2>Replies from employers</h2>
+  <section class="card card-pad">
+    <h2 class="card-title">{{ icon('mail') }}Replies from employers</h2>
     {% if ov.replies %}
     <dl class="facts">{% for kind, n in ov.replies|dictsort %}<dt>{{ kind|capitalize }}</dt><dd>{{ n }}</dd>{% endfor %}</dl>
-    {% else %}<p class="faint">None yet. Set up reply tracking (SARTHI_MAIL_* in .env) to see them here.</p>{% endif %}
+    {% else %}<p class="muted">None yet. Add your mailbox (SARTHI_MAIL_* in .env) and Sarthi tells you about interviews and rejections.</p>{% endif %}
   </section>
-  <section class="panel">
-    <h2>Working on</h2>
+  <section class="card card-pad">
+    <h2 class="card-title">{{ icon('spark') }}Working on now</h2>
+    {% set WORK = {
+      'match': 'Checking how jobs fit you', 'fill_text': 'Reading full job posts', 'alert': 'Alerts to send',
+      'digest': 'Daily digest', 'documents': 'Writing tailored resumes', 'documents_ready': 'Documents to send',
+      'form_check': 'Reading application forms', 'apply': 'Filling applications', 'auto_apply': 'Auto-applies waiting',
+      'submit': 'Submitting', 'source_check': 'Searching job sources', 'catchup': 'Catching up',
+      'ask_questions': 'Questions for you', 'apply_preview': 'Forms to show you', 'apply_result': 'Results to tell you',
+      'mail_check': 'Checking your mailbox', 'quiet_check': 'Follow-up check', 'reply_notice': 'Replies to tell you',
+      'followup_notice': 'Follow-ups to suggest', 'source_notice': 'Source notices',
+    } %}
     {% if ov.tasks_waiting %}
-    <dl class="facts">{% for kind, n in ov.tasks_waiting|dictsort %}<dt>{{ kind|replace('_', ' ') }}</dt><dd>{{ n }}</dd>{% endfor %}</dl>
-    {% else %}<p class="faint">Nothing waiting.</p>{% endif %}
+    <dl class="facts">{% for kind, n in (ov.tasks_waiting|dictsort(by='value', reverse=true))[:6] %}<dt>{{ WORK.get(kind, kind|replace('_', ' ')|capitalize) }}</dt><dd>{{ '{:,}'.format(n) }}</dd>{% endfor %}</dl>
+    {% else %}<p class="muted">Nothing waiting. New jobs are checked every hour.</p>{% endif %}
   </section>
-  <section class="panel">
-    <h2>AI use today</h2>
+  <section class="card card-pad">
+    <h2 class="card-title">{{ icon('cpu') }}AI use today</h2>
     {% if ov.ai_tokens_today %}
-    <dl class="facts">{% for provider, n in ov.ai_tokens_today|dictsort %}<dt>{{ provider }}</dt><dd>{{ '{:,}'.format(n) }} tokens</dd>{% endfor %}</dl>
-    {% else %}<p class="faint">No AI calls today.</p>{% endif %}
+    <dl class="facts">{% for provider, n in ov.ai_tokens_today|dictsort %}<dt>{{ provider|capitalize }}</dt><dd>{{ '{:,}'.format(n) }} <span class="faint">tokens</span></dd>{% endfor %}</dl>
+    {% else %}<p class="muted">No AI calls today.</p>{% endif %}
   </section>
 </div>
 {% endblock %}
