@@ -1,6 +1,3 @@
-# Ported from OpenApply (MIT), src/apply/fieldmap.ts @ db7796e. Copyright (c) OpenApply contributors.
-# Modifications (c) Sarthi contributors: Python; the applicant's facts come from Sarthi's profile and master
-# resume (work authorisation and sponsorship are decided per job country instead of a US-only flag).
 """What to put in each application-form field, decided without AI (docs/ARCHITECTURE.md §2.11, §2.12).
 
 Every answer has a source: the user's saved answers, their profile, or a safe default (a "decline to answer"
@@ -15,6 +12,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Literal
+
+from sarthi.jobs.geo import location_codes
 
 FieldType = Literal[
     "text", "textarea", "email", "tel", "url", "number", "date", "select", "radio", "checkbox", "combobox",
@@ -46,6 +45,8 @@ class Applicant:
     website: str = ""
     location: str = ""
     country: str = ""  # country name, e.g. "India"
+    home_country: str = ""  # ISO code of where the user lives, e.g. "GB"
+    authorized_countries: frozenset[str] = frozenset()  # ISO codes the user needs no visa for (home included)
     needs_sponsorship: bool | None = None  # for this job's country
     work_authorized: bool | None = None  # for this job's country
     willing_to_relocate: bool | None = None
@@ -311,18 +312,27 @@ def _day(year: int, month: int, day_: int) -> str | None:
         return None
 
 
-def to_date(raw: str, today: date | None = None) -> str | None:
+# Where 04/11/2026 is April 11 (month first); most of the world writes the day first.
+MONTH_FIRST_COUNTRIES = frozenset({"US", "PH", "CA"})
+_MAX_MONTH = 12
+
+
+def to_date(raw: str, today: date | None = None, *, day_first: bool = False) -> str | None:
     """A start-date answer as YYYY-MM-DD, or None when it names no date.
 
-    Takes a date (2026-11-04, 11/04/2026, Nov 4 2026, November 4) or a span from today ("1-2 weeks", "two weeks'
-    notice", "a month", "immediately"): a span counts its upper bound; a weekend start moves to Monday.
+    Takes a date (2026-11-04, 11/04/2026, 24.12.2026, Nov 4 2026, November 4) or a span from today ("1-2 weeks",
+    "two weeks' notice", "a month", "immediately"): a span counts its upper bound; a weekend start moves to
+    Monday. A numeric date is read month first unless ``day_first`` (or a first number above 12) says otherwise.
     """
     today = today or date.today()  # noqa: DTZ011  (the user's local calendar date)
     s = re.sub(r"\s+", " ", raw.lower().replace(",", " ")).strip()
     if m := re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", s):
         return _day(int(m[1]), int(m[2]), int(m[3]))
-    if m := re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", s):
-        return _day(int(m[3]), int(m[1]), int(m[2]))
+    if m := re.fullmatch(r"(\d{1,2})([/.-])(\d{1,2})\2(\d{4})", s):
+        first, second = int(m[1]), int(m[3])
+        if first > _MAX_MONTH or (day_first and second <= _MAX_MONTH):
+            first, second = second, first
+        return _day(int(m[4]), first, second)
     if m := re.fullmatch(r"([a-z]{3,9})\.? (\d{1,2})(?:st|nd|rd|th)?(?: (\d{4}))?", s):
         month = next((i + 1 for i, name in enumerate(_MONTHS) if name.startswith(m[1])), 0)
         if month:
@@ -404,12 +414,12 @@ def names_place(text: str, place: str) -> bool:
     return bool(text) and _canon(place) in _canon(text)
 
 
-def _fit(form_field: FormField, raw: str | bool | None) -> str | None:  # noqa: PLR0911  (one shape per field kind)
+def _fit(form_field: FormField, raw: str | bool | None, *, day_first: bool = False) -> str | None:  # noqa: PLR0911  (one shape per field kind)
     """A raw answer shaped for the field: mapped onto one of its options when it has options."""
     if raw is None or raw == "":
         return None
     if form_field.type == "date":
-        return to_date(raw) if isinstance(raw, str) else None
+        return to_date(raw, day_first=day_first) if isinstance(raw, str) else None
     options = form_field.options
     if isinstance(raw, bool):
         return yes_no_option(options, raw) if options else ("Yes" if raw else "No")
@@ -446,19 +456,28 @@ def _from_profile(form_field: FormField, ctx: FormContext) -> str | bool | None:
     if not prose and re.search(r"\b(website|portfolio|personal site|blog)\b", label):
         return a.website
     residence = _RESIDENCE.search(label) is not None  # about where the user lives, not the job's country
+    # "...to work in the United States?" asks about that country, whatever the job's own country is.
+    named = _named_countries(form_field.label)
+    authorized = bool(named & a.authorized_countries) if named and a.authorized_countries else None
     if re.search(r"\bsponsor|\bvisa\b", label):
-        return False if residence else a.needs_sponsorship
+        if residence:
+            return False
+        return (not authorized) if authorized is not None else a.needs_sponsorship
     if re.search(
         r"authori[sz]ed|legally (able|eligible|permitted)|right to work|eligible to work|work authori", label
     ):
-        return True if residence else a.work_authorized
+        if residence:
+            return True
+        return authorized if authorized is not None else a.work_authorized
     if "relocat" in label:
         return a.willing_to_relocate
+    if re.search(r"\b(phone|mobile|cell)\b.*\bcountry\b|\b(dial(l?ing)?|calling) code\b", label):
+        return _dial_answer(form_field.options, a)
     if re.search(
         r"^country( code)?$|\bcountry\b.*\b(reside|based|located|live)\b|\b(reside|based|located|live)\b.*\bcountry\b",
         label,
     ):
-        return a.country
+        return _country_option(form_field.options, a.home_country) or a.country
     if re.search(
         r"where (are |do )?you (currently )?(located|based|live)|currently located|(what|which) city|city and state",
         label,
@@ -496,6 +515,34 @@ def _from_profile(form_field: FormField, ctx: FormContext) -> str | bool | None:
     if re.search(r"notice period|when can you start|earliest .*start|start date|available to start", label):
         return a.notice_period
     return None
+
+
+def _named_countries(label: str) -> frozenset[str]:
+    """Countries a question names ("authorized to work in the UK?" -> {GB}); empty when it names none."""
+    codes: set[str] = set()
+    for place in places_in(label):
+        codes |= location_codes(place)
+    return frozenset(codes)
+
+
+def _country_option(options: tuple[str, ...], code: str) -> str | None:
+    """The option naming country ``code`` however it is written ("UK", "United Kingdom (+44)", "GB")."""
+    if not code:
+        return None
+    for option in options:
+        if option.strip().upper() == code or location_codes(option) == {code}:
+            return option
+    return None
+
+
+def _dial_answer(options: tuple[str, ...], a: Applicant) -> str | None:
+    """A phone country-code field: the option for the user's country, else the "+44" their number starts with."""
+    dial = re.match(r"\s*(\+\d{1,3})(?=[\s().-])", a.phone)
+    if options:
+        if dial and (hit := next((o for o in options if re.search(rf"\{dial[1]}(?!\d)", o)), None)):
+            return hit
+        return _country_option(options, a.home_country)
+    return dial[1] if dial else None
 
 
 _RESIDENCE = re.compile(
@@ -537,27 +584,33 @@ def suggest(form_field: FormField, ctx: FormContext) -> Suggestion | None:  # no
         if re.search(r"resume|\bcv\b", label):
             return Suggestion(ctx.resume_file, "file") if ctx.resume_file else None
         return None
+    home = ctx.applicant.home_country
+    day_first = bool(home) and home not in MONTH_FIRST_COUNTRIES  # how the user writes dates
     own = ctx.answers.get(form_field.key)
     if own is None and (hit := lookup(ctx.answers, form_field.label)):
         own = hit[1]
-    if value := _fit(form_field, own):
+    if value := _fit(form_field, own, day_first=day_first):
         return Suggestion(value, "job")
     if company_specific(form_field.label):
         return None  # about this employer: only an answer given for this job (above) is used
     if _BOT_CHECK.search(f"{label} {' '.join(norm(o) for o in form_field.options)}"):
         saved = lookup(ctx.applicant.saved_answers, form_field.label)  # the user's own earlier answer only
-        value = _fit(form_field, saved[1]) if saved else None
+        value = _fit(form_field, saved[1], day_first=day_first) if saved else None
         return Suggestion(value, "saved") if value else None
     if _EEO.search(label) and "pronoun" not in label:
         declined = _decline(form_field.options)
         return Suggestion(declined, "default") if declined else None
     place = commitment_place(form_field.label, ctx.job_location, ctx.job_remote)
     if (not place or names_place(ctx.applicant.location, place)) and (
-        value := _fit(form_field, _from_profile(form_field, ctx))
+        value := _fit(form_field, _from_profile(form_field, ctx), day_first=day_first)
     ):
         return Suggestion(value, "profile")
     hit = lookup(ctx.applicant.saved_answers, form_field.label)
-    if hit and (not place or names_place(" ".join(hit), place)) and (value := _fit(form_field, hit[1])):
+    if (
+        hit
+        and (not place or names_place(" ".join(hit), place))
+        and (value := _fit(form_field, hit[1], day_first=day_first))
+    ):
         return Suggestion(value, "saved")
     if _HEAR.search(label):
         if not form_field.options:

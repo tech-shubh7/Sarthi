@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import signal
+from collections.abc import Coroutine
+from typing import Any
 
 import typer
 
 from sarthi import __version__
-from sarthi.app import BROWSER_PROFILE, SetupError, build
+from sarthi.app import BROWSER_PROFILE, SetupError, build, site_map
 from sarthi.apply.engine import LOGIN_PAGES
 from sarthi.apply.engine import login as login_to
 from sarthi.apply.screen import ScreenError, login_screen
@@ -110,7 +113,25 @@ def run() -> None:
     if sarthi.settings.dashboard:
         typer.echo(f"Dashboard: http://127.0.0.1:{sarthi.settings.dashboard_port} (this computer only)")
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(sarthi.run())
+        asyncio.run(until_terminated(sarthi.run()))
+
+
+async def until_terminated(work: Coroutine[Any, Any, None]) -> None:
+    """Run ``work``; SIGTERM (``docker stop``, systemd) cancels it as Ctrl+C does.
+
+    Without this the process dies at once on SIGTERM: tasks in hand stay "running" in the database and
+    an open browser is killed mid-form. Cancelling lets every worker hand its task back first.
+    """
+    main = asyncio.ensure_future(work)
+    loop = asyncio.get_running_loop()
+    with contextlib.suppress(NotImplementedError, RuntimeError):  # (Windows: no loop signal handlers)
+        loop.add_signal_handler(signal.SIGTERM, main.cancel)
+    try:
+        with contextlib.suppress(asyncio.CancelledError):
+            await main
+    finally:
+        with contextlib.suppress(NotImplementedError, RuntimeError):
+            loop.remove_signal_handler(signal.SIGTERM)
 
 
 @app.command()
@@ -121,7 +142,9 @@ def dashboard() -> None:
         typer.echo("No data yet: run `uv run sarthi run` first.", err=True)
         raise typer.Exit(code=1)
     try:
-        server = make_server(settings.db_path, settings.dashboard_port, host=settings.dashboard_host)
+        server = make_server(
+            settings.db_path, settings.dashboard_port, host=settings.dashboard_host, sites=site_map()
+        )
     except NoFreePortError as error:
         typer.echo(f"Cannot start the dashboard: {error}", err=True)
         raise typer.Exit(code=1) from None

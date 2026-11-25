@@ -4,8 +4,8 @@ When a strong match is at or above the user's own line (``/autoapply 85``), Sart
 waits (5 minutes by default) with Cancel and Apply now buttons. If nobody cancels, the usual steps run:
 tailored documents, the form's questions, the fill. The form is sent without a tap only when every answer came
 from the profile, a saved answer or the posting, and the site is not a job board that bans bulk applying;
-anything else comes back as the usual preview with Submit. At most ``daily_limit`` a day, never below
-``MIN_LINE``.
+anything else comes back as the usual preview with Submit. Never below ``MIN_LINE``; no daily cap unless
+the user sets ``daily_limit`` (each site's own daily limit still applies).
 """
 
 from __future__ import annotations
@@ -25,23 +25,30 @@ from sarthi.queue.tasks import Priority, TaskQueue
 MIN_LINE = 75  # below this the AI's evidence is too thin to send an application nobody looked at
 LINE_KEY = "auto_apply.line"  # the user's own line ("85") or "off"; unset: the .env setting
 COUNT_KEY = "auto_apply.count"  # "YYYY-MM-DD n": how many were scheduled today
+BOARDS_KEY = "auto_apply.boards"  # "on" / "off": also send on job boards with the user's login; unset: .env
 HELP = (
     "🤖 <b>Auto-apply</b> is {state}.\n\n"
     "When a job's match is at or above your line, I tell you and wait {wait} before applying, so you can "
     "cancel. A form is sent without your tap only when I could fill every answer from your profile; "
-    "otherwise you get the usual preview. Never on LinkedIn, Naukri or other job boards, "
-    "at most {limit} a day.\n\n"
-    "/autoapply 85 sets your line (75-100), /autoapply off turns it off."
+    "otherwise you get the usual preview. {boards}{limit}.\n\n"
+    "/autoapply 85 sets your line (75-100), /autoapply off turns it off, "
+    "/autoapply boards on (or off) includes LinkedIn, Naukri and other job boards."
 )
+BOARDS_ON = (
+    "Also on LinkedIn, Naukri and other job boards with your login (they may restrict accounts that apply "
+    "in bulk; each site gets at most its daily limit)"
+)
+BOARDS_OFF = "On LinkedIn, Naukri and other job boards it waits for your Submit"
 
 
 @dataclass(frozen=True, slots=True)
 class AutoApplySettings:
-    """From the .env file: the default line (None: off), the daily limit and the veto window."""
+    """From the .env file: the default line (None: off), a daily cap, the veto window, job boards."""
 
     line: int | None = None
-    daily_limit: int = 10
+    daily_limit: int | None = None
     wait_s: float = 300
+    job_boards: bool = False  # also send on job boards that use the user's own login
 
 
 class AutoApply:
@@ -72,6 +79,15 @@ class AutoApply:
             return max(MIN_LINE, min(100, int(own)))
         return self.settings.line
 
+    def boards(self) -> bool:
+        """True when auto-apply also sends on job boards with the user's login (LinkedIn, Naukri, ...)."""
+        own = self.chats.get_state(BOARDS_KEY)
+        return own == "on" if own in ("on", "off") else self.settings.job_boards
+
+    def set_boards(self, *, on: bool) -> None:
+        """Include (or leave out) job boards with the user's login."""
+        self.chats.set_state(BOARDS_KEY, "on" if on else "off")
+
     def wanted(self, match: MatchRecord | None) -> bool:
         """True for a match the AI read and scored at or above the line, while today's limit allows."""
         line = self.line()
@@ -80,7 +96,7 @@ class AutoApply:
             and match is not None
             and match.ai_used
             and match.score >= line
-            and self._today_count() < self.settings.daily_limit
+            and (self.settings.daily_limit is None or self._today_count() < self.settings.daily_limit)
         )
 
     def _today(self) -> str:
@@ -110,7 +126,12 @@ class AutoApply:
     def change_line(self, argument: str) -> str | None:
         """Store ``off`` or a percent (MIN_LINE-100); the problem, or None when stored (or nothing given)."""
         word = argument.strip().lower().rstrip("%").strip()
-        if word in ("off", "stop", "no", "0"):
+        if word.startswith("boards"):
+            choice = word.removeprefix("boards").strip()
+            if choice not in ("on", "off"):
+                return "Say /autoapply boards on, or /autoapply boards off."
+            self.set_boards(on=choice == "on")
+        elif word in ("off", "stop", "no", "0"):
             self.chats.set_state(LINE_KEY, "off")
         elif word.isdigit() and MIN_LINE <= int(word) <= 100:  # noqa: PLR2004
             self.chats.set_state(LINE_KEY, word)
@@ -124,9 +145,10 @@ class AutoApply:
             return problem
         line = self.line()
         state = f"on from <b>{line}%</b>" if line is not None else "<b>off</b>"
-        return HELP.format(
-            state=state, wait=_wait_text(self.settings.wait_s), limit=self.settings.daily_limit
-        )
+        cap = self.settings.daily_limit
+        limit = f", at most {cap} a day" if cap is not None else ""
+        boards = BOARDS_ON if self.boards() else BOARDS_OFF
+        return HELP.format(state=state, wait=_wait_text(self.settings.wait_s), boards=boards, limit=limit)
 
 
 def _wait_text(seconds: float) -> str:

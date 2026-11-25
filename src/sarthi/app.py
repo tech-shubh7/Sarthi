@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import math
 import sqlite3
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from pydantic import SecretStr
 
@@ -20,7 +22,7 @@ from sarthi.ai.providers import resolve
 from sarthi.ai.scoring import LlmMatchScorer
 from sarthi.answers.handler import FormChecker
 from sarthi.apply.agent import ApplicationBrowser
-from sarthi.apply.engine import SITE_NAMES, ApplyEngine
+from sarthi.apply.engine import LOGIN_PAGES, SITE_NAMES, ApplyEngine
 from sarthi.apply.engine import login as login_to
 from sarthi.apply.handler import Applier
 from sarthi.apply.screen import ScreenError, login_screen
@@ -28,7 +30,7 @@ from sarthi.chat.autoapply import AutoApplySettings
 from sarthi.chat.pairing import CODE_LIFETIME, OWNER_KEY, code_hash, new_code, owner_chat
 from sarthi.chat.setup import SetupFlow
 from sarthi.chat.telegram.api import TelegramApi
-from sarthi.chat.telegram.bot import OFFSET_KEY, PAUSED_KEY, TelegramBot
+from sarthi.chat.telegram.bot import LOGIN_SITES, OFFSET_KEY, PAUSED_KEY, TelegramBot
 from sarthi.chat.telegram.connect import (
     STEP_KEY,
     ConnectError,
@@ -47,6 +49,7 @@ from sarthi.db.connection import connect
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
+from sarthi.db.notices import NoticeStore
 from sarthi.db.replies import ReplyStore
 from sarthi.db.source_state import SourceStateStore
 from sarthi.db.tasks import TaskRecord, TaskStore
@@ -57,6 +60,7 @@ from sarthi.matching.learning import RECENT as LEARN_FROM
 from sarthi.matching.learning import learned_thresholds
 from sarthi.profile.master import load_master, master_path
 from sarthi.profile.models import Profile
+from sarthi.profile.original import keep_original
 from sarthi.profile.repair import repair
 from sarthi.profile.resume import ResumeError, extract_text
 from sarthi.profile.store import load_profile, profile_path, save_profile
@@ -70,9 +74,14 @@ from sarthi.sources.fill import TextFiller
 from sarthi.sources.fulltext import Fetcher
 from sarthi.sources.ingest import Ingestor
 from sarthi.sources.schedule import SourceScheduler, plan_sources
+from sarthi.sources.sites import CATALOG, career_systems, reader_of
+from sarthi.tracking.account import MailSetup, current_mailbox, current_setup, save_setup, saved_setup
+from sarthi.tracking.handler import STATUS_KEY as MAIL_STATUS_KEY
 from sarthi.tracking.handler import Mailbox, ReplyTracker
-from sarthi.web.actions import Controls, Pending
+from sarthi.tracking.mail import MailError, count_messages
+from sarthi.web.actions import Controls, MailSettings, Pending
 from sarthi.web.server import NoFreePortError, make_server
+from sarthi.web.sources_view import SiteMap
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +103,12 @@ PAIR_RETRY_S = 30.0
 CONNECT_CHECK_S = 3.0  # one-tap setup: how often to ask whether the user's bot was made
 CONNECT_SESSION = timedelta(minutes=15)  # a setup link's life (the connector's own limit)
 NOT_CONNECTED = "0:waiting-for-one-tap-setup"  # stands in until the user's bot token arrives
+NO_TELEGRAM = "none"  # no way to a bot is set: Sarthi runs with the dashboard only
+NO_TELEGRAM_HINT = (
+    "Telegram is not set up, so Sarthi runs with the dashboard only (no alerts). To get alerts, set"
+    " SARTHI_TELEGRAM_CONNECT_URL (one-tap setup) or SARTHI_TELEGRAM_BOT_TOKEN (a bot of your own from"
+    " @BotFather) in .env and restart Sarthi"
+)
 
 
 class SetupError(Exception):
@@ -130,9 +145,11 @@ class WebActions:
     def resume_text(self, data: bytes) -> str:
         """The uploaded resume's text; ``ValueError`` with the reason when it cannot be read."""
         try:
-            return extract_text(data)
+            text = extract_text(data)
         except ResumeError as error:
             raise ValueError(str(error)) from None
+        keep_original(self._app.settings.data_dir, data, text)  # tailored resumes keep its design
+        return text
 
     def controls(self) -> Controls:
         """Pause and auto-apply as they stand."""
@@ -142,6 +159,7 @@ class WebActions:
             auto_line=auto.line(),
             auto_wait_minutes=round(auto.settings.wait_s / 60),
             auto_daily_limit=auto.settings.daily_limit,
+            auto_boards=auto.boards(),
         )
 
     def set_paused(self, paused: bool) -> None:
@@ -164,6 +182,7 @@ class WebActions:
         flow = self._app.bot.applying
         if flow is None:
             return {}
+        self._app.drop_closed_forms()  # a Submit is only offered while its filled page is open
         return {job_id: Pending(job_id, shot) for job_id, (_, shot) in flow.waiting().items()}
 
     def submit(self, job_id: str) -> bool:
@@ -176,18 +195,20 @@ class WebActions:
         return True
 
     def refill(self, job_id: str) -> bool:
-        """Fill the form again: a filled page does not survive a restart of Sarthi."""
-        if self._app.bot.jobs.get(job_id) is None:
+        """Fill the form again: a filled page does not survive a restart of Sarthi. Never once it was sent."""
+        if self._app.bot.jobs.get(job_id) is None or self._app.applier.applications.was_sent(job_id):
             return False
-        self._app.queue.enqueue(names.APPLY, job_id, priority=Priority.ALERT)
+        self._app.queue.enqueue(names.APPLY, job_id, priority=Priority.APPLY)
         return True
 
     def finish(self, job_id: str) -> bool:
-        """Open the filled form on this computer to finish by hand (its CAPTCHA). False if it cannot."""
-        chat_id = owner_chat(self._app.bot.chats)
-        if chat_id is None or self._app.bot.jobs.get(job_id) is None:
+        """Open the filled form on this computer to finish by hand (its CAPTCHA). False if it cannot.
+
+        Works without Telegram: a paired chat also gets the messages; the dashboard shows the screen link.
+        """
+        if self._app.bot.jobs.get(job_id) is None:
             return False
-        return self._app.start_finish(chat_id, job_id)
+        return self._app.start_finish(self._app.bot.chat(), job_id)
 
     def mark_applied(self, job_id: str) -> bool:
         """The user applied on the site themselves, as the Telegram "I applied" button records it."""
@@ -204,6 +225,105 @@ class WebActions:
             return False
         flow.cancel(job_id)
         return True
+
+    def answer_questions(self, job_id: str, answers: dict[str, str]) -> dict[str, str]:
+        """Answer a form's questions as Telegram does (same checks, same answer bank); problems by key."""
+        flow = self._app.bot.questions
+        if flow is None or self._app.bot.jobs.get(job_id) is None:
+            return {}
+        problems = {}
+        for key, text in answers.items():
+            if text.strip() and (problem := flow.answer(job_id, key, text)):
+                problems[key] = problem
+        flow.continue_after_answers(job_id)
+        return problems
+
+    def decline_questions(self, job_id: str) -> bool:
+        """Telegram's "Don't apply to this job"."""
+        flow = self._app.bot.questions
+        if flow is None or self._app.bot.jobs.get(job_id) is None:
+            return False
+        flow.decline(job_id)
+        return True
+
+    def cancel_auto(self, job_id: str) -> bool:
+        """The auto-apply notice's Cancel."""
+        if self._app.bot.jobs.get(job_id) is None:
+            return False
+        self._app.bot.auto.cancel(job_id)
+        return True
+
+    def apply_now(self, job_id: str) -> bool:
+        """The auto-apply notice's Apply now."""
+        return self._app.bot.apply_now(job_id)
+
+    def login_sites(self) -> list[tuple[str, str]]:
+        """The sites /login offers."""
+        return list(LOGIN_SITES)
+
+    def site_login(self, site: str) -> bool:
+        """/login on the dashboard: works without Telegram (a paired chat also gets the messages)."""
+        if site not in dict(LOGIN_SITES):
+            return False
+        return self._app.start_login(self._app.bot.chat(), site)
+
+    def screen_link(self) -> str | None:
+        """The open screen's link (in Docker), while a login or a form is open there."""
+        return self._app.screen_url if self._app.window_open() else None
+
+    def mail(self) -> MailSettings:
+        """The mailbox setup in force (dashboard over .env) and the last check, never the password."""
+        setup = current_setup(self._app.settings, self._app.settings.data_dir)
+        try:
+            last = json.loads(self._app.bot.chats.get_state(MAIL_STATUS_KEY) or "{}")
+        except ValueError:
+            last = {}
+        return MailSettings(
+            setup.host, setup.port, setup.user, setup.folder, bool(setup.enabled),
+            password_saved=setup.password is not None, checked_at=str(last.get("at", "")),
+            check_ok=bool(last.get("ok", True)), check_text=str(last.get("text", "")),
+        )  # fmt: skip
+
+    def save_mail(self, settings: MailSettings, password: str) -> None:
+        """Keep it in data/mail.json; mail is read from the next check (at once when just turned on)."""
+        data_dir = self._app.settings.data_dir
+        earlier = saved_setup(data_dir)
+        moved = earlier is not None and (earlier.host, earlier.user.lower()) != (
+            settings.host,
+            settings.user.lower(),
+        )
+        secret = (
+            SecretStr(password) if password else (SecretStr("") if moved else None)
+        )  # never to another box
+        save_setup(
+            data_dir,
+            MailSetup(settings.host, settings.port, settings.user, secret, settings.folder, settings.enabled),
+        )
+        log.info(
+            "mail settings saved on the dashboard: reply tracking %s", "on" if settings.enabled else "off"
+        )
+        if settings.enabled:
+            self._app.tracker.schedule()
+
+    async def test_mail(self, settings: MailSettings, password: str) -> str:
+        """Log in read-only with these settings (an empty password: the saved one, same mailbox only)."""
+        current = current_setup(self._app.settings, self._app.settings.data_dir)
+        same = (current.host, current.user.lower()) == (settings.host, settings.user.lower())
+        secret = password or (current.password.get_secret_value() if same and current.password else "")
+        if not secret:
+            return "Add the app password to test the connection."
+        try:
+            count = await asyncio.to_thread(
+                count_messages, settings.host, settings.port, settings.user, secret, settings.folder
+            )
+        except MailError as error:
+            return f"Could not connect: {error}."
+        return f"Connected: {count} message{'' if count == 1 else 's'} in {settings.folder}."
+
+
+def site_map() -> SiteMap:
+    """Which source reads which site, for the dashboard's Sources page."""
+    return SiteMap(tuple(career_systems()), reader_of, CATALOG)
 
 
 @dataclass
@@ -225,7 +345,9 @@ class App:
     clock: Clock
     relay: RelayLink | None = None  # the shared bot's relay, when no bot token of one's own is set
     connector: Connector | None = None  # one-tap setup still to do: no bot yet
+    telegram: bool = True  # False: no bot is set up at all, the dashboard is the only way in
     _login: asyncio.Task[None] | None = None
+    screen_url: str | None = None  # while a browser window is open on a screen in the browser (Docker)
 
     def schedule_digest(self) -> None:
         """Queue the next daily digest (idempotent: one task per local date)."""
@@ -277,6 +399,7 @@ class App:
         while True:
             self.bot.chats.set_state(ALIVE_KEY, to_iso(self.clock()))
             await self.applier.engine.close_idle()  # forms nobody approved in time
+            self.drop_closed_forms()
             if self.sources.tick():
                 worker.wake()
             await asyncio.sleep(TICK_SECONDS)
@@ -322,7 +445,8 @@ class App:
 
     async def run(self) -> None:
         """Run the bot, the source scheduler and the worker until cancelled."""
-        self.queue.reclaim_stuck()
+        self.queue.reclaim_stuck(everything=True)  # this process owns the database: none is running yet
+        self.drop_closed_forms()  # no filled page survives a restart
         self.rematch_after_upgrade()
         self.schedule_digest()
         self.tracker.schedule()
@@ -350,9 +474,38 @@ class App:
                 dashboard.should_exit = True
             await self._shutdown((worker, user), tasks)
 
-    def start_finish(self, chat_id: int, job_id: str) -> bool:
-        """Start finishing a form by hand; False while another browser window (a login, a form) is open."""
-        if self._login is not None and not self._login.done():
+    def drop_closed_forms(self) -> list[str]:
+        """Forget the Submit of every filled form whose page closed (Telegram and the dashboard alike).
+
+        A Submit tapped later on an old Telegram message still works: the form is filled again and, being
+        approved already, sent if the new fill is complete.
+        """
+        flow = self.bot.applying
+        return flow.drop_closed(self.applier.engine.can_submit) if flow is not None else []
+
+    def window_open(self) -> bool:
+        """True while a browser window (a login, a form to finish) is open for the user."""
+        return self._login is not None and not self._login.done()
+
+    async def _say(self, chat_id: int | None, text: str, job_id: str | None = None) -> None:
+        """Tell the user how a browser window went: the chat when there is one, the dashboard always.
+
+        A message Telegram does not take must not end the login or the form in the window.
+        """
+        self.bot.note("browser", text, job_id)
+        if chat_id is None:
+            return
+        try:
+            await self.bot.api.send_message(chat_id, text)
+        except (RetryableError, PermanentError) as error:
+            log.warning("could not send to Telegram: %s", error)
+
+    def start_finish(self, chat_id: int | None, job_id: str) -> bool:
+        """Start finishing a form by hand; False while another browser window (a login, a form) is open.
+
+        ``chat_id`` None (no Telegram, or the dashboard without a paired chat): messages go to the dashboard.
+        """
+        if self.window_open():
             return False
         self._login = asyncio.create_task(self._finish(chat_id, job_id))
         return True
@@ -364,19 +517,26 @@ class App:
                 chat_id, "A browser window is already open (a login or another form): finish that one first."
             )
 
-    async def _finish(self, chat_id: int, job_id: str) -> None:
-        send = self.bot.api.send_message
-        # One browser profile, one browser at a time: the hidden one closes (waiting forms refill on a tap).
-        await self.applier.engine.aclose()
+    async def _finish(self, chat_id: int | None, job_id: str) -> None:
+        # One browser profile, one browser at a time: a fill under way finishes, then the hidden browser
+        # closes (waiting forms refill on a tap) and new fills wait until this window is done.
+        async with self.applier.engine.paused():
+            await self._finish_in_window(chat_id, job_id)
+
+    async def _finish_in_window(self, chat_id: int | None, job_id: str) -> None:
+        self.drop_closed_forms()
         try:
             async with login_screen(self.settings.screen_port, self.settings.dashboard_host) as screen:
+                self.screen_url = screen.url
                 where = (
                     "A browser window is opening on your computer."
                     if screen.url is None
                     else f"Open this on the computer running Sarthi (works for 10 minutes):\n{screen.url}"
                 )
-                await send(
-                    chat_id, f"🧩 {where}\nSarthi fills the form; you solve the CAPTCHA and press Submit."
+                await self._say(
+                    chat_id,
+                    f"🧩 {where}\nSarthi fills the form; you solve the CAPTCHA and press Submit.",
+                    job_id,
                 )
                 visible = ApplyEngine(
                     self.settings.data_dir / "screenshots",
@@ -390,59 +550,92 @@ class App:
                 finally:
                     await visible.aclose()
         except ScreenError as error:
-            await send(chat_id, f"Could not open a browser for the form: {error}")
+            await self._say(chat_id, f"Could not open a browser for the form: {error}", job_id)
             return
         except Exception:  # a browser that fails must not stop Sarthi
             log.exception("finishing %s by hand failed", job_id)
-            await send(
-                chat_id, "The form could not be opened. Tap Finish it myself again, or apply on the site."
+            await self._say(
+                chat_id,
+                "The form could not be opened. Try Finish it myself again, or apply on the site.",
+                job_id,
             )
             return
+        finally:
+            self.screen_url = None
         if outcome is None:
-            await send(chat_id, "That job (or your profile) is no longer stored.")
+            await self._say(chat_id, "That job (or your profile) is no longer stored.")
+
+    def start_login(self, chat_id: int | None, site: str) -> bool:
+        """Open a site's login page; False while another browser window is open. ``chat_id`` as above."""
+        if self.window_open():
+            return False
+        self._login = asyncio.create_task(self._log_in(chat_id, site))
+        return True
 
     async def site_login(self, chat_id: int, site: str) -> None:
         """/login from Telegram: open the site's login page, on a screen in the browser when in Docker."""
-        if self._login is not None and not self._login.done():
+        if not self.start_login(chat_id, site):
             await self.bot.api.send_message(
                 chat_id, "A login is already open: finish or close that one first."
             )
-            return
-        self._login = asyncio.create_task(self._log_in(chat_id, site))
 
-    async def _log_in(self, chat_id: int, site: str) -> None:
+    async def _log_in(self, chat_id: int | None, site: str) -> None:
+        # The saved logins are one browser profile, which one browser at a time may open: a fill under way
+        # finishes, then the apply browser closes (forms waiting for Submit are filled again when tapped) and
+        # reopens with the new login once this window is done.
+        async with self.applier.engine.paused():
+            await self._log_in_window(chat_id, site)
+
+    async def _log_in_window(self, chat_id: int | None, site: str) -> None:
         name = SITE_NAMES.get(site, site)
-        send = self.bot.api.send_message
-        # The saved logins are one browser profile, which one browser at a time may open: the apply browser
-        # closes (forms waiting for Submit are filled again when tapped) and reopens with the new login.
-        await self.applier.engine.aclose()
+        self.drop_closed_forms()
         try:
             async with login_screen(self.settings.screen_port, self.settings.dashboard_host) as screen:
+                self.screen_url = screen.url
                 if screen.url is None:
-                    await send(chat_id, f"A browser window opened on your computer. Log in to {name} there.")
+                    await self._say(
+                        chat_id, f"A browser window opened on your computer. Log in to {name} there."
+                    )
                 else:
-                    await send(
+                    await self._say(
                         chat_id,
                         f"Open this on the computer running Sarthi and log in to {name} there "
                         f"(the link works for 10 minutes):\n{screen.url}",
                     )
                 done = await login_to(site, self.settings.data_dir / BROWSER_PROFILE, env=screen.env)
         except ScreenError as error:
-            await send(chat_id, f"Could not open a browser for the login: {error}")
+            await self._say(chat_id, f"Could not open a browser for the login: {error}")
             return
         except Exception:  # a browser that fails to start must not stop Sarthi
             log.exception("login to %s failed", site)
-            await send(chat_id, f"The {name} login could not be opened. Try /login again.")
+            await self._say(chat_id, f"The {name} login could not be opened. Try logging in again.")
             return
-        await send(
-            chat_id,
-            f"✅ Logged in to {name}: Sarthi can apply there now."
-            if done
-            else f"Not logged in to {name} (the window was closed or 10 minutes passed). Try /login again.",
-        )
+        finally:
+            self.screen_url = None
+        if not done:
+            await self._say(
+                chat_id,
+                f"Not logged in to {name} (the window was closed or 10 minutes passed). Try again.",
+            )
+            return
+        retried = self.retry_after_login(site)
+        more = f" Filling the {retried} application(s) that waited for this login again." if retried else ""
+        await self._say(chat_id, f"✅ Logged in to {name}: Sarthi can apply there now.{more}")
+
+    def retry_after_login(self, site: str) -> int:
+        """Fill again the forms handed over only because the user was not logged in to ``site``."""
+        host = urlparse(LOGIN_PAGES[site]).hostname or ""
+        domain = host.removeprefix("www.").removeprefix("secure.")
+        jobs = self.applier.applications.waiting_for_login(domain)
+        for job_id in jobs:
+            self.queue.enqueue(names.APPLY, job_id, priority=Priority.APPLY)
+        return len(jobs)
 
     async def _telegram(self) -> None:
         """Make the user's bot first when one-tap setup is still to do; then serve the chat."""
+        if not self.telegram:
+            log.warning(NO_TELEGRAM_HINT)
+            return
         if self.connector is not None:
             await self.connect_bot(self.connector)
         await asyncio.gather(self.bot.poll(), self.offer_pairing())
@@ -547,6 +740,7 @@ class App:
                 own_signals=False,
                 actions=WebActions(self),
                 data_dir=self.settings.data_dir,
+                sites=site_map(),
             )
         except NoFreePortError as error:
             log.warning("dashboard not started: %s", error)
@@ -658,7 +852,8 @@ def _telegram_api(settings: Settings) -> tuple[TelegramApi, str, RelayLink | Non
     """The bot Sarthi talks through, chosen in a fixed order.
 
     A token of the user's own (@BotFather); the bot one-tap setup made earlier; the shared bot's relay; or
-    one-tap setup still to do (the token arrives while Sarthi runs).
+    one-tap setup still to do (the token arrives while Sarthi runs). With none of them there is no bot:
+    Sarthi still runs, with the dashboard only, so a new user can look around and fill in a profile.
     """
     relay: RelayLink | None = None
     connector: Connector | None = None
@@ -680,15 +875,12 @@ def _telegram_api(settings: Settings) -> tuple[TelegramApi, str, RelayLink | Non
             raise SetupError(f"one-tap Telegram setup ({settings.telegram_connect_url}): {error}") from None
         api, mode = TelegramApi(SecretStr(NOT_CONNECTED)), "connect"  # a real token arrives during setup
     else:
-        raise SetupError(
-            "no Telegram bot: set SARTHI_TELEGRAM_CONNECT_URL (one-tap setup), or SARTHI_TELEGRAM_BOT_TOKEN"
-            " (a bot of your own from @BotFather)"
-        )
+        api, mode = TelegramApi(SecretStr(NOT_CONNECTED)), NO_TELEGRAM
     return api, mode, relay, connector
 
 
 def build(settings: Settings, clock: Clock = utcnow) -> App:
-    """Wire Sarthi from ``settings``. Raises ``SetupError`` when the bot token is missing."""
+    """Wire Sarthi from ``settings``. Raises ``SetupError`` when a configured way to Telegram fails."""
     api, mode, relay, connector = _telegram_api(settings)
     conn = connect(settings.db_path)
     queue = TaskQueue(TaskStore(conn, clock=clock), clock=clock)
@@ -709,7 +901,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         return load_profile(path)
 
     previous = chats.get_state(MODE_KEY)
-    if previous != mode:
+    if mode not in (NO_TELEGRAM, previous):  # (no bot for now: the chat link waits for its return)
         # Another bot (own bot <-> shared bot): its update numbers and chat link do not carry over. An
         # install from before modes were recorded used its own bot: nothing to reset for it.
         for key in () if previous is None and mode == "own" else (OFFSET_KEY, OWNER_KEY, PAIR_LINK_KEY):
@@ -738,7 +930,10 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
             line=settings.auto_apply_min_score,
             daily_limit=settings.auto_apply_daily_limit,
             wait_s=settings.auto_apply_wait_minutes * 60,
+            job_boards=settings.auto_apply_job_boards,
         ),
+        notices=NoticeStore(conn, clock=clock),
+        telegram=mode != NO_TELEGRAM,
         clock=clock,
     )
 
@@ -806,18 +1001,11 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         daily_limit=settings.apply_daily_limit,
         chats=chats,
         clock=clock,
+        auto_on_boards=bot.auto.boards,
     )
-    mailbox = (
-        Mailbox(
-            settings.mail_imap_host,
-            settings.mail_imap_port,
-            settings.mail_user,
-            settings.mail_password.get_secret_value(),
-            settings.mail_folder,
-        )
-        if settings.mail_enabled and settings.mail_password is not None
-        else None
-    )
+
+    def mailbox() -> Mailbox | None:  # read before every check: a dashboard change counts at once
+        return current_mailbox(settings, settings.data_dir)
 
     def own_name() -> str:
         master = load_master(master_path(settings.data_dir))
@@ -852,4 +1040,5 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         clock,
         relay,
         connector,
+        telegram=mode != NO_TELEGRAM,
     )

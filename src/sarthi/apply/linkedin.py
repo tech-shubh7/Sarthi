@@ -1,11 +1,8 @@
-# Easy Apply flow adapted from LinkedIn-AI-Job-Applier-Ultimate (MIT),
-# src/job_manager/linkedin/easy_applier_linkedin.py. Copyright (c) 2026 beatwad.
-# Modifications (c) Sarthi contributors: fields are read with Sarthi's form scanner and answered by
-# the rule-based field map (no AI answers); the flow stops before "Submit application" for approval.
 """LinkedIn Easy Apply with the user's own logged-in session.
 
 Steps: open the job; stop if LinkedIn says the application was already submitted or the daily Easy Apply
-limit is reached; click Easy Apply (never the plain "Apply", which goes to another site); on each step fill
+limit is reached; click Easy Apply (a job with only the plain "Apply" applies on the company's own site: its
+address is read and raised as ``ExternalApplyError``, and the application continues there); on each step fill
 what the profile answers, then Next / Review, until the "Submit application" step, which is left for the
 user's approval. A required question without an answer, a validation error that stays, or a login page stops
 the flow.
@@ -21,7 +18,7 @@ from dataclasses import dataclass, field
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Locator, Page
 
-from sarthi.apply import adapters
+from sarthi.apply import adapters, external
 from sarthi.apply.adapters import Adapter, FillError
 from sarthi.jobs.forms import FormContext, FormField, suggest
 
@@ -43,6 +40,11 @@ _LIMIT = re.compile(
     r"reached today.{0,40}easy apply limit|daily submissions|continue applying tomorrow", re.I
 )
 _ALREADY = re.compile(r"application submitted|you applied|applied \d+ \w+ ago", re.I)
+# The plain "Apply" of a job without Easy Apply: it leads to the company's own site.
+COMPANY_SITE = (
+    '.jobs-apply-button, button[aria-label*="company website" i], a[aria-label*="company website" i], '
+    'button:text-is("Apply"), a:text-is("Apply"), button:text-is("Apply now"), a:text-is("Apply now")'
+)
 _NEXT_WORDS = ("submit application", "review", "next", "continue to next step", "continue")
 _ERRORS = ", ".join(
     (
@@ -140,12 +142,29 @@ async def open_easy_apply(page: Page, url: str) -> None:
     if not visible:
         if _ALREADY.search(text):
             raise FillError("LinkedIn shows this application as already submitted")
+        company_site = await _company_site_button(page)
+        if company_site is not None and (target := await external.follow(page, company_site, is_linkedin)):
+            raise external.ExternalApplyError(target)
         raise FillError("this job has no Easy Apply (it applies on the company's own site)")
     await visible[0].click()
     with contextlib.suppress(PlaywrightError):  # "Continue applying" after a saved draft
         cont = page.locator('button:has-text("Continue applying"), a:has-text("Continue applying")')
         if await cont.count():
             await cont.first.click(timeout=2000)
+
+
+async def _company_site_button(page: Page) -> Locator | None:
+    """The plain "Apply" of a job that applies on the company's own site (never an Easy Apply button)."""
+    for candidate in await page.locator(COMPANY_SITE).all():
+        try:
+            if not await candidate.is_visible():
+                continue
+            words = f"{await candidate.get_attribute('aria-label') or ''} {await candidate.inner_text()}"
+        except PlaywrightError:
+            continue
+        if "easy apply" not in words.lower():
+            return candidate
+    return None
 
 
 async def walk(page: Page, ctx: FormContext, resume_file: str) -> StepResult:

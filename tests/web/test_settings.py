@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchRecord, MatchStore
 from sarthi.profile.models import Preferences, Profile, RemotePreference
-from sarthi.web.actions import Controls, Pending
+from sarthi.web.actions import Controls, MailSettings, Pending
 from sarthi.web.app import create_app, read_only
 from sarthi.web.settings_form import form_values, profile_from_form
 from tests.conftest import FakeClock
@@ -93,6 +93,62 @@ class FakeActions:
         self.cancelled.append(job_id)
         return self.waiting.pop(job_id, None) is not None
 
+    # without Telegram: see tests/web/test_activity.py
+    answered: list[tuple[str, dict[str, str]]] = []  # noqa: RUF012  (replaced per test)
+    declined: list[str] = []  # noqa: RUF012
+    auto: list[tuple[str, str]] = []  # noqa: RUF012
+    logins: list[str] = []  # noqa: RUF012
+    screen: str | None = None
+
+    def answer_questions(self, job_id: str, answers: dict[str, str]) -> dict[str, str]:
+        self.answered = [*self.answered, (job_id, answers)]
+        return {"visa": "Please pick one of the listed answers."} if answers.get("visa") == "Maybe" else {}
+
+    def decline_questions(self, job_id: str) -> bool:
+        self.declined = [*self.declined, job_id]
+        return job_id != "gone"
+
+    def cancel_auto(self, job_id: str) -> bool:
+        self.auto = [*self.auto, ("cancel", job_id)]
+        return True
+
+    def apply_now(self, job_id: str) -> bool:
+        self.auto = [*self.auto, ("now", job_id)]
+        return job_id != "gone"
+
+    def login_sites(self) -> list[tuple[str, str]]:
+        return [("linkedin", "LinkedIn"), ("naukri", "Naukri")]
+
+    def site_login(self, site: str) -> bool:
+        self.logins = [*self.logins, site]
+        return site != "naukri" or not self.screen
+
+    def screen_link(self) -> str | None:
+        return self.screen
+
+    # mail (reply tracking): see tests/web/test_mail_settings.py
+    mail_settings = MailSettings("", 993, "", "INBOX", enabled=False)
+    mail_saved: list[tuple[MailSettings, str]] = []  # noqa: RUF012  (replaced per test)
+    mail_tested: list[tuple[MailSettings, str]] = []  # noqa: RUF012
+
+    def mail(self) -> MailSettings:
+        return self.mail_settings
+
+    def save_mail(self, settings: MailSettings, password: str) -> None:
+        self.mail_saved = [*self.mail_saved, (settings, password)]
+        self.mail_settings = MailSettings(
+            settings.host, settings.port, settings.user, settings.folder, settings.enabled,
+            password_saved=settings.password_saved or bool(password),
+        )  # fmt: skip
+
+    async def test_mail(self, settings: MailSettings, password: str) -> str:
+        self.mail_tested = [*self.mail_tested, (settings, password)]
+        return (
+            "Could not connect: the mailbox refused the login."
+            if password.startswith("wrong")
+            else "Connected: 3 messages in INBOX."
+        )
+
 
 @pytest.fixture
 def actions() -> FakeActions:
@@ -152,6 +208,21 @@ def test_bad_values_are_explained_and_nothing_is_saved(field: str, value: str) -
     assert result.profile is None
     assert field in result.errors
     assert result.values[field] == value  # what was typed comes back, not lost
+
+
+def test_a_berlin_user_with_languages() -> None:
+    berlin = FORM | {
+        "home": "Germany",
+        "countries": "none",
+        "languages": "German B2, French",
+        "salary": "€65.000",
+    }
+    result = profile_from_form(berlin, PROFILE)
+    assert result.profile is not None, result.errors
+    p = result.profile.preferences
+    assert (p.home_country, p.languages) == ("DE", ("German B2", "French"))
+    assert p.min_salary is not None and (p.min_salary.currency, p.min_salary.minimum) == ("EUR", 65_000)
+    assert form_values(result.profile)["languages"] == "German B2, French"
 
 
 def test_the_saved_profile_fills_the_form_back() -> None:

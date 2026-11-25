@@ -57,8 +57,13 @@ class Endpoint:
 
 
 def resolve(names: list[str], settings: Settings) -> list[Endpoint]:
-    """Turn ``"<provider>/<model>"`` names into endpoints, skipping (with a warning) any that cannot work."""
+    """Turn ``"<provider>/<model>"`` names into endpoints, skipping (with a warning) any that cannot work.
+
+    A model whose provider has no key is expected (the example lists every free provider, the user adds one
+    key): that is only a note while another model works, and a warning when none does.
+    """
     endpoints: list[Endpoint] = []
+    keyless: list[str] = []
     for name in names:
         provider, slash, model = name.strip().partition("/")
         preset = PRESETS.get(provider.lower())
@@ -69,8 +74,11 @@ def resolve(names: list[str], settings: Settings) -> list[Endpoint]:
             continue
         key: SecretStr | None = getattr(settings, preset.key_setting) if preset.key_setting else None
         if preset.key_setting and key is None:
-            log.warning("AI model %s skipped: SARTHI_%s is not set", name, preset.key_setting.upper())
+            keyless.append(f"{name} (SARTHI_{preset.key_setting.upper()} is not set)")
             continue
         base_url = settings.ollama_url if provider.lower() == "ollama" else preset.base_url
         endpoints.append(Endpoint(provider.lower(), model, base_url.rstrip("/"), key))
+    if keyless:
+        level = logging.INFO if endpoints else logging.WARNING
+        log.log(level, "AI model(s) skipped, no key: %s", "; ".join(keyless))
     return endpoints

@@ -16,6 +16,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StringConstr
 from sarthi.ai.client import AiClient, AiError
 from sarthi.ai.privacy import scrub
 from sarthi.ai.prompts import Prompt
+from sarthi.jobs.skills import skills_in
 from sarthi.profile.master import MasterResume
 
 log = logging.getLogger(__name__)
@@ -108,44 +109,91 @@ class TailorAnswer(BaseModel):
     skills_first: Annotated[list[SkillName], at_most(25)] = Field(default_factory=list)
 
 
+# Truthfulness rules adapted from Resume-Matcher (Apache-2.0), apps/backend/app/prompts/templates.py
+# (CRITICAL_TRUTHFULNESS_RULES, IMPROVE_RESUME_PROMPT_KEYWORDS) @ 959e458, and the "interview backtrack
+# test" from ai-job-search (MIT), .claude/skills/job-application-assistant/03-writing-style.md @ 965452f.
 TAILOR_PROMPT = Prompt(
     name="tailor_resume",
-    version="3",
+    version="4",
     instructions="""
-Tailor the candidate's resume to the job, the way a careful human editor would. You may only re-word and
-re-order what <resume_sections> already says. Never add a skill, tool, employer, number, metric, team size or
-result that is not in it.
+Tailor the candidate's resume to the job the way a careful human editor would: the same person, the same
+facts, the same layout, with each line re-worded so the job's must-haves are easy to see. The new text is
+printed in the candidate's own resume design, in the space the old line used, so every line keeps its length.
+
+Truth rules (never break them; an untrue line costs the candidate the interview):
+1. Add no skill, tool, technology, employer, product, certification, number, team size or result that the
+   line does not already state. <job_keywords> lists the job's skills the candidate has ("have") and the
+   ones they do not ("lack"): use a "have" word where that line's work really involved it; never a "lack" one.
+2. Keep every number exactly as written. Do not raise seniority or scope ("helped" stays "helped", "a team
+   of 3" is not "led a team").
+3. Each line is about its own work only: never move a detail from one bullet, job or project to another.
+4. Interview backtrack test: the candidate must be able to explain every line in an interview without
+   saying "well, what I actually meant was...". Using the job's term for the same work is the point of
+   tailoring: "built data pipelines that load sales data nightly" can say "ETL pipelines"; "LLM app that
+   answers from company documents" can say "RAG pipeline". Claiming adjacent work, or a wider scope, is not.
+5. Do not copy the posting's sentences: use its hard keywords exactly, in the candidate's own sentence.
+
+A recruiter scans for six seconds: the summary names the target role and why the candidate fits; the first
+bullet of each position and the first three of the latest one show the job's must-haves when the resume has
+them. Where a line has no number, keep its outcome in words (who used it, what it replaced, its scope).
 
 Return JSON:
-- "headline": a short line (max 8 words) naming the target role and 2-3 of the candidate's real skills,
-  e.g. "Backend Engineer | Python, Node.js, RAG"
-- "summary": at most 2 sentences and 45 words. Say what kind of engineer they are, the skills this job cares
-  about most, and ONE standout result. Do not copy a bullet; the bullets already say the details. Each claim
-  from one resume line, never combining details of different bullets. No "I", no "seeking", no buzzwords.
-- "experience": for each position, {"index": <its number>, "bullets": [...]}: the bullets most relevant to
-  the job first, re-worded to use the job's own words where the meaning is the same. Each bullet: starts with
-  a plain past-tense verb (built, cut, wrote, moved, designed), one idea, about 25 words at most, the result
-  last; keep every number exactly as written; at most 5 bullets per position; drop bullets unrelated to the
-  job only if the position has more than 4.
-- "project_order": project numbers, most relevant first (leave out unrelated ones)
+- "summary": the candidate's summary re-worded toward this job: what they do, the job's must-haves they
+  really have, one real result. Keep its length (the character count shown, within 10%). Call the
+  candidate only by a title the resume gives them (never the job's title if they have not held it). No "I",
+  no "seeking", no buzzwords.
+- "headline": a short line (max 8 words): a title the resume gives the candidate and 2-3 of their real
+  skills the job asks for.
+- "experience": for EVERY position, {"index": <its number>, "bullets": [...]} with EXACTLY as many bullets
+  as it has now, in the same order: bullet 1 is the new wording of bullet 1, and so on. Each bullet keeps
+  its length (the character count shown, within 10%), keeps its numbers, starts with an active past-tense
+  verb like the original (never passive: "Search service built in Python" is wrong), and brings the job's
+  term for that same work into the sentence.
+
+Example (another candidate, another job asking for "ETL" and "data quality"):
+  original (84 chars): Wrote Python scripts that pull sales data from three APIs into Postgres every night.
+  good (85 chars):     Wrote nightly Python ETL scripts that load sales data from three APIs into Postgres.
+  bad: "ETL pipelines architected for sales data, ensuring data quality" (passive, "architected" and
+  "data quality" are claims the original never makes)
+- "project_order": project numbers, most relevant first (leave out none)
 - "skills_first": the candidate's skills that the job asks for, most important first (copy names exactly)
 
-Write like a person, not a template: concrete nouns, short words, no filler ("various", "multiple",
-"responsible for", "worked on" when "built" is true). No em dashes. Never use: passionate, leverage,
-spearheaded, robust, cutting-edge, seamless, synergy, results-driven, detail-oriented, proven track record,
-dynamic, innovative, utilize.
+Write like the candidate, not a template: concrete nouns, short words, plain past-tense verbs (built, cut,
+wrote, moved, designed). No filler ("various", "multiple", "responsible for", "worked on"). No em dashes.
+Never use: passionate, leverage, spearheaded, orchestrated, robust, cutting-edge, seamless, synergy,
+results-driven, detail-oriented, proven track record, dynamic, innovative, utilize, demonstrated.
+A line that already reads well and already uses the job's words may stay exactly as it is.
 """,
-    shape='{"headline": "", "summary": "", "experience": [{"index": 0, "bullets": [""]}], '
+    shape='{"summary": "", "headline": "", "experience": [{"index": 0, "bullets": [""]}], '
     '"project_order": [0], "skills_first": [""]}',
 )
 
 
-def sections_text(master: MasterResume) -> str:
-    """The master resume with numbered positions and projects, for prompts (no contact details)."""
-    lines = [f"Headline: {master.headline}", f"Summary: {master.summary}", "", "Experience:"]
+def job_keywords(master: MasterResume, job_text: str, own_skills: tuple[str, ...] = ()) -> str:
+    """The job's skills split into those the candidate has and those they lack (for the tailoring prompt)."""
+    have = [*master.all_skills(), *own_skills]
+    asked = skills_in(job_text, have)
+    lower = {s.lower() for s in have}
+    return (
+        f"have: {', '.join(s for s in asked if s.lower() in lower) or 'none'}\n"
+        f"lack: {', '.join(s for s in asked if s.lower() not in lower) or 'none'}"
+    )
+
+
+def sections_text(master: MasterResume, *, lengths: bool = False) -> str:
+    """The master resume with numbered positions and projects, for prompts (no contact details).
+
+    ``lengths`` adds each line's character count, so a re-worded line can keep its length.
+    """
+
+    def size(text: str) -> str:
+        return f" ({len(text)} chars)" if lengths else ""
+
+    lines = [f"Headline: {master.headline}", f"Summary{size(master.summary)}: {master.summary}", ""]
+    lines.append("Experience:")
     for i, job in enumerate(master.experience):
         lines.append(f"[{i}] {job.title} at {job.company} ({job.start} - {job.end})")
-        lines += [f"  - {b}" for b in job.bullets]
+        lines += [f"  {k + 1}.{size(b)} {b}" for k, b in enumerate(job.bullets)]
     lines.append("\nProjects:")
     for i, project in enumerate(master.projects):
         lines.append(f"[{i}] {project.name}: {project.description}")
@@ -157,7 +205,11 @@ def sections_text(master: MasterResume) -> str:
 
 
 async def tailor(
-    client: AiClient, master: MasterResume, job_text: str, problems: list[str] | None = None
+    client: AiClient,
+    master: MasterResume,
+    job_text: str,
+    problems: list[str] | None = None,
+    own_skills: tuple[str, ...] = (),
 ) -> TailorAnswer | None:
     """The model's tailoring answer, or None when no model answered. ``problems`` asks for a corrected try."""
     if not client.available:
@@ -167,7 +219,8 @@ async def tailor(
         return await client.structured(
             TAILOR_PROMPT,
             TailorAnswer,
-            resume_sections=scrub(sections_text(master)),
+            resume_sections=scrub(sections_text(master, lengths=True)),
+            job_keywords=job_keywords(master, job_text, own_skills),
             job_posting=job_text[:JOB_CHARS],
             problems_to_fix=feedback,
         )

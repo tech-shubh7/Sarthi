@@ -8,7 +8,6 @@ read-back check → keyword report → a ``documents_ready`` task for the chat.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from collections.abc import Callable
@@ -27,11 +26,12 @@ from sarthi.db.tasks import TaskRecord
 from sarthi.documents.build import (
     Letter,
     cover_letter,
+    edits,
     plain_letter,
-    short_summary,
     tailored_resume,
     without_claims,
 )
+from sarthi.documents.inplace import OwnDesign, contacts_kept, own_design
 from sarthi.documents.keywords import keyword_report
 from sarthi.documents.render import (
     RenderError,
@@ -48,10 +48,12 @@ from sarthi.profile.master import (
     grounded,
     load_master,
     master_path,
+    merged_links,
     name_from,
     save_master,
 )
 from sarthi.profile.models import Profile
+from sarthi.profile.original import load_original, text_hash
 from sarthi.queue import names
 from sarthi.queue.tasks import MAX_ATTEMPTS, DeferError, PermanentError, Priority, RetryableError, TaskQueue
 
@@ -88,7 +90,7 @@ class Tries:
 
 def resume_hash(text: str) -> str:
     """Identifies the uploaded resume a master resume was read from."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    return text_hash(text)
 
 
 def file_stem(name: str, company: str) -> str:
@@ -120,8 +122,12 @@ class DocumentMaker:
         self.data_dir = data_dir
         self._clock = clock
 
-    async def master(self, profile: Profile) -> MasterResume:
-        """The master resume for the current upload, read by the AI once and then kept."""
+    async def master(self, profile: Profile, *, last: bool = False) -> MasterResume:
+        """The master resume for the current upload, read by the AI once and then kept.
+
+        When the AI cannot read it on the ``last`` try, the master read from an earlier upload is used as it
+        is (not saved as this upload's); with none, the documents fail with a reason, never silently.
+        """
         text = profile.resume_text
         if not text.strip():
             raise PermanentError(NO_RESUME)
@@ -132,15 +138,22 @@ class DocumentMaker:
             contact = saved.contact.model_copy(
                 update={
                     "location": saved.contact.location or found.location,
-                    "links": saved.contact.links or found.links,
+                    "links": merged_links(saved.contact.links, found.links),  # never fewer than the resume's
                 }
             )
             return saved if contact == saved.contact else saved.model_copy(update={"contact": contact})
         if not self.ai.available:
             raise PermanentError(NO_AI)
         draft = await read_master(self.ai, text)
-        if draft is None:
+        if draft is None and not last:
             raise RetryableError("the AI could not read the resume into sections right now")
+        if draft is None and saved is not None:
+            log.warning("the AI could not read the new resume: using the one read from the earlier upload")
+            return saved
+        if draft is None:
+            raise PermanentError(
+                "The AI could not read your resume into sections after several tries (busy or out of quota)."
+            )
         master = grounded(draft, text).model_copy(
             update={"contact": contact_from(text), "source_hash": resume_hash(text)}
         )
@@ -194,15 +207,17 @@ class DocumentMaker:
         if job is None:
             raise PermanentError("That job is no longer stored.")
         job_text = f"{job.title}\n{job.company}\n\n{self.jobs.full_text(job_id) or job.description}"
-        master = await self.master(profile)
+        master = await self.master(profile, last=tries.last)
         skills = profile.skills
 
-        answer = await tailor(self.ai, master, job_text)
+        answer = await tailor(self.ai, master, job_text, own_skills=skills)
         self._busy(answer, tries)
-        built = tailored_resume(master, answer, profile.resume_text, skills)
-        if built.problems:  # clichés or AI talk: one more try with the problems listed, then strict
-            answer = await tailor(self.ai, master, job_text, built.problems[:10]) or answer
-            built = tailored_resume(master, answer, profile.resume_text, skills, strict=True)
+        built = tailored_resume(master, answer, profile.resume_text, skills, job_text=job_text)
+        if built.problems:  # clichés, lengths, copied sentences: one more try with the problems, then strict
+            answer = await tailor(self.ai, master, job_text, built.problems[:12], skills) or answer
+            built = tailored_resume(
+                master, answer, profile.resume_text, skills, strict=True, job_text=job_text
+            )
 
         built = await self._checked_summary(master, built, tries)
         letter = await self._letter(
@@ -210,15 +225,21 @@ class DocumentMaker:
         )
 
         paper = paper_for(profile.preferences.home_country)
-        try:
-            resume_bytes = resume_pdf(built.resume, paper)
-            letter_bytes = letter_pdf(built.resume, letter, paper, today=self._today())
-        except RenderError as error:
-            raise PermanentError(f"The PDF could not be made: {error}") from error
-
         stem = file_stem(master.name, job.company)
         folder = self.data_dir / DOCUMENTS_DIR / job_id
         resume_file, letter_file = folder / f"{stem}_Resume.pdf", folder / f"{stem}_Cover_Letter.pdf"
+        design = self._own_design(profile, master, built.resume, folder / f"{stem}_Resume")
+        try:
+            resume_bytes = design.pdf if design.pdf is not None else resume_pdf(built.resume, paper)
+            letter_bytes = letter_pdf(built.resume, letter, paper, today=self._today())
+        except RenderError as error:
+            raise PermanentError(f"The PDF could not be made: {error}") from error
+        dropped = contacts_kept(resume_bytes, master.contact)
+        if dropped:  # never send a resume an employer cannot reach the person from
+            raise PermanentError(
+                f"The tailored resume would drop your {', '.join(dropped)}; it was not made."
+            )
+
         write(resume_file, resume_bytes)
         write(letter_file, letter_bytes)
         write(folder / "cover_letter.txt", letter.text().encode("utf-8"))
@@ -234,7 +255,8 @@ class DocumentMaker:
                 "missing": keywords.missing,
                 "score": keywords.score,
             },
-            "ats": ats_problems(resume_bytes, built.resume),
+            "ats": ats_problems(resume_bytes, built.resume, own_design=design.pdf is not None),
+            "design": design.summary(),
             "tailored_by_ai": answer is not None,
             "letter_by_ai": letter.from_ai,
             "kept_original": built.reverted[:10],
@@ -256,6 +278,25 @@ class DocumentMaker:
         )
         return report
 
+    def _own_design(
+        self, profile: Profile, master: MasterResume, tailored: MasterResume, base: Path
+    ) -> OwnDesign:
+        """The tailored resume in the user's own file, when the uploaded file was kept.
+
+        The edited .tex or .docx is written next to the PDF (``base`` + its extension) for the user.
+        """
+        original = load_original(self.data_dir, profile.resume_text)
+        if original is None:
+            return OwnDesign(None)
+        try:
+            design = own_design(original, edits(master, tailored), master.contact)
+        except (RuntimeError, ValueError, OSError, KeyError) as error:  # a damaged or unusual file
+            log.warning("own design not used: %s", type(error).__name__)
+            return OwnDesign(None, kind=original.kind, problems=["your file could not be edited"])
+        if design.source is not None:
+            write(base.with_suffix(design.suffix), design.source)
+        return design
+
     async def _claims(self, master: MasterResume, text: str, tries: Tries) -> list[str]:
         """The AI reviewer's unsupported claims (waits for a busy AI unless this is the last try)."""
         found = await unsupported_claims(self.ai, master, text)
@@ -265,8 +306,8 @@ class DocumentMaker:
     async def _checked_summary(self, master: MasterResume, built: Any, tries: Tries) -> Any:
         """The tailored summary, or the master's when the reviewer finds a claim the resume lacks."""
         summary = built.resume.summary
-        own = short_summary(master.summary)
-        if summary in (master.summary, own) or not summary:
+        own = master.summary
+        if summary == own or not summary:
             return built
         problems = await self._claims(master, summary, tries)
         if problems:

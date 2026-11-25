@@ -54,7 +54,12 @@ class ApplicationStore:
         detail: str = "",
         screenshot: str = "",
     ) -> None:
-        """Insert or update the job's application. The first submission time is kept."""
+        """Insert or update the job's application. The first submission time is kept.
+
+        An application that went out stays out: once ``submitted`` or ``applied_by_user`` nothing but
+        another sent status changes it (a late refill, hand-over or failure must not make it look unsent,
+        or the next Apply tap would send it a second time).
+        """
         now = to_iso(self._clock())
         sent_at = now if status in SENT else None
         with transaction(self._conn) as c:
@@ -64,7 +69,9 @@ class ApplicationStore:
                 " site = CASE WHEN excluded.site = '' THEN site ELSE excluded.site END,"
                 " detail = excluded.detail, screenshot = excluded.screenshot,"
                 " updated_at = excluded.updated_at,"
-                " submitted_at = coalesce(submitted_at, excluded.submitted_at)",
+                " submitted_at = coalesce(submitted_at, excluded.submitted_at)"
+                " WHERE status NOT IN ('submitted', 'applied_by_user')"  # SENT: a sent row stays sent
+                " OR excluded.status IN ('submitted', 'applied_by_user')",
                 (job_id, status.value, site[:200], detail[:1000], screenshot[:500], now, sent_at),
             )
 
@@ -115,6 +122,19 @@ class ApplicationStore:
         ).fetchone()
         return int(row[0])
 
+    def waiting_for_login(self, host: str) -> list[str]:
+        """Jobs on ``host`` (or a subdomain) handed to the user only because they were not logged in there."""
+        pattern = "%." + host.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+        rows = self._conn.execute(
+            "SELECT job_id FROM application WHERE status = 'needs_human'"
+            " AND (site = ? OR site LIKE ? ESCAPE '!')"
+            " AND (detail LIKE '%logged-in account%' OR detail LIKE '%signed out%'"
+            " OR detail LIKE '%needs you to log in%')"
+            " ORDER BY updated_at",
+            (host, pattern),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
     def sent_for_role(self, role_key: str, except_job: str) -> str | None:
         """Another job of the same role at the same company that was already applied to, or None."""
         row = self._conn.execute(
@@ -124,3 +144,8 @@ class ApplicationStore:
             (role_key, except_job),
         ).fetchone()
         return str(row[0]) if row else None
+
+    def was_sent(self, job_id: str) -> bool:
+        """True when this job's own application already went out (Sarthi submitted it or the user did)."""
+        found = self.get(job_id)
+        return found is not None and found.status in SENT

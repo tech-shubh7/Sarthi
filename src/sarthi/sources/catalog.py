@@ -1,12 +1,11 @@
-# Query pattern from ATS-Scrapers' README (MIT), "Query it with DuckDB" @ kalil0321/ats-scrapers main.
-# Copyright (c) kalil0321. Modifications (c) Sarthi contributors.
 """Every job in ATS-Scrapers' hosted snapshot: ~8 million open jobs at ~192,000 companies, crawled by them.
 
 One computer cannot poll 192k company boards without being blocked, so Sarthi reads ATS-Scrapers' published
 snapshot instead (one Parquet file, refreshed about daily). DuckDB fetches only the columns and row groups a
-query needs: a 2-day search for one country and a few roles measured about 100 MB, 45 seconds and 240 MB of
-memory, never the whole 4 GB file. The query runs only when the snapshot has changed (the small manifest says
-when), and its rows go through the same converter as Sarthi's own company-board reads.
+query needs: a 2-day search for one country and a few roles measured about 100 MB and 240 MB of memory,
+never the whole 4 GB file (for the time it takes, see ``THREADS``). The query runs only when the snapshot has
+changed (the small manifest says when), and its rows go through the same converter as Sarthi's own
+company-board reads.
 
 Descriptions are not read: they are stored in blocks of up to ~500 MB each (measured 2026-11-21), more than an
 8 GB laptop can hold safely, so the jobs arrive with title, place, salary and links, marked incomplete.
@@ -40,12 +39,15 @@ MANIFEST = "https://storage.stapply.ai/jobs/v1/manifest.json"
 SNAPSHOT = "https://storage.stapply.ai/jobs/v1/all.parquet"
 # An 8 GB laptop: a hard cap, DuckDB fails (and the read is retried later) rather than take more.
 MEMORY_LIMIT = "400MB"
-THREADS = 2
+# The file has no column statistics, so a query reads its columns from all ~520 row groups: thousands of small
+# range requests, bound by the network's latency, not its speed or the CPU. Measured 2026-11-24 (8.5 M jobs):
+# 2 threads took over 5 minutes and always timed out; 16 took 201 s within the same memory cap.
+THREADS = 16
 MAX_ROWS = 2000
 MAX_ROLES = 8
 MIN_LOOK_BACK = timedelta(days=2)  # the snapshot is refreshed about daily; reposts are merged later
 INTERRUPT_WAIT_S = 10.0  # how long a stopped scan gets to end
-QUERY_TIMEOUT_S = 300.0
+QUERY_TIMEOUT_S = 600.0  # a slow connection still finishes; a stuck one is stopped (and retried later)
 EXTENSIONS_ENV = "SARTHI_DUCKDB_EXTENSIONS"
 COLUMNS = (
     "url", "title", "company", "ats_type", "ats_id", "location", "country_iso", "is_remote", "workplace_type",

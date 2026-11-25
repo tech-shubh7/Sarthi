@@ -1,6 +1,3 @@
-# Adapted from JobRadar (MIT), src/jobradar/queue/tasks.py @ fdd739b.
-# Copyright (c) ThePlator. Modifications (c) Sarthi contributors.
-# Changes: Priority lanes; error text is redacted before it is stored.
 """The retry policy on top of the task table: enqueue, claim, complete, retry, fail, defer."""
 
 from __future__ import annotations
@@ -22,11 +19,19 @@ _JITTER = (0.8, 1.2)
 
 
 class Priority(IntEnum):
-    """Lanes: a new-job alert never waits behind slow work such as tailoring or applying."""
+    """Lanes: a new-job alert never waits behind slow work such as tailoring or applying.
+
+    ``SOURCE``: reading the job sources never waits behind a backlog of ordinary work (thousands of pages
+    to read or jobs to match again), or no new job would arrive for a day; a new job's match still goes first.
+    ``APPLY``: an application already started (form check, fill, Submit, a refill) finishes before new alerts
+    and new Apply taps take the few user slots, or a busy day would leave every application half done.
+    """
 
     BACKGROUND = -10
     NORMAL = 0
+    SOURCE = 50
     ALERT = 100
+    APPLY = 150
 
 
 class RetryableError(Exception):
@@ -121,9 +126,15 @@ class TaskQueue:
         """How many tasks of ``type_`` are waiting or running."""
         return self.store.active(type_)
 
-    def reclaim_stuck(self) -> int:
-        """Return tasks left running by a crash to the queue. Returns how many."""
-        return self.store.reclaim_stuck(started_before=to_iso(self._clock() - STUCK_AFTER))
+    def reclaim_stuck(self, *, everything: bool = False) -> int:
+        """Return tasks left running by a crash to the queue. Returns how many.
+
+        ``everything``: at the start of ``sarthi run``, which owns the database, every running row was left
+        by a process that is gone, however recently it started. Otherwise only rows older than
+        ``STUCK_AFTER`` (another process, e.g. a running Sarthi beside a catch-up, may hold the rest).
+        """
+        cutoff = None if everything else to_iso(self._clock() - STUCK_AFTER)
+        return self.store.reclaim_stuck(started_before=cutoff, max_attempts=self.max_attempts)
 
     def requeue_failed(self) -> int:
         """Give every failed task a fresh start. Returns how many."""

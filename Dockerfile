@@ -1,4 +1,3 @@
-# Adapted from JobRadar (MIT), Dockerfile @ fdd739b. Copyright (c) ThePlator. Modifications (c) Sarthi contributors:
 # Python 3.12, Chromium for filling application forms, app files read-only, only /app/data writable.
 # Slow, rarely changing layers first (system packages, Chromium, libraries), Sarthi's own code last, so a code
 # change rebuilds in about a minute instead of reinstalling Chromium.

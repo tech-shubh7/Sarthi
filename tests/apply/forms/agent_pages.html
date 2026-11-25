@@ -43,6 +43,24 @@
   <p>A board's job page as a signed-out guest sees it: no Apply, only an upload.</p>
   <button>Upload Your Resume We'll auto-fill your details</button>
 </section>
+<section id="guestflow">
+  <!-- Shine's apply flow as a signed-out guest sees it after "Apply Now": a new account from a resume, or sign in. -->
+  <h2>Let's get you applied</h2>
+  <p>Share your details for recruiter review</p>
+  <label style="display:none"><input type="file" accept=".pdf,.doc,.docx"></label>
+  <button>Upload Your Resume We'll auto-fill your details</button>
+  <p>ALREADY ON THIS BOARD?</p>
+  <button>Sign in to Apply →</button>
+  <a href="#terms">Term and Conditions</a> <a href="#privacy">Privacy Policy</a>
+</section>
+<section id="faded">
+  <h1>Node.js Developer</h1>
+  <button onclick="document.title='applied'">Apply Now</button>
+  <!-- The sticky bar that slides in on scroll: faded out and click-through until then. -->
+  <div style="position:fixed;bottom:0;left:0;right:0;opacity:0;pointer-events:none">
+    <button onclick="document.title='bar'">Apply Now</button>
+  </div>
+</section>
 <section id="shadow">
   <h1>Frontend Engineer</h1>
   <apply-widget></apply-widget>

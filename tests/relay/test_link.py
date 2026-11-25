@@ -12,7 +12,7 @@ import pytest
 from pydantic import SecretStr
 
 from sarthi import app as app_module
-from sarthi.app import SetupError, build
+from sarthi.app import build
 from sarthi.chat.pairing import OWNER_KEY, code_hash, redeem
 from sarthi.chat.telegram.bot import OFFSET_KEY
 from sarthi.chat.telegram.link import LINK_FILE, MODE_KEY, PAIR_LINK_KEY, RelayError, relay_link
@@ -106,9 +106,33 @@ async def close(sarthi: app_module.App) -> None:
     sarthi.conn.close()
 
 
-async def test_no_bot_at_all_is_a_setup_error(tmp_path: Path) -> None:
-    with pytest.raises(SetupError, match="SARTHI_TELEGRAM_CONNECT_URL"):
-        build(settings(tmp_path))
+async def test_no_bot_at_all_still_starts_with_the_dashboard_only(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A new user who copied .env.example and added only an AI key: Sarthi must start, not exit.
+    sarthi = build(settings(tmp_path))
+    try:
+        assert sarthi.telegram is False
+        assert sarthi.connector is None and sarthi.relay is None
+        with caplog.at_level("WARNING"):
+            await asyncio.wait_for(sarthi._telegram(), timeout=1)  # returns at once: nothing to poll
+        assert "SARTHI_TELEGRAM_CONNECT_URL" in caplog.text
+    finally:
+        await close(sarthi)
+
+
+async def test_no_bot_for_now_keeps_the_earlier_chat_link(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "sarthi.db")
+    store = ChatStore(conn)
+    store.set_state(MODE_KEY, "own")
+    store.set_state(OWNER_KEY, "111")
+    conn.close()
+    sarthi = build(settings(tmp_path))  # the token left .env for a while
+    try:
+        assert sarthi.bot.chats.get_state(OWNER_KEY) == "111"
+        assert sarthi.bot.chats.get_state(MODE_KEY) == "own"
+    finally:
+        await close(sarthi)
 
 
 async def test_an_existing_own_bot_user_keeps_their_pairing_on_upgrade(tmp_path: Path) -> None:

@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from sarthi.apply.adapters import FillError
-from sarthi.apply.engine import FillResult, SubmitResult
+from sarthi.apply.adapters import FillError, PostingClosedError
+from sarthi.apply.engine import EnginePausedError, FillResult, SubmitResult
 from sarthi.apply.handler import Applier, needs_login, site_of
 from sarthi.apply.linkedin import LimitReachedError, LoginNeededError
 from sarthi.chat.applying import ApplyingFlow, preview_text
@@ -228,6 +228,7 @@ async def test_daily_limit_per_site(
         (SubmitResult("needs_human", "CAPTCHA"), ApplicationStatus.NEEDS_HUMAN),
         (SubmitResult("failed", "No confirmation"), ApplicationStatus.FAILED),
         (SubmitResult("verification_failed", "Lever refused"), ApplicationStatus.FAILED),
+        (SubmitResult("unknown", "Pressed, no confirmation"), ApplicationStatus.NEEDS_HUMAN),
     ],
 )
 async def test_submit_records_how_it_ended(
@@ -491,6 +492,21 @@ async def test_auto_apply_never_sends_on_a_job_board_or_with_questions_left(
     assert not chats.is_auto(asks)  # the user answers, so the user approves
 
 
+async def test_auto_apply_sends_on_a_job_board_when_the_user_included_them(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    engine = FakeEngine(FILLED)
+    engine.walks = True
+    board = job_at(job_store, "https://in.indeed.com/viewjob?jk=8")
+    worker, chats = auto_applier(conn, job_store, queue, tmp_path, engine, clock)
+    worker.auto_on_boards = lambda: True
+    chats.set_auto(board, on=True)
+    await worker.handle_apply(TaskRecord(1, names.APPLY, board, {}, 1))
+    submit = queue.claim([names.SUBMIT])
+    assert submit is not None and submit.payload["auto"] is True
+    assert queue.claim([names.APPLY_PREVIEW]) is None
+
+
 @pytest.mark.parametrize(
     ("outcome", "status", "detail"),
     [
@@ -534,3 +550,47 @@ async def test_finishing_a_job_no_longer_stored_does_nothing(
         await applier(conn, job_store, queue, tmp_path, engine, clock).finish_by_hand("gone", engine) is None
     )  # type: ignore[arg-type]
     assert engine.filled == []
+
+
+async def test_a_job_already_sent_is_never_filled_or_submitted_again(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, LEVER)
+    ApplicationStore(conn, clock=clock).record(job_id, ApplicationStatus.SUBMITTED, site="jobs.lever.co")
+    engine = FakeEngine(FILLED)
+    flow = applier(conn, job_store, queue, tmp_path, engine, clock)
+    await flow.handle_apply(TaskRecord(1, names.APPLY, job_id, {}, 1))  # tapped Apply again
+    assert engine.filled == []
+    assert payload(queue, names.APPLY_RESULT)["outcome"] == "duplicate"
+    engine.outcome = SubmitResult("failed", "should never be pressed")
+    await flow.handle_submit(TaskRecord(2, names.SUBMIT, job_id, {"code": "ABC234"}, 1))
+    record = ApplicationStore(conn).get(job_id)
+    assert record is not None
+    assert record.status is ApplicationStatus.SUBMITTED
+
+
+async def test_a_closed_posting_is_recorded_as_closed_not_handed_over(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, LEVER)
+    engine = FakeEngine(PostingClosedError("the posting is closed (jobs.lever.co answered 404)"))
+    await applier(conn, job_store, queue, tmp_path, engine, clock).handle_apply(
+        TaskRecord(1, names.APPLY, job_id, {}, 1)
+    )
+    record = ApplicationStore(conn).get(job_id)
+    assert record is not None
+    assert record.status is ApplicationStatus.FAILED
+    assert "closed" in record.detail
+    assert payload(queue, names.APPLY_RESULT)["outcome"] == "closed"
+
+
+async def test_a_paused_browser_defers_the_fill(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, LEVER)
+    engine = FakeEngine(EnginePausedError("a window is open"))
+    with pytest.raises(DeferError):
+        await applier(conn, job_store, queue, tmp_path, engine, clock).handle_apply(
+            TaskRecord(1, names.APPLY, job_id, {}, 1)
+        )
+    assert ApplicationStore(conn).get(job_id) is None  # no false hand-over

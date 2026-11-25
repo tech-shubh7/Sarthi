@@ -1,7 +1,9 @@
-"""Job boards (LinkedIn, Indeed, Naukri, Glassdoor, ZipRecruiter, Seek, Bayt, ...) via JobSpy.
+"""Job boards (LinkedIn, Indeed, Naukri, Glassdoor, ZipRecruiter, Bayt, ...) via JobSpy.
 
 Uses JobSpy's public ``scrape_jobs`` only, one search per (role, country). Boards that need a country
-(Indeed, Glassdoor) are skipped for countries JobSpy does not cover; Naukri is added for India.
+(Indeed, Glassdoor) are skipped for countries JobSpy does not cover. A country's own board is added for that
+country only (Naukri for India, Bayt for the Gulf, BDJobs for Bangladesh, HelloWork for France), and never
+searched for another country even when listed in the settings.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from typing import Any
 
 import pandas as pd
 from jobspy import scrape_jobs
-from jobspy.model import Country
+from jobspy.model import Country, Site
 from pydantic import ValidationError
 
 from sarthi.jobs.geo import country_name
@@ -26,8 +28,22 @@ from sarthi.sources.base import SearchQuery
 log = logging.getLogger(__name__)
 
 DEFAULT_BOARDS: tuple[str, ...] = ("linkedin", "indeed")
-COUNTRY_BOARDS: dict[str, tuple[str, ...]] = {"IN": ("naukri",), "AU": ("seek",), "BD": ("bdjobs",)}
+# Boards that list one country's (or region's) jobs only. Only sites JobSpy has (its Site enum): one unknown
+# name fails every search of the country (Seek, Australia's board, is not one).
+LOCAL_BOARDS: dict[str, frozenset[str]] = {
+    "naukri": frozenset({"IN"}),
+    "bdjobs": frozenset({"BD"}),
+    "bayt": frozenset({"AE", "SA", "QA", "KW", "BH", "OM", "EG", "JO", "LB", "MA"}),
+    "hellowork": frozenset({"FR"}),
+}
+COUNTRY_BOARDS: dict[str, tuple[str, ...]] = {
+    country: tuple(board for board, places in LOCAL_BOARDS.items() if country in places)
+    for country in sorted(frozenset().union(*LOCAL_BOARDS.values()))
+}
 NEEDS_COUNTRY: frozenset[str] = frozenset({"indeed", "glassdoor"})
+JOBSPY_SITES: frozenset[str] = frozenset(site.value for site in Site)
+# Bayt's place name where it differs from the country's (its pages are bayt.com/en/uae/jobs/).
+_BAYT_PLACE: dict[str, str] = {"AE": "UAE"}
 
 _JOBSPY_COUNTRIES: frozenset[str] = frozenset(c.value.split(",")[0] for c in Country)
 _COUNTRY_ALIASES: dict[str, str] = {"GB": "uk", "US": "usa", "TR": "türkiye", "KR": "south korea"}
@@ -124,7 +140,12 @@ class JobBoardSource:
         boards = [*self.boards, *COUNTRY_BOARDS.get(country or "", ())]
         if country is not None and jobspy_country(country) is None:
             boards = [b for b in boards if b not in NEEDS_COUNTRY]
-        return tuple(dict.fromkeys(boards))
+        # A local board elsewhere searches its own country (Naukri is India-wide): not this user's jobs.
+        boards = [b for b in boards if b not in LOCAL_BOARDS or (country or "") in LOCAL_BOARDS[b]]
+        unknown = [b for b in boards if b not in JOBSPY_SITES]
+        if unknown:  # one unknown name would fail the whole search
+            log.warning("%s: skipping boards JobSpy does not have: %s", self.name, ", ".join(unknown))
+        return tuple(dict.fromkeys(b for b in boards if b in JOBSPY_SITES))
 
     async def fetch(self, query: SearchQuery) -> list[JobPosting]:
         """Run one search per (role, country). A failed search is logged and skipped; all failing retries."""
@@ -151,15 +172,28 @@ class JobBoardSource:
         return postings
 
     def _search(self, role: str, country: str | None, query: SearchQuery) -> pd.DataFrame:
+        boards = self._boards_for(country)
+        if not boards:
+            return pd.DataFrame()
         location = country_name(country) if country else None
-        return self._scrape(
-            site_name=list(self._boards_for(country)),
-            search_term=role,
-            location=location,
-            is_remote=query.remote,
-            results_wanted=query.results_per_search,
-            hours_old=query.hours_old,
-            country_indeed=jobspy_country(country) if country else "usa",
-            description_format="markdown",
-            verbose=0,
-        )
+        # Bayt reads the place from its own URL slugs ("uae", not "united-arab-emirates"): searched apart.
+        bayt_place = _BAYT_PLACE.get(country or "")
+        groups = [(boards, location)]
+        if bayt_place and "bayt" in boards:
+            rest = tuple(b for b in boards if b != "bayt")
+            groups = [(rest, location), (("bayt",), bayt_place)] if rest else [(("bayt",), bayt_place)]
+        frames = [
+            self._scrape(
+                site_name=list(sites),
+                search_term=role,
+                location=place,
+                is_remote=query.remote,
+                results_wanted=query.results_per_search,
+                hours_old=query.hours_old,
+                country_indeed=jobspy_country(country) if country else "usa",
+                description_format="markdown",
+                verbose=0,
+            )
+            for sites, place in groups
+        ]
+        return frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True)

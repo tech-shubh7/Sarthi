@@ -1,5 +1,3 @@
-# Adapted from JobRadar (MIT), src/jobradar/pipeline/structured.py @ fdd739b (find_job_posting and
-# description_text). Copyright (c) ThePlator. Modifications (c) Sarthi contributors.
 """The schema.org JobPosting many job pages embed for search engines (``application/ld+json``).
 
 Written by the employer or job board itself, it carries the full description even on pages that build their

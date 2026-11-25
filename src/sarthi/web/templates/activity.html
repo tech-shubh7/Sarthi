@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, job_link, empty %}
+{% block title %}Activity · Sarthi{% endblock %}
+{% set KINDS = {
+  'documents': 'Documents', 'questions': 'Questions', 'preview': 'Ready to submit', 'result': 'Application',
+  'reply': 'Reply', 'followup': 'Follow-up', 'source': 'Source', 'auto_apply': 'Auto-apply',
+  'catchup': 'Catch-up', 'browser': 'Browser',
+} %}
+{% block main %}
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Your search</p>
+    <h1>Activity</h1>
+    <p class="lede">What waits for you and everything Sarthi did. The same news goes to Telegram when it is connected; it is optional.</p>
+  </div>
+</header>
+
+<section class="section" aria-label="Questions for you" id="questions">
+  <h2 class="card-title">{{ icon('applications') }}Questions for you{% if groups %} · {{ groups|length }}{% endif %}</h2>
+  {% if groups %}
+  <p class="help">Only you can answer these. Each answer is saved for later forms (an answer about one employer stays with that job). When a job's questions are all answered, Sarthi fills its form and it waits on <a href="/applications">Applications</a> for your Submit.</p>
+  {% for g in groups %}
+  {% set problems = errors.get(g.job_id, {}) %}
+  <form class="card section" method="post" action="/questions/{{ g.job_id }}" id="job-{{ g.job_id }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="form-section">
+      <h3>{{ job_link(g.title, g.url) }}</h3>
+      <p class="job-sub">{{ g.company }} · {{ g.questions|length }} question{{ '' if g.questions|length == 1 else 's' }}</p>
+      {% for q in g.questions %}
+      {% set name = 'a.' ~ q.key %}
+      {% set fid = 'q-' ~ g.job_id ~ '-' ~ loop.index %}
+      <div class="field{% if problems.get(q.key) %} has-error{% endif %}">
+        {% if q.options and q.type == 'checkbox' and q.options|length > 1 %}
+        <p class="field-label">{{ q.label }}</p>
+        {% for option in q.options %}
+        <div class="field check"><label><input type="checkbox" name="{{ name }}" value="{{ option }}" {% if not can_edit %}disabled{% endif %}><span>{{ option }}</span></label></div>
+        {% endfor %}
+        {% elif q.options %}
+        <label for="{{ fid }}">{{ q.label }}</label>
+        <select id="{{ fid }}" name="{{ name }}" {% if not can_edit %}disabled{% endif %}>
+          <option value="">Choose…</option>
+          {% for option in q.options %}<option value="{{ option }}" {% if values.get(name) == option %}selected{% endif %}>{{ option }}</option>{% endfor %}
+        </select>
+        {% elif q.type == 'textarea' %}
+        <label for="{{ fid }}">{{ q.label }}</label>
+        <textarea id="{{ fid }}" name="{{ name }}" rows="3" {% if not can_edit %}disabled{% endif %}>{{ values.get(name, '') }}</textarea>
+        {% else %}
+        <label for="{{ fid }}">{{ q.label }}</label>
+        <input id="{{ fid }}" name="{{ name }}" type="text" value="{{ values.get(name, '') }}" {% if q.type == 'date' %}placeholder="15 Dec 2026, or 2 weeks"{% endif %} {% if not can_edit %}disabled{% endif %}>
+        {% endif %}
+        {% if problems.get(q.key) %}<p class="error">{{ problems[q.key] }}</p>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% if can_edit %}
+    <div class="form-actions row-actions">
+      <button class="button" type="submit">Save answers</button>
+      <button class="button quiet" type="submit" name="decline" value="1">Don't apply to this job</button>
+    </div>
+    {% endif %}
+  </form>
+  {% endfor %}
+  {% else %}
+  <p class="muted">No questions waiting.</p>
+  {% endif %}
+</section>
+
+<section class="section" aria-label="Auto-apply waiting" id="auto-apply">
+  <h2 class="card-title">{{ icon('spark') }}Auto-apply waiting{% if auto %} · {{ auto|length }}{% endif %}</h2>
+  {% if auto %}
+  {% for a in auto %}
+  <article class="card pending" id="auto-{{ a.job_id }}">
+    <div>
+      <h3>{{ job_link(a.title, a.url) }}</h3>
+      <span class="job-sub">{{ a.company }} · {{ a.score }}% match · applies at {{ a.at[:16]|replace('T', ' ') }} UTC</span>
+      <p class="hint">Sarthi applies by itself when the wait ends, unless you cancel. It sends the form without your Submit only when every answer came from your profile.</p>
+      {% if can_edit %}
+      <div class="row-actions">
+        <form method="post" action="/auto/{{ a.job_id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button quiet" type="submit">Cancel</button></form>
+        <form method="post" action="/auto/{{ a.job_id }}/now"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button" type="submit">Apply now</button></form>
+      </div>
+      {% endif %}
+    </div>
+  </article>
+  {% endfor %}
+  {% else %}
+  <p class="muted">Nothing waiting. Turn auto-apply on in <a href="/settings">Settings</a>.</p>
+  {% endif %}
+</section>
+
+<section class="section" aria-label="Recent activity" id="recent">
+  <h2 class="card-title">{{ icon('mail') }}Recent activity</h2>
+  {% if notices %}
+  <ol class="card activity">
+    {% for n in notices %}
+    <li class="activity-item">
+      <p class="activity-head"><span class="pill info">{{ KINDS.get(n.kind, n.kind|replace('_', ' ')|capitalize) }}</span>{% if n.title %} <b>{{ n.title }}</b> · {{ n.company }}{% endif %} <span class="faint">{{ ago(n.at) }}</span></p>
+      <p class="activity-text">{{ n.text }}</p>
+      {% if n.kind == 'documents' and n.job_id and 'ready' in n.text %}
+      <div class="row-actions docs">
+        <a class="button small ghost" href="/applications/{{ n.job_id }}/resume.pdf" target="_blank" rel="noopener noreferrer">Resume</a>
+        <a class="button small ghost" href="/applications/{{ n.job_id }}/cover-letter.pdf" target="_blank" rel="noopener noreferrer">Cover letter</a>
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  {{ empty('Nothing yet', 'Documents made, forms filled, applications sent, replies from employers and follow-up drafts show here.') }}
+  {% endif %}
+</section>
+{% endblock %}

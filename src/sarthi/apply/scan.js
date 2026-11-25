@@ -1,4 +1,3 @@
-// Ported from OpenApply (MIT), src/apply/adapters/common.ts (scan) @ db7796e. Copyright (c) OpenApply contributors.
 // Runs in the page: finds every question, tags its control(s) with data-sarthi-key and returns the fields.
 (cfg) => {
   const clean = (s) => (s || "").replace(/[*✱]/g, "").replace(/\s+/g, " ").trim();

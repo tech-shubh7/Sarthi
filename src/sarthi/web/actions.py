@@ -19,7 +19,8 @@ class Controls:
     paused: bool
     auto_line: int | None  # the match % from which Sarthi applies by itself; None: off
     auto_wait_minutes: int
-    auto_daily_limit: int
+    auto_daily_limit: int | None  # None: no daily cap
+    auto_boards: bool = False  # auto-apply also sends on job boards with the user's login
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +29,21 @@ class Pending:
 
     job_id: str
     screenshot: str  # path under the data folder, "" when none was taken
+
+
+@dataclass(frozen=True, slots=True)
+class MailSettings:
+    """Where reply tracking reads mail. The password is never part of it: only whether one is saved."""
+
+    host: str
+    port: int
+    user: str
+    folder: str
+    enabled: bool
+    password_saved: bool = False
+    checked_at: str = ""  # the last check (ISO), "" before the first
+    check_ok: bool = True
+    check_text: str = ""  # its outcome in plain words
 
 
 class DashboardActions(Protocol):
@@ -83,4 +99,51 @@ class DashboardActions(Protocol):
 
     def cancel(self, job_id: str) -> bool:
         """Drop the filled form; nothing is sent. False when nothing is waiting."""
+        ...
+
+    # ---- without Telegram: questions, auto-apply's veto, site logins ----
+
+    def answer_questions(self, job_id: str, answers: dict[str, str]) -> dict[str, str]:
+        """Answer a form's questions (field key -> answer), as in Telegram; problems by field key.
+
+        Blank answers are left for later. When none are left the application continues.
+        """
+        ...
+
+    def decline_questions(self, job_id: str) -> bool:
+        """Don't apply to this job (its questions are dropped). False for an unknown job."""
+        ...
+
+    def cancel_auto(self, job_id: str) -> bool:
+        """Cancel an auto-apply in its veto window. False for an unknown job."""
+        ...
+
+    def apply_now(self, job_id: str) -> bool:
+        """Apply now instead of waiting out the veto window. False when no auto-apply waits."""
+        ...
+
+    def login_sites(self) -> list[tuple[str, str]]:
+        """The job sites one can log in to for applying: (key, name)."""
+        ...
+
+    def site_login(self, site: str) -> bool:
+        """Open a site's login page on this computer. False when another browser window is open."""
+        ...
+
+    def screen_link(self) -> str | None:
+        """While a login or a form to finish is open on a screen in the browser (Docker): its link."""
+        ...
+
+    # ---- mail (reply tracking) ----
+
+    def mail(self) -> MailSettings:
+        """The mailbox setup in force (the dashboard's values over ``.env``), without its password."""
+        ...
+
+    def save_mail(self, settings: MailSettings, password: str) -> None:
+        """Keep the mailbox setup; an empty ``password`` keeps the saved one. Counts from the next check."""
+        ...
+
+    async def test_mail(self, settings: MailSettings, password: str) -> str:
+        """Log in read-only and say what happened in plain words (nothing is saved)."""
         ...

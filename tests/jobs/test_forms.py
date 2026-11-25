@@ -147,10 +147,24 @@ def test_to_date(raw: str, want: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "raw", ["After my notice period", "Flexible", "13/01/2026", "Feb 30, 2027", "", "1-2"]
+    "raw", ["After my notice period", "Flexible", "31/31/2026", "Feb 30, 2027", "", "1-2"]
 )
 def test_to_date_refuses_non_dates(raw: str) -> None:
     assert to_date(raw, WEDNESDAY) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "day_first", "want"),
+    [
+        ("04/11/2026", False, "2026-04-11"),  # the US: month first
+        ("04/11/2026", True, "2026-11-04"),  # the UK, India, Germany...: day first
+        ("13/01/2026", False, "2026-01-13"),  # 13 cannot be a month, whoever wrote it
+        ("24.12.2026", True, "2026-12-24"),
+        ("01/25/2026", True, "2026-01-25"),  # 25 cannot be a month
+    ],
+)
+def test_numeric_dates_follow_how_the_user_writes_them(raw: str, day_first: bool, want: str) -> None:
+    assert to_date(raw, WEDNESDAY, day_first=day_first) == want
 
 
 def test_date_fields_never_get_free_text() -> None:
@@ -226,7 +240,7 @@ def test_identity_contact_and_files() -> None:
     assert suggest(field("First Name"), files).value == "Asha"  # type: ignore[union-attr]
     assert suggest(field("Full name"), files).value == "Asha Rao"  # type: ignore[union-attr]
     assert suggest(field("Email"), files).value == "asha@example.com"  # type: ignore[union-attr]
-    assert suggest(field("Phone country code"), files) is None
+    assert suggest(field("Phone country code"), files).value == "+91"  # type: ignore[union-attr]
     assert suggest(field("Resume/CV", "file"), files).value == "/r.pdf"  # type: ignore[union-attr]
     assert suggest(field("Cover Letter", "file"), files).value == "/c.pdf"  # type: ignore[union-attr]
     assert suggest(field("Cover letter", "textarea"), files).value == "Dear team"  # type: ignore[union-attr]
@@ -356,3 +370,41 @@ def test_an_answer_about_one_employer_never_reaches_another_form() -> None:
     assert suggest(why, ctx(replace(PERSON, saved_answers=general), answers=own)) is None
     notice = FormField("np", "Notice period", "text", True)
     assert suggest(notice, ctx(replace(PERSON, saved_answers=general), answers=own)) is not None
+
+
+# ---- users outside India (fictional) -----------------------------------------------------------------------
+
+LONDON = Applicant(
+    first_name="Maya", last_name="Fenwick", phone="+44 20 7946 0000", location="London, UK",
+    country="United Kingdom", home_country="GB", authorized_countries=frozenset({"GB", "IE"}),
+    work_authorized=True, needs_sponsorship=False,  # the job's own country is the UK
+)  # fmt: skip
+
+
+def test_a_question_naming_another_country_is_answered_for_that_country() -> None:
+    yes_no = ("Yes", "No")
+    us = field("Are you legally authorized to work in the United States?", "select", yes_no)
+    assert suggest(us, ctx(LONDON)).value == "No"  # type: ignore[union-attr]
+    visa = field("Will you require visa sponsorship to work in the US?", "select", yes_no)
+    assert suggest(visa, ctx(LONDON)).value == "Yes"  # type: ignore[union-attr]
+    ireland = field("Are you eligible to work in Ireland?", "select", yes_no)
+    assert suggest(ireland, ctx(LONDON)).value == "Yes"  # type: ignore[union-attr]
+    unnamed = field("Are you legally authorized to work in the country of this job?", "select", yes_no)
+    assert suggest(unnamed, ctx(LONDON)).value == "Yes"  # type: ignore[union-attr]  (the job's country)
+
+
+def test_country_and_dial_code_options_are_found_however_written() -> None:
+    country = field("Country", "select", ("India", "UK", "United States"))
+    assert suggest(country, ctx(LONDON)).value == "UK"  # type: ignore[union-attr]
+    dial = field("Phone country code", "select", ("India (+91)", "United Kingdom (+44)", "Jersey (+44)"))
+    assert suggest(dial, ctx(LONDON)).value == "United Kingdom (+44)"  # type: ignore[union-attr]
+    uae = replace(LONDON, home_country="AE", country="United Arab Emirates", phone="")
+    assert suggest(field("Country", "select", ("Saudi Arabia", "UAE")), ctx(uae)).value == "UAE"  # type: ignore[union-attr]
+
+
+def test_a_typed_start_date_is_read_as_the_user_writes_dates() -> None:
+    start = FormField("start", "Earliest start date", "date", True)
+    london = ctx(LONDON, answers={"Earliest start date": "04/11/2026"})
+    assert suggest(start, london).value == "2026-11-04"  # type: ignore[union-attr]
+    new_york = replace(LONDON, home_country="US")
+    assert suggest(start, ctx(new_york, answers={"Earliest start date": "04/11/2026"})).value == "2026-04-11"  # type: ignore[union-attr]

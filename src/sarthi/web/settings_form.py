@@ -25,8 +25,8 @@ from sarthi.profile.models import Preferences, Profile, RemotePreference
 
 MAX_FIELD_CHARS = 2000
 FIELDS = (
-    "roles", "home", "countries", "visa_free", "remote", "years", "skills", "salary", "exclude_companies",
-    "looking_for", "ruled_out",
+    "roles", "home", "countries", "visa_free", "languages", "remote", "years", "skills", "salary",
+    "exclude_companies", "looking_for", "ruled_out",
 )  # fmt: skip
 REMOTE_CHOICES = {
     RemotePreference.OK.value: "Remote, hybrid or on-site",
@@ -59,6 +59,7 @@ def form_values(profile: Profile | None) -> dict[str, str]:
         "home": country_name(p.home_country),
         "countries": _names(p.countries) or "none",
         "visa_free": _names(p.authorized_countries) or "none",
+        "languages": ", ".join(p.languages),
         "remote": p.remote.value,
         "years": f"{p.years_experience:g}" if p.years_experience is not None else "",
         "skills": ", ".join((*profile.skills, *p.keywords)),
@@ -102,7 +103,7 @@ def profile_from_form(form: Mapping[str, str], current: Profile | None, resume_t
         errors["roles"] = "Add at least one job title, e.g. Backend Engineer, AI Engineer."
     home_codes = parse_countries(values["home"]).codes if values["home"] else frozenset()
     if len(home_codes) != 1:
-        errors["home"] = "Write the one country you live in, e.g. India."
+        errors["home"] = "Write the one country you live in, e.g. India or United Kingdom."
     home = next(iter(home_codes)) if len(home_codes) == 1 else "IN"
     countries = _countries(values["countries"], home, errors, "countries")
     visa_free = _countries(values["visa_free"], home, errors, "visa_free")
@@ -117,6 +118,7 @@ def profile_from_form(form: Mapping[str, str], current: Profile | None, resume_t
         salary = parse_salary(values["salary"], home)
         if salary is None:
             errors["salary"] = "Write it like 6 LPA, 80k GBP or USD 120000, or leave it empty."
+    languages = tuple(s for s in split_list(values["languages"]) if s)[:12]
     skills = tuple(s for s in split_list(values["skills"]) if s)[:60]
     excluded = tuple(c for c in split_list(values["exclude_companies"]) if c)[:50]
     if errors:
@@ -127,6 +129,7 @@ def profile_from_form(form: Mapping[str, str], current: Profile | None, resume_t
             home_country=home,
             countries=countries,
             authorized_countries=visa_free,
+            languages=languages,
             remote=RemotePreference(remote),
             years_experience=years,
             min_salary=salary,

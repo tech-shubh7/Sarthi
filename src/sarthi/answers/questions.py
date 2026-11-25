@@ -1,6 +1,3 @@
-# Ported from OpenApply (MIT), src/questions.ts @ db7796e. Copyright (c) OpenApply contributors.
-# Modifications (c) Sarthi contributors: Python; the board and posting are read from the job's links, so a job
-# found on LinkedIn whose apply link is a Greenhouse form is read the same way.
 """The employer's real application questions, read from the hiring system's public data, not a browser.
 
 Greenhouse and Ashby have public APIs; Lever's public apply page is plain HTML. Knowing the questions before the

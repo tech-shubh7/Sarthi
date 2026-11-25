@@ -31,18 +31,24 @@ from sarthi.chat.tracking import followup_text, reply_text
 from sarthi.chat.understand import Route, route, route_by_rules
 from sarthi.clock import Clock, to_iso, utcnow
 from sarthi.db.answers import AnswerStore
-from sarthi.db.applications import ApplicationStore
+from sarthi.db.applications import ApplicationStatus, ApplicationStore
 from sarthi.db.chat import ANSWERED, ChatStore, JobStatus
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
+from sarthi.db.notices import NoticeStore
 from sarthi.db.tasks import TaskRecord
 from sarthi.queue import names
-from sarthi.queue.tasks import DeferError, PermanentError, Priority, RetryableError, TaskQueue
+from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQueue
 
 log = logging.getLogger(__name__)
 
 APPLY_TASK = names.APPLY
+# Every step of an application, from the documents to the result: one waiting or running means it is alive.
+APPLY_STEPS = (
+    names.DOCUMENTS, names.DOCUMENTS_READY, names.FORM_CHECK, names.ASK_QUESTIONS, names.APPLY,
+    names.AUTO_APPLY, names.APPLY_PREVIEW, names.SUBMIT, names.APPLY_RESULT,
+)  # fmt: skip
 PAUSED_KEY = "alerts.paused"
 OFFSET_KEY = "telegram.offset"
 WAIT_FOR_PAIRING_S = 600
@@ -127,6 +133,7 @@ LOGIN_SITES: tuple[tuple[str, str], ...] = (
     ("foundit", "foundit"),
     ("glassdoor", "Glassdoor"),
     ("shine", "Shine"),
+    ("hirist", "Hirist"),
 )
 HELP = "<b>Sarthi</b> finds jobs that fit you and messages you here.\n\n" + "\n".join(
     f"/{name} – {about[0].lower()}{about[1:]}" for name, about in COMMANDS
@@ -178,9 +185,17 @@ class TelegramBot:
         applications: ApplicationStore | None = None,
         data_dir: Path | None = None,
         auto_apply: AutoApplySettings | None = None,
+        notices: NoticeStore | None = None,
+        telegram: bool = True,
         clock: Clock = utcnow,
     ) -> None:
-        """Send with ``api``; read jobs and matches; record choices in ``chats``; queue applications."""
+        """Send with ``api``; read jobs and matches; record choices in ``chats``; queue applications.
+
+        ``telegram`` False: no bot is set up, nothing is sent (the dashboard shows everything from
+        ``notices``); a chat paired earlier waits for the bot's return.
+        """
+        self.telegram = telegram
+        self.notices = notices
         self.setup = setup
         self.inbox = Inbox(self._handle_batch, self._busy_notice) if group_messages else None
         self.api = api
@@ -219,11 +234,26 @@ class TelegramBot:
         self.chats.set_job_status(job_id, status, message_id)
         return True
 
+    def chat(self) -> int | None:
+        """The paired chat to send to, or None: no Telegram set up, or not paired (yet).
+
+        Without a chat every pipeline step still runs; what would be sent is kept as a notice and shown on
+        the dashboard instead (it shows the notices either way).
+        """
+        return owner_chat(self.chats) if self.telegram else None
+
+    def note(self, kind: str, text: str, job_id: str | None = None) -> None:
+        """Keep a message for the dashboard's Activity page."""
+        if self.notices is not None:
+            self.notices.add(kind, text, job_id)
+
     async def handle_alert(self, task: TaskRecord) -> None:
-        """``alert`` task: send a strong match right away (unless paused or already shown)."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            raise DeferError(WAIT_FOR_PAIRING_S)  # not paired yet: keep the alert
+        """``alert`` task: send a strong match right away (unless paused or already shown).
+
+        Without a chat the match waits on the dashboard (and in a later digest); auto-apply is still
+        scheduled, its veto window shown on the dashboard's Activity page.
+        """
+        chat_id = self.chat()
         if self.chats.get_state(PAUSED_KEY) or self.chats.job_status(task.key) is not None:
             return  # paused: the match waits for /today or the digest; shown before: never twice
         if not self._still_strong(task.key):
@@ -232,10 +262,17 @@ class TelegramBot:
             return  # a catch-up is collecting results: this match comes in its batch
         match = self.matches.get(task.key)
         if match is not None and self.auto.wanted(match):
-            if await self.send_job(chat_id, task.key, JobStatus.ALERTED):
+            if chat_id is None:
+                if self.jobs.get(task.key) is not None:
+                    text, _ = self.auto.schedule(task.key, match.score)
+                    self.note("auto_apply", text, task.key)
+            elif await self.send_job(chat_id, task.key, JobStatus.ALERTED):
                 text, markup = self.auto.schedule(task.key, match.score)
                 await self.api.send_message(chat_id, text, markup)
+                self.note("auto_apply", text, task.key)
             return
+        if chat_id is None:
+            return  # no chat: the dashboard lists it with the other strong matches
         hour_ago = self._clock() - timedelta(hours=1)
         if self.chats.alerted_since(hour_ago) >= ALERTS_PER_HOUR:
             noted = self.chats.get_state(CAPPED_KEY)
@@ -251,6 +288,13 @@ class TelegramBot:
             return
         self._start_applying(task.key)
 
+    def apply_now(self, job_id: str) -> bool:
+        """Apply now to a job waiting out its auto-apply veto window. False when none is waiting."""
+        if not self.chats.is_auto(job_id) or self.chats.job_status(job_id) in ANSWERED:
+            return False
+        self._start_applying(job_id)
+        return True
+
     def _start_applying(self, job_id: str) -> None:
         self.chats.set_job_status(job_id, JobStatus.APPLY)
         self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
@@ -264,22 +308,64 @@ class TelegramBot:
         return current is None or match.profile_version == current
 
     async def handle_documents_ready(self, task: TaskRecord) -> None:
-        """``documents_ready`` task: send the tailored resume, cover letter and keyword report."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            raise DeferError(WAIT_FOR_PAIRING_S)
+        """``documents_ready`` task: send the tailored resume, cover letter and keyword report.
+
+        The application's next step (the form check) is queued whether or not a chat gets the files: on the
+        dashboard they are on the Applications page.
+        """
+        chat_id = self.chat()
         error = task.payload.get("error")
-        if task.payload.get("reused") and task.payload.get("apply"):
-            await self.api.send_message(chat_id, REUSED_TEXT)
-            self.queue.enqueue(names.FORM_CHECK, task.key, priority=Priority.NORMAL)
+        apply = bool(task.payload.get("apply"))
+        if task.payload.get("reused") and apply:
+            self.queue.enqueue(names.FORM_CHECK, task.key, priority=Priority.APPLY)
+            await self._deliver(chat_id, REUSED_TEXT)
             return
         record = self.documents.get(task.key) if self.documents is not None else None
-        if error or record is None or self.data_dir is None:
-            await self.api.send_message(
-                chat_id, f"📄 {escape(str(error or 'The documents could not be made.'))}"
+        missing = (
+            record is not None
+            and self.data_dir is not None
+            and not all((self.data_dir / p).is_file() for p in (record.resume_file, record.letter_file))
+        )
+        if error or record is None or self.data_dir is None or missing:
+            why = str(
+                error
+                or ("The document files are missing." if missing else "The documents could not be made.")
             )
+            text = f"📄 {escape(why)}" + (" Tap Apply again to retry." if apply else "")
+            if apply and self.applying is not None:  # the application stops here: the user sees why
+                self.applying.applications.record(
+                    task.key,
+                    ApplicationStatus.FAILED,
+                    detail=f"The tailored documents could not be made: {why}",
+                )
+            self.note("documents", text, task.key)
+            await self._deliver(chat_id, text)
             return
-        for path in (record.resume_file, record.letter_file):
+        if apply:  # next: the form's questions, then the application itself (Telegram or not)
+            self.queue.enqueue(names.FORM_CHECK, task.key, priority=Priority.APPLY)
+        job = self.jobs.get(task.key)
+        what = f"{job.title} at {job.company}" if job else "this job"
+        self.note("documents", f"📄 Tailored resume and cover letter ready for {what}.", task.key)
+        if chat_id is not None:
+            try:
+                await self._send_documents(chat_id, record.resume_file, record.letter_file)
+                await self.api.send_message(chat_id, report_text(record.report))
+            except (RetryableError, PermanentError) as failure:  # delivery only: the application goes on
+                log.warning("telegram: could not send the documents: %s", failure)
+
+    async def _deliver(self, chat_id: int | None, text: str) -> None:
+        """Send news to the chat when there is one; a failed send never stops the pipeline step."""
+        if chat_id is None:
+            return
+        try:
+            await self.api.send_message(chat_id, text)
+        except (RetryableError, PermanentError) as failure:
+            log.warning("telegram: could not send a message: %s", failure)
+
+    async def _send_documents(self, chat_id: int, *paths: str) -> bool:
+        """Send the PDFs; False (and why) when a file is missing."""
+        assert self.data_dir is not None  # noqa: S101  (checked by the caller)
+        for path in paths:
             file = self.data_dir / path
             try:
                 content = file.read_bytes()
@@ -287,72 +373,62 @@ class TelegramBot:
                 await self.api.send_message(
                     chat_id, "📄 The document files are missing; tap the button again."
                 )
-                return
+                return False
             await self.api.send_document(chat_id, file.name, content, mime="application/pdf")
-        await self.api.send_message(chat_id, report_text(record.report))
-        if task.payload.get("apply"):  # next: the form's questions, then the application itself
-            self.queue.enqueue(names.FORM_CHECK, task.key, priority=Priority.NORMAL)
+        return True
 
     async def handle_ask_questions(self, task: TaskRecord) -> None:
-        """``ask_questions`` task: ask the next question a job's form needs."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            raise DeferError(WAIT_FOR_PAIRING_S)
-        if self.questions is not None:
-            await self.questions.handle(task, chat_id)
+        """``ask_questions`` task: ask the next question a job's form needs (in the chat and/or dashboard)."""
+        if self.questions is None:
+            return
+        chat_id = self.chat()
+        left = len(self.questions.answers.pending(task.key))
+        await self.questions.handle(task, chat_id)
+        if left and chat_id is None:
+            job = self.jobs.get(task.key)
+            who = job.company if job else "The employer"
+            self.note("questions", f"📝 {who} asks {left} question(s) only you can answer.", task.key)
 
     async def handle_apply_preview(self, task: TaskRecord) -> None:
-        """``apply_preview`` task: the filled form, waiting for Submit."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            raise DeferError(WAIT_FOR_PAIRING_S)
-        if self.applying is not None:
-            await self.applying.preview(task, chat_id)
+        """``apply_preview`` task: the filled form, waiting for Submit (in the chat and on the dashboard)."""
+        if self.applying is not None and (text := await self.applying.preview(task, self.chat())):
+            self.note("preview", text, task.key)
 
     async def handle_apply_result(self, task: TaskRecord) -> None:
         """``apply_result`` task: how an application ended."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            raise DeferError(WAIT_FOR_PAIRING_S)
-        if self.applying is not None:
-            await self.applying.result(task, chat_id)
+        if self.applying is not None and (text := await self.applying.result(task, self.chat())):
+            self.note("result", text, task.key)
+
+    async def _tell(self, kind: str, text: str, job_id: str | None = None) -> None:
+        """A message that is only news: sent to the chat when there is one, always kept for the dashboard."""
+        chat_id = self.chat()
+        if chat_id is not None:
+            await self.api.send_message(chat_id, text)
+        self.note(kind, text, job_id)
 
     async def handle_reply_notice(self, task: TaskRecord) -> None:
         """``reply_notice`` task: an employer replied about an application."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            raise DeferError(WAIT_FOR_PAIRING_S)
-        job = self.jobs.get(str(task.payload.get("job") or ""))
-        await self.api.send_message(chat_id, reply_text(job, task.payload))
+        job_id = str(task.payload.get("job") or "")
+        await self._tell("reply", reply_text(self.jobs.get(job_id), task.payload), job_id or None)
 
     async def handle_followup_notice(self, task: TaskRecord) -> None:
         """``followup_notice`` task: a follow-up draft for a quiet application."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            raise DeferError(WAIT_FOR_PAIRING_S)
-        job = self.jobs.get(str(task.payload.get("job") or ""))
-        await self.api.send_message(chat_id, followup_text(job, task.payload))
+        job_id = str(task.payload.get("job") or "")
+        await self._tell("followup", followup_text(self.jobs.get(job_id), task.payload), job_id or None)
 
     async def handle_source_notice(self, task: TaskRecord) -> None:
         """``source_notice`` task: a job source stopped (or started again) working."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            return  # not paired yet: nobody to tell, and it is stale by the time they pair
-        await self.api.send_message(chat_id, source_notice_text(task.payload))
+        await self._tell("source", source_notice_text(task.payload))
 
     async def handle_catchup_report(self, task: TaskRecord) -> None:
-        """``catchup_report`` task: send the catch-up batch."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            raise DeferError(WAIT_FOR_PAIRING_S)
-        await self.catchup.handle_report(task, chat_id)
+        """``catchup_report`` task: send the catch-up batch (without a chat: matches are on the dashboard)."""
+        self.note("catchup", await self.catchup.handle_report(task, self.chat()))
 
     async def handle_digest(self, task: TaskRecord) -> None:
-        """``digest`` task: the best matches not shown yet, in one batch."""
-        chat_id = owner_chat(self.chats)
-        if chat_id is None:
-            raise DeferError(WAIT_FOR_PAIRING_S)
-        await self._send_unseen(chat_id, quiet_if_none=True)
+        """``digest`` task: the best matches not shown yet, in one batch (without a chat: the dashboard)."""
+        chat_id = self.chat()
+        if chat_id is not None:
+            await self._send_unseen(chat_id, quiet_if_none=True)
 
     async def _send_unseen(self, chat_id: int, quiet_if_none: bool) -> None:
         items = self.chats.unsent_matches(DIGEST_SIZE, self._profile_version())
@@ -552,6 +628,12 @@ class TelegramBot:
             self.auto.cancel(job_id)  # the user's own tap: they get the usual preview, nothing sent by itself
             if current is JobStatus.APPLY:  # documents first; the application follows them
                 self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
+        elif (
+            current is JobStatus.APPLY
+            and wanted is JobStatus.APPLY
+            and not self.chats.applying_alive(job_id, APPLY_STEPS)
+        ):  # an Apply whose steps died (or whose documents failed): a new tap starts it again
+            self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
         return current
 
     async def _on_window_button(self, callback_id: str, chat_id: int, message_id: int, data: str) -> None:
@@ -617,8 +699,7 @@ class TelegramBot:
         if action == "cancel":
             self.auto.cancel(job_id)
             label = "Auto-apply cancelled"
-        elif action == "now" and self.chats.is_auto(job_id) and self.chats.job_status(job_id) not in ANSWERED:
-            self._start_applying(job_id)
+        elif action == "now" and self.apply_now(job_id):
             label = "🚀 Applying now"
         await self.api.answer_callback(callback_id, label)
         await self.api.edit_buttons(chat_id, message_id, _done(label) if label else None)

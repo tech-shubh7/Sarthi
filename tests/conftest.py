@@ -33,6 +33,8 @@ def no_real_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in list(os.environ):
         if name.startswith("SARTHI_"):
             monkeypatch.delenv(name)
+    # Never the project's live one-tap connector (the default): a test that needs one passes its own address.
+    monkeypatch.setenv("SARTHI_TELEGRAM_CONNECT_URL", "")
     monkeypatch.chdir(Path(__file__).parent)
 
 

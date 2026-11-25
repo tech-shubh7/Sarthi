@@ -18,7 +18,7 @@ from sarthi.queue import names
 from sarthi.queue.tasks import RetryableError, TaskQueue
 from sarthi.tracking.followup import followup_draft
 from sarthi.tracking.handler import Mailbox, ReplyTracker
-from sarthi.tracking.mail import Mail, MailError, parse
+from sarthi.tracking.mail import Mail, MailBatch, MailError, parse
 from sarthi.tracking.matcher import Applied, company_from_subject, match, normalise_company
 from sarthi.tracking.triage import Kind, triage
 from tests.conftest import FakeClock
@@ -202,8 +202,8 @@ def tracker(
     mails: list[Mail],
     ai: FakeAi,
 ) -> ReplyTracker:
-    def fetch(*args: Any, **kwargs: Any) -> list[Mail]:
-        return [m for m in mails if m.uid > args[4]]
+    def fetch(*args: Any, **kwargs: Any) -> MailBatch:
+        return MailBatch(1, [m for m in mails if m.uid > args[4]])
 
     return ReplyTracker(
         ReplyStore(conn, clock=clock),
@@ -264,7 +264,9 @@ async def test_a_busy_ai_retries_without_losing_progress(
     track = tracker(conn, job_store, queue, clock, mails, FakeAi(None))
     with pytest.raises(RetryableError):
         await track.check_mail()
-    assert ChatStore(conn).get_state("mail.last_uid") == "1"  # the first email is done; the second waits
+    box = track.current_mailbox()
+    assert box is not None
+    assert track.position(box) == (1, 1)  # the first email is done; the second waits
 
 
 async def test_mailbox_errors_retry(
@@ -272,7 +274,7 @@ async def test_mailbox_errors_retry(
 ) -> None:
     track = tracker(conn, job_store, queue, clock, [], FakeAi(None))
 
-    def broken(*args: Any, **kwargs: Any) -> list[Mail]:
+    def broken(*args: Any, **kwargs: Any) -> MailBatch:
         raise MailError("the mailbox refused the login")
 
     track._fetch = broken

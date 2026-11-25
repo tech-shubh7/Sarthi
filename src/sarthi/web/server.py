@@ -1,5 +1,3 @@
-# Adapted from JobRadar (MIT), src/jobradar/web/server.py @ fdd739b.
-# Copyright (c) ThePlator. Modifications (c) Sarthi contributors: always this computer only (127.0.0.1).
 """Serves the dashboard with Uvicorn on 127.0.0.1, on the configured port or the next free one.
 
 It runs on its own (``sarthi dashboard``), or as one more task inside ``sarthi run``.
@@ -17,6 +15,7 @@ from typing import Any
 
 from sarthi.web.actions import DashboardActions
 from sarthi.web.app import create_app, read_only
+from sarthi.web.sources_view import SiteMap
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +60,7 @@ def make_server(  # noqa: PLR0913  (where, how, and what it may change)
     own_signals: bool = True,
     actions: DashboardActions | None = None,
     data_dir: Path | None = None,
+    sites: SiteMap | None = None,
 ) -> Any:
     """A Uvicorn server for the dashboard on ``host`` (127.0.0.1, or all interfaces inside a container).
 
@@ -84,7 +84,7 @@ def make_server(  # noqa: PLR0913  (where, how, and what it may change)
         log.warning("Port %d is in use; the dashboard took %d instead", port, chosen)
     log.info("Dashboard: http://%s:%d", HOST, chosen)
     config = uvicorn.Config(
-        create_app(read_only(db_path), actions=actions, data_dir=data_dir),
+        create_app(read_only(db_path), actions=actions, data_dir=data_dir, sites=sites),
         host=host,
         port=chosen,
         log_level="warning",

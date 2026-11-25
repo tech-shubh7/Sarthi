@@ -1,8 +1,3 @@
-# Adapted from JobDrop (MIT), jobdrop/adzuna/__init__.py and jobdrop/jooble/__init__.py @ dbe934a.
-# Copyright (c) 2023 Cullen Watson; JobDrop contributors. Modifications (c) Sarthi contributors.
-# Changes: async httpx with the shared error handling; Sarthi's JobPosting; currency from the country (JobDrop
-# marked every salary as USD); Adzuna's predicted salaries are dropped (they are guesses, not the employer's
-# numbers); HTML is stripped from titles and descriptions; one search per role and country.
 """Adzuna and Jooble: big free job aggregators, searched for the user's roles (each needs a free API key).
 
 Adzuna (https://developer.adzuna.com) covers ~20 countries including India; Jooble (https://jooble.org/api/about)
@@ -55,9 +50,11 @@ _EMPLOYMENT = {
     "internship": EmploymentType.INTERNSHIP,
     "temporary": EmploymentType.CONTRACT,
 }
+_DOLLARS = frozenset({"USD", "CAD", "AUD", "SGD", "NZD"})
+# The symbol may come before or after the amount ("€45.000 - €60.000", "45.000 € - 60.000 €").
 _SALARY_RANGE = re.compile(
-    r"(?P<symbol>[₹$£€])?\s*(?P<low>[\d,]+(?:\.\d+)?)\s*(?P<low_unit>[km])?"
-    r"\s*(?:[-\u2013\u2014]+|to)\s*[₹$£€]?\s*(?P<high>[\d,]+(?:\.\d+)?)\s*(?P<high_unit>[km])?"
+    r"(?P<symbol>[₹$£€])?\s*(?P<low>\d[\d,.]*\d|\d)\s*(?P<low_unit>[km])?\s*(?P<symbol_after>[₹$£€])?"
+    r"\s*(?:[-\u2013\u2014]+|to)\s*[₹$£€]?\s*(?P<high>\d[\d,.]*\d|\d)\s*(?P<high_unit>[km])?\s*[₹$£€]?"
     r"\s*(?:per\s+|a\s+|an\s+|/)?(?P<per>year|yr|annual|hour|hr|month|week|day)?",
     re.IGNORECASE,
 )
@@ -87,14 +84,29 @@ def _salary(currency: str | None, low: Any, high: Any, period: SalaryPeriod) -> 
         return None
 
 
+def _amount(text: str) -> float:
+    """A written amount: "6,00,000", "60,000.50", and the European "60.000" and "60.000,50"."""
+    if "," in text and "." in text:
+        decimal = "." if text.rfind(".") > text.rfind(",") else ","
+    elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", text):
+        decimal = ","  # "60.000": sixty thousand, with dots grouping the thousands
+    else:
+        decimal = "."
+    grouping = "," if decimal == "." else "."
+    return float(text.replace(grouping, "").replace(decimal, "."))
+
+
 def jooble_salary(text: str, country: str | None) -> Salary | None:
     """A range like "₹6,00,000 - ₹9,00,000 a year" or "$50K - $80K"; currency from its symbol or country."""
     found = _SALARY_RANGE.search(text or "")
     if not found:
         return None
-    low = float(found["low"].replace(",", "")) * _UNIT.get((found["low_unit"] or "").lower(), 1)
-    high = float(found["high"].replace(",", "")) * _UNIT.get((found["high_unit"] or "").lower(), 1)
-    currency = _SYMBOL.get(found["symbol"] or "") or CURRENCY.get(country or "")
+    low = _amount(found["low"]) * _UNIT.get((found["low_unit"] or "").lower(), 1)
+    high = _amount(found["high"]) * _UNIT.get((found["high_unit"] or "").lower(), 1)
+    local = CURRENCY.get(country or "")
+    symbol = found["symbol"] or found["symbol_after"] or ""
+    # "$" in Canada, Australia, Singapore or New Zealand is the local dollar, not the US one.
+    currency = local if symbol == "$" and local in _DOLLARS else (_SYMBOL.get(symbol) or local)
     period = _PERIOD.get((found["per"] or "").lower(), SalaryPeriod.YEAR)
     return _salary(currency, low, high, period)
 

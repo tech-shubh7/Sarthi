@@ -17,7 +17,7 @@
   v(0.05em)
 }
 #let when(start, end) = if start != "" or end != "" {
-  text(fill: muted, size: 9.5pt)[#start#if start != "" and end != "" [ – ]#end]
+  text(fill: muted, size: 9.5pt)[#start#if start != "" and end != "" [#" - "]#end]  // ASCII hyphen: some ATS lose "–"
 }
 #let row(what, dates) = grid(columns: (1fr, auto), column-gutter: 1em, what, align(right, dates))
 #let shown(value) = value.replace(regex("^https?://(www\.)?"), "").trim("/")

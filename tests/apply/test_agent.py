@@ -55,7 +55,7 @@ class ScriptedAi:
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[ApplyEngine]:
-    made = ApplyEngine(tmp_path / "shots")
+    made = ApplyEngine(tmp_path / "shots", url_check=None)  # local test pages
     try:
         await made._new_page()
     except Exception as error:  # noqa: BLE001
@@ -128,12 +128,12 @@ async def test_a_page_that_tries_to_steer_the_ai_cannot_make_it_press_anything_b
         engine.browser = ApplicationBrowser(ScriptedAi(press=bad))
         with pytest.raises(FillError, match="which Sarthi never presses"):
             await engine.fill("job-5", url("agent_pages.html") + "#trick", ctx(resume))
-    # "Send" pressed as "go" is held as the final press: the walk stops, nothing is sent.
+    # "Send" pressed as "go" is held as the final press, and with no form on the page it is never offered
+    # for Submit at all: nothing is sent.
     engine.browser = ApplicationBrowser(ScriptedAi(press="Send"))
-    result = await engine.fill("job-6", url("agent_pages.html") + "#trick", ctx(resume))
-    page = engine._open["job-6"].page
-    assert await page.title() == "Test pages"  # neither "deleted" nor "sent"
-    assert result.code
+    with pytest.raises(FillError, match="no application form"):
+        await engine.fill("job-6", url("agent_pages.html") + "#trick", ctx(resume))
+    assert "job-6" not in engine._open
 
 
 async def test_the_ai_cannot_name_a_button_that_is_not_on_the_page(engine: ApplyEngine, resume: Path) -> None:
@@ -275,6 +275,31 @@ async def test_a_board_with_no_usable_apply_asks_for_a_login(engine: ApplyEngine
     assert not isinstance(caught.value, LoginWallError)
 
 
+async def test_a_guest_apply_flow_asks_for_a_login_and_uploads_nothing(
+    engine: ApplyEngine, resume: Path
+) -> None:
+    # Shine after "Apply Now", signed out: "Upload Your Resume, we'll auto-fill your details" makes a new
+    # account from the resume; "Sign in to Apply" is the user's own login. Neither is an application form.
+    ai = ScriptedAi(press="Upload Your Resume We'll auto-fill your details")
+    engine.browser = ApplicationBrowser(ai)
+    for one_click in (True, False):
+        with pytest.raises(LoginWallError, match="signed out"):
+            await engine.fill(
+                "job-16", url("agent_pages.html") + "#guestflow", ctx(resume), one_click=one_click
+            )
+    assert ai.asked == []  # told by the page itself, not by the AI
+
+
+async def test_a_faded_twin_of_a_button_is_not_offered(engine: ApplyEngine) -> None:
+    page = await engine._new_page()
+    await page.goto(url("agent_pages.html") + "#faded")
+    buttons = await ApplicationBrowser._buttons(page)
+    assert [b.text for b in buttons] == ["Apply Now"]
+    walked = agent.Walked(page, submit=buttons[0])
+    assert walked.adapter().extra["button"] == buttons[0].selector  # submit presses this exact one first
+    await page.close()
+
+
 async def test_buttons_inside_web_components_are_found(engine: ApplyEngine, resume: Path) -> None:
     engine.browser = ApplicationBrowser(None)  # SmartRecruiters-style: the apply button in a shadow root
     result = await engine.fill("job-13", url("agent_pages.html") + "#shadow", ctx(resume))
@@ -338,3 +363,11 @@ def test_labels_are_made_readable(label: str, readable_label: str) -> None:
     from sarthi.apply.agent import readable  # noqa: PLC0415
 
     assert readable(FormField("s-1", label)).label == readable_label
+
+
+async def test_a_page_with_no_form_but_a_submit_button_is_never_ready(engine: ApplyEngine) -> None:
+    walker = ApplicationBrowser(ScriptedAi(state="ready", press="Submit"))
+    page = await engine._new_page()
+    await page.goto(url("submit_only.html"))
+    with pytest.raises(FillError, match="no application form on the page"):
+        await walker.walk(page, url("submit_only.html"), FormContext(ASHA))

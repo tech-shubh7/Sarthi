@@ -19,7 +19,8 @@
     <p class="nav-label">Your search</p>
     <div class="nav">
       <a href="/" {% if nav == 'overview' %}aria-current="page"{% endif %}>{{ icon('overview') }}<span>Overview</span></a>
-      <a href="/matches" {% if nav == 'matches' %}aria-current="page"{% endif %}>{{ icon('matches') }}<span>Matches</span>{% if ov.decisions.get('alert', 0) %}<b class="count hot">{{ ov.decisions.get('alert', 0) }}</b>{% endif %}</a>
+      <a href="/activity" {% if nav == 'activity' %}aria-current="page"{% endif %}>{{ icon('check') }}<span>Activity</span>{% if inbox.total %}<b class="count hot" title="Waiting for you">{{ inbox.total }}</b>{% endif %}</a>
+      <a href="/matches" {% if nav == 'matches' %}aria-current="page"{% endif %}>{{ icon('matches') }}<span>Matches</span>{% if inbox.strong %}<b class="count hot" title="Strong matches you have not answered">{{ inbox.strong }}</b>{% endif %}</a>
       <a href="/applications" {% if nav == 'applications' %}aria-current="page"{% endif %}>{{ icon('applications') }}<span>Applications</span>{% if ov.applications.values()|sum %}<b class="count">{{ ov.applications.values()|sum }}</b>{% endif %}</a>
       <a href="/sources" {% if nav == 'sources' %}aria-current="page"{% endif %}>{{ icon('sources') }}<span>Sources</span></a>
       <a href="/settings" {% if nav == 'settings' %}aria-current="page"{% endif %}>{{ icon('settings') }}<span>Settings</span></a>
@@ -27,7 +28,7 @@
   </nav>
   <div class="side-foot">
     {% if can_edit %}
-    <div class="status-card"><span class="dot"></span><p><b>Sarthi is running</b>Everything here also works in Telegram.</p></div>
+    <div class="status-card"><span class="dot"></span><p><b>Sarthi is running</b>Everything works here. Telegram is optional.</p></div>
     {% else %}
     <div class="status-card"><span class="dot off"></span><p><b>Read-only</b>Start Sarthi (<code>sarthi run</code>) to change things here.</p></div>
     {% endif %}
@@ -37,6 +38,7 @@
 <div class="content">
 <main>
 {% if done %}<p class="notice" role="status">{{ icon('check') }}{{ done }}</p>{% endif %}
+{% if screen %}<p class="notice" role="status">A browser window is open for you. Open it here (works for 10 minutes): <a class="screen-link" href="{{ screen }}" target="_blank" rel="noopener noreferrer">{{ screen }}</a></p>{% endif %}
 {% block main %}{% endblock %}
 </main>
 <footer>Your data stays on this computer. Nothing on this page is sent anywhere.</footer>

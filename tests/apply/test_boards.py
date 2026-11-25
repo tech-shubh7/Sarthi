@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from sarthi.apply import linkedin, naukri
+from sarthi.apply import external, linkedin, naukri
 from sarthi.apply.adapters import FillError, confirmed
 from sarthi.apply.engine import ApplyEngine
 from sarthi.jobs.forms import Applicant, FormContext
@@ -27,7 +27,7 @@ def url(name: str) -> str:
 
 @pytest.fixture
 async def page(tmp_path: Path) -> AsyncIterator[Any]:
-    engine = ApplyEngine(tmp_path / "shots")
+    engine = ApplyEngine(tmp_path / "shots", url_check=None)  # local test pages
     try:
         made = await engine._new_page()
     except Exception as error:  # noqa: BLE001
@@ -70,7 +70,7 @@ async def test_easy_apply_stops_for_questions_only_the_user_can_answer(page: Any
 @pytest.mark.parametrize(
     ("name", "error", "message"),
     [
-        ("linkedin_external.html", FillError, "company's own site"),
+        ("linkedin_external.html", external.ExternalApplyError, r"company's own site \(acme\.example\)"),
         ("linkedin_limit.html", linkedin.LimitReachedError, "daily Easy Apply limit"),
     ],
 )
@@ -85,9 +85,13 @@ async def test_naukri_one_click_apply(page: Any) -> None:
     assert await confirmed(page, naukri.NAUKRI)
 
 
-async def test_naukri_hands_over_company_site_jobs_and_chatbot_questions(page: Any) -> None:
-    with pytest.raises(FillError, match="company's own site"):
-        await naukri.open_job(page, url("naukri_company.html"))
+async def test_naukri_hands_over_company_site_jobs_and_chatbot_questions(
+    page: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(external, "FOLLOW_WAIT_S", 1.0)
+    # "Apply on company site" that leads nowhere Sarthi can read (the working one: test_external.py).
+    with pytest.raises(FillError, match="company's own site, and its link could not be read"):
+        await naukri.open_job(page, url("naukri_company_dead.html"))
     await naukri.open_job(page, url("naukri_chatbot.html"))
     await page.locator(naukri.APPLY_BUTTON).first.click()
     assert await naukri.chatbot_open(page)

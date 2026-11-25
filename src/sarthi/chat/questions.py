@@ -81,17 +81,72 @@ class QuestionFlow:
     def _question(self, job_id: str, key: str) -> FormField | None:
         return next((q for q in self.answers.pending(job_id) if q.key == key), None)
 
-    async def handle(self, task: TaskRecord, chat_id: int) -> None:
-        """``ask_questions`` task: ask this job's next question (or continue the application)."""
+    async def handle(self, task: TaskRecord, chat_id: int | None) -> None:
+        """``ask_questions`` task: ask this job's next question (or continue the application).
+
+        ``chat_id`` None (no Telegram): the questions wait on the dashboard, which answers them with
+        ``answer`` and ``continue_after_answers``.
+        """
         await self._ask_next(chat_id, task.key)
 
-    async def _ask_next(self, chat_id: int, job_id: str) -> None:
-        pending = self.answers.pending(job_id)
-        if not pending:
+    def _continue(self, job_id: str) -> bool:
+        """No question is left: the application goes on (True). False while questions wait."""
+        if self.answers.pending(job_id):
+            return False
+        waiting = self.waiting()
+        if waiting is None or waiting[0] == job_id:
             self.chats.set_state(ASKING_KEY, None)
-            self.queue.enqueue(names.APPLY, job_id, priority=Priority.NORMAL)
-            await self.api.send_message(chat_id, "✅ Thanks, that's everything. Filling the application now…")
+        self.queue.enqueue(names.APPLY, job_id, priority=Priority.APPLY)
+        return True
+
+    # ---- answers from the dashboard ------------------------------------------------------------------
+
+    def answer(self, job_id: str, key: str, text: str) -> str | None:
+        """One answer typed or picked on the dashboard: saved as a chat answer is; the problem, or None.
+
+        A question that is no longer waiting (answered in Telegram meanwhile) is left alone.
+        """
+        question = self._question(job_id, key)
+        if question is None:
+            return None
+        answer, why = fitted(question, text)
+        if answer is None:
+            return why
+        self._save(job_id, question, answer)
+        return None
+
+    def continue_after_answers(self, job_id: str) -> bool:
+        """After answers on the dashboard: True when none are left and the application continues.
+
+        While some are left and Telegram was asking one of them, Telegram asks the next one.
+        """
+        if self._continue(job_id):
+            return True
+        waiting = self.waiting()
+        if waiting is not None and waiting[0] == job_id and self._question(job_id, waiting[1]) is None:
+            self.queue.enqueue(names.ASK_QUESTIONS, job_id, priority=Priority.ALERT)
+        return False
+
+    def decline(self, job_id: str) -> None:
+        """Don't apply to this job: its questions are dropped and the job is skipped."""
+        self.answers.clear(job_id)
+        waiting = self.waiting()
+        if waiting is not None and waiting[0] == job_id:
+            self.chats.set_state(ASKING_KEY, None)
+        self.chats.set_job_status(job_id, JobStatus.SKIPPED)
+
+    # ---- the chat ------------------------------------------------------------------------------------
+
+    async def _ask_next(self, chat_id: int | None, job_id: str) -> None:
+        if self._continue(job_id):
+            if chat_id is not None:
+                await self.api.send_message(
+                    chat_id, "✅ Thanks, that's everything. Filling the application now…"
+                )
             return
+        if chat_id is None:
+            return  # no chat: the questions wait on the dashboard
+        pending = self.answers.pending(job_id)
         question = pending[0]
         job = self.jobs.get(job_id)
         company = escape(job.company) if job else "The employer"
@@ -137,9 +192,7 @@ class QuestionFlow:
         job_id, key = waiting
         _, _, choice = data.partition(":")
         if choice == "cancel":
-            self.answers.clear(job_id)
-            self.chats.set_state(ASKING_KEY, None)
-            self.chats.set_job_status(job_id, JobStatus.SKIPPED)
+            self.decline(job_id)
             await self.api.send_message(chat_id, "OK, I won't apply to that one.")
             return
         question = self._question(job_id, key)
@@ -148,8 +201,11 @@ class QuestionFlow:
         await self._record(chat_id, job_id, question, question.options[int(choice)])
 
     async def _record(self, chat_id: int, job_id: str, question: FormField, answer: str) -> None:
+        self._save(job_id, question, answer)
+        await self._ask_next(chat_id, job_id)
+
+    def _save(self, job_id: str, question: FormField, answer: str) -> None:
         # An answer about this employer ("Why us?") is kept for this job only, never sent to another company.
         key = for_job(question.label, job_id) if company_specific(question.label) else question.label
         self.answers.save(key, answer)
         self.answers.answered(job_id, question.key)
-        await self._ask_next(chat_id, job_id)

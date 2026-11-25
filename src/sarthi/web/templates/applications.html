@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon, label, reply, job_link, pager, empty, reason %}
 {% block title %}Applications · Sarthi{% endblock %}
+{% macro documents(r) -%}
+{%- if r.resume %}<a class="button small ghost" href="/applications/{{ r.job_id }}/resume.pdf" target="_blank" rel="noopener noreferrer">Resume</a>{% endif -%}
+{%- if r.letter %}<a class="button small ghost" href="/applications/{{ r.job_id }}/cover-letter.pdf" target="_blank" rel="noopener noreferrer">Cover letter</a>{% endif -%}
+{%- endmacro %}
 {% block main %}
 <header class="page-head">
   <div>
@@ -23,6 +27,7 @@
         <form method="post" action="/applications/{{ r.job_id }}/submit"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button" type="submit">Submit application</button></form>
         <form method="post" action="/applications/{{ r.job_id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button quiet" type="submit">Cancel</button></form>
         {% if pending[r.job_id].screenshot %}<a class="button ghost" href="/applications/{{ r.job_id }}/form.png" target="_blank" rel="noopener">View full form</a>{% endif %}
+        {{ documents(r) }}
       </div>
     </div>
     {% if pending[r.job_id].screenshot %}
@@ -40,7 +45,9 @@
   <tbody>
   {% for r in rows %}
     <tr id="job-{{ r.job_id }}">
-      <td>{{ job_link(r.title, r.url) }}<span class="job-sub">{{ r.company }}</span></td>
+      <td>{{ job_link(r.title, r.url) }}<span class="job-sub">{{ r.company }}</span>
+        {% if r.resume or r.letter %}<div class="row-actions docs" aria-label="Documents sent">{{ documents(r) }}</div>{% endif %}
+      </td>
       <td data-label="Status">
         <span class="pill s-{{ r.status }}">{{ label(r.status) }}</span>
         {% if r.status == 'filled' and r.job_id not in pending and can_edit %}

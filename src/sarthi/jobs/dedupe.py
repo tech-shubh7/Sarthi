@@ -1,7 +1,3 @@
-# Adapted from JobRadar (MIT), src/jobradar/pipeline/links.py (normalise) and
-# src/jobradar/pipeline/dedupe.py @ fdd739b. Copyright (c) ThePlator. Modifications (c) Sarthi contributors.
-# Changes: merged into one module; added job-system tracking parameters (gh_src, lever-*) and
-# non-Indian company suffixes (GmbH, PLC, Pte, Pty, BV).
 """Job identity: one canonical URL per link, and company|role keys that join reposts across boards.
 
 The same job reaches Sarthi from many places (company board, LinkedIn, Naukri, Freehire, a Telegram post).

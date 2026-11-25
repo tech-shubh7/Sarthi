@@ -1,7 +1,3 @@
-# Adapted from JobRadar (MIT), src/jobradar/pipeline/fetch.py @ fdd739b.
-# Copyright (c) ThePlator. Modifications (c) Sarthi contributors.
-# Changes: Sarthi's error kinds and user agent; pages over MAX_BYTES are refused; rendering JavaScript in
-# Chromium is off unless asked for (an 8 GB laptop); the Oracle Cloud reader and Markdown links are left out.
 """Download a job's own page and keep its main text, for jobs that arrived with only a title or a snippet.
 
 Polite and safe by default: robots.txt is obeyed, each site gets at most one request per second, every

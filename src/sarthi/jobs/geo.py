@@ -179,8 +179,17 @@ REGIONS = {
     "north america": {"US", "CA", "MX"},
     "latin america": _LATAM,
     "latam": _LATAM,
+    "south america": _LATAM - {"MX", "CR", "PA"},
+    "americas": {"US", "CA"} | _LATAM,
+    "the americas": {"US", "CA"} | _LATAM,
     "oceania": {"AU", "NZ"},
+    "anz": {"AU", "NZ"},
     "emea": _EUROPE | _MIDDLE_EAST | _AFRICA,
+    "dach": {"DE", "AT", "CH"},
+    "benelux": {"BE", "NL", "LU"},
+    "nordics": {"SE", "NO", "DK", "FI", "IS"},
+    "nordic countries": {"SE", "NO", "DK", "FI", "IS"},
+    "scandinavia": {"SE", "NO", "DK"},
 }
 ANYWHERE = {
     "anywhere",
@@ -248,6 +257,14 @@ CITIES = {
         "Nagpur",
         "Lucknow",
         "Visakhapatnam",
+        "Bombay",
+        "Madras",
+        "Calcutta",
+        "Trivandrum",
+        "Cochin",
+        "Mangaluru",
+        "Mangalore",
+        "Bhopal",
     ],
     "PK": ["Karachi", "Lahore", "Islamabad", "Rawalpindi"],
     "LK": ["Colombo"],
@@ -260,16 +277,71 @@ CITIES = {
     "KR": ["Seoul", "Busan"],
     "CN": ["Shanghai", "Beijing", "Shenzhen", "Guangzhou", "Hangzhou"],
     "TW": ["Taipei"],
-    "AU": ["Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide", "Canberra"],
-    "NZ": ["Auckland", "Wellington"],
-    "GB": ["London", "Manchester", "Edinburgh", "Birmingham", "Bristol", "Glasgow", "Leeds", "Cambridge"],
-    "IE": ["Dublin", "Cork"],
-    "DE": ["Berlin", "Munich", "Hamburg", "Frankfurt", "Cologne"],
+    "AU": [
+        "Sydney",
+        "Melbourne",
+        "Brisbane",
+        "Perth",
+        "Adelaide",
+        "Canberra",
+        "Gold Coast",
+        "Hobart",
+        "Parramatta",
+    ],
+    "NZ": ["Auckland", "Wellington", "Christchurch"],
+    "GB": [
+        "London",
+        "Manchester",
+        "Edinburgh",
+        "Birmingham",
+        "Bristol",
+        "Glasgow",
+        "Leeds",
+        "Cambridge",
+        "Oxford",
+        "Belfast",
+        "Cardiff",
+        "Liverpool",
+        "Nottingham",
+        "Sheffield",
+        "Brighton",
+        "Milton Keynes",
+    ],
+    "IE": ["Dublin", "Cork", "Galway"],
+    "DE": [
+        "Berlin",
+        "Munich",
+        "München",
+        "Hamburg",
+        "Frankfurt",
+        "Cologne",
+        "Köln",
+        "Düsseldorf",
+        "Dusseldorf",
+        "Stuttgart",
+        "Leipzig",
+        "Dresden",
+        "Nuremberg",
+        "Nürnberg",
+        "Karlsruhe",
+        "Hannover",
+        "Bonn",
+    ],
     "FR": ["Paris", "Lyon"],
     "ES": ["Madrid", "Barcelona", "Valencia"],
     "PT": ["Lisbon", "Porto"],
     "IT": ["Milan", "Rome"],
-    "NL": ["Amsterdam", "Rotterdam", "Eindhoven", "The Hague"],
+    "NL": [
+        "Amsterdam",
+        "Rotterdam",
+        "Eindhoven",
+        "The Hague",
+        "Den Haag",
+        "Utrecht",
+        "Delft",
+        "Groningen",
+        "Leiden",
+    ],
     "BE": ["Brussels"],
     "CH": ["Zurich", "Zürich", "Geneva", "Basel"],
     "AT": ["Vienna"],
@@ -312,8 +384,41 @@ CITIES = {
         "Mountain View",
         "Dallas",
         "Miami",
+        "NYC",
+        "Brooklyn",
+        "Manhattan",
+        "Jersey City",
+        "Philadelphia",
+        "Pittsburgh",
+        "Houston",
+        "San Diego",
+        "Minneapolis",
+        "Salt Lake City",
+        "Raleigh",
+        "Nashville",
+        "Sunnyvale",
+        "Menlo Park",
+        "Redmond",
+        "Cupertino",
+        "Santa Clara",
+        "Bay Area",
+        "Silicon Valley",
     ],
-    "CA": ["Toronto", "Vancouver", "Montreal", "Ottawa", "Calgary"],
+    "CA": [
+        "Toronto",
+        "Vancouver",
+        "Montreal",
+        "Montréal",
+        "Ottawa",
+        "Calgary",
+        "Mississauga",
+        "Edmonton",
+        "Winnipeg",
+        "Kitchener",
+        "Quebec City",
+        "Markham",
+        "Burnaby",
+    ],
     "MX": ["Mexico City"],
     "BR": ["Sao Paulo", "São Paulo", "Rio de Janeiro"],
     "AR": ["Buenos Aires"],
@@ -323,11 +428,39 @@ CITIES = {
 }
 
 
+# States and provinces whose names are written in locations ("Sydney, New South Wales, Australia"). They
+# place a city within its country, like a country name does. US states are in _US_STATE_NAMES below;
+# "New Mexico" is here too so that it is not read as Mexico, and "New South Wales" so it is not Wales.
+STATES = {
+    "US": ["New Mexico"],
+    "CA": ["Ontario", "British Columbia", "Quebec", "Québec", "Alberta", "Nova Scotia", "Manitoba"],
+    "AU": ["New South Wales", "Queensland", "Tasmania", "Western Australia", "South Australia"],
+    "IN": [
+        "Karnataka",
+        "Maharashtra",
+        "Telangana",
+        "Tamil Nadu",
+        "Haryana",
+        "Uttar Pradesh",
+        "West Bengal",
+        "Kerala",
+        "Gujarat",
+        "Andhra Pradesh",
+        "Rajasthan",
+    ],
+    "DE": ["Bavaria", "Bayern", "Baden-Württemberg", "Hesse", "Hessen", "North Rhine-Westphalia"],
+    "NL": ["North Holland", "Noord-Holland", "South Holland", "Zuid-Holland"],
+}
+
+
 def _build() -> list[_Place]:
     patterns: list[tuple[str, str, str]] = []
     for code, (name, aliases) in COUNTRIES.items():
         for alias in [name, *aliases]:
             patterns.append((alias, code, "country"))
+    for code, states in STATES.items():
+        for state in states:
+            patterns.append((state, code, "state"))
     for code, cities in CITIES.items():
         for city in cities:
             patterns.append((city, code, "city"))
@@ -378,6 +511,12 @@ def _exact_names() -> tuple[dict[str, str], dict[str, str]]:
 
 
 _FOLDED, _EXACT = _exact_names()
+# Names of whole countries and states (not cities), as written: they place a city written before them.
+_BROAD_KINDS = frozenset({"country", "state"})
+_BROAD_EXACT = frozenset(t for p, _, k, t in _PLACES if k in _BROAD_KINDS and not p.flags & re.IGNORECASE)
+_BROAD_FOLDED = frozenset(
+    t.lower() for p, _, k, t in _PLACES if k in _BROAD_KINDS and p.flags & re.IGNORECASE
+)
 
 
 def _norm(text: str) -> str:
@@ -506,25 +645,48 @@ _ALPHA3 = {
     "POL": "PL", "SWE": "SE", "ARE": "AE", "ISR": "IL", "NZL": "NZ", "ZAF": "ZA", "PRT": "PT", "BEL": "BE",
 }  # fmt: skip
 _WORK_MODE_ONLY = re.compile(r"(?i)^\s*(?:remote|hybrid|on-?site)\s*$")
+# State and province codes written after a city ("Toronto, ON", "Perth, WA", "Chennai, TN").
+_STATE_CODES: dict[str, frozenset[str]] = {
+    "US": _US_STATE_CODES,
+    "CA": frozenset({"ON", "QC", "BC", "AB", "MB", "SK", "NS", "NB", "NL", "PE", "YT", "NT", "NU"}),
+    "AU": frozenset({"NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"}),
+    "IN": frozenset(
+        {"KA", "MH", "TN", "TS", "AP", "DL", "HR", "UP", "WB", "KL", "GJ", "RJ", "PB", "GA", "OD"}
+    ),
+}
 
 
-def _code_after_comma(segment: str) -> set[str]:
+def _state_owner(code: str) -> str | None:
+    """The one country outside the US whose state or province ``code`` is, when it is not a country code too."""
+    owners = [country for country, codes in _STATE_CODES.items() if country != "US" and code in codes]
+    return owners[0] if len(owners) == 1 and code not in _ISO_CODES else None
+
+
+def _code_after_comma(segment: str) -> set[str]:  # noqa: PLR0911  (one answer per kind of ending)
     """Countries for a 'Place, XX' / 'Place, XXX' ending; empty when the ending is not a code.
 
-    A known place before the comma wins ('Toronto, CA' is Canada); otherwise a US state code means the US
-    ('Palo Alto, CA'), unless only a work mode precedes it ('Remote, DE' is Germany); otherwise an ISO code.
+    A known place whose country the code is, or is a state of, wins ('Toronto, CA' is Canada, 'Perth, WA'
+    Australia, 'Chennai, TN' India). Otherwise a US state code means the US ('Palo Alto, CA', 'Cambridge,
+    MA', 'Melbourne, FL'), unless only a work mode precedes it ('Remote, DE' is Germany); a province code
+    names its country ('London, ON' is Canada); a known place wins over any other code; else an ISO code.
     """
     head, comma, tail = segment.rpartition(",")
     code = tail.strip(" )]")
     if not comma or not re.fullmatch(r"[A-Z]{2,3}", code):
         return set()
-    if len(code) == 3:  # noqa: PLR2004  (ISO 3166-1 alpha-3)
-        return {_ALPHA3[code]} if code in _ALPHA3 else set()
-    place = resolve_place(head)
-    if place and "*" not in place:
-        return set(place)
+    resolved = resolve_place(head)
+    place = set(resolved) if resolved and "*" not in resolved else set()
+    if place and (code in place or any(code in _STATE_CODES.get(c, ()) for c in place)):
+        return place
+    if len(code) == 3:  # noqa: PLR2004  (ISO 3166-1 alpha-3, or a state: "NSW")
+        found = _ALPHA3.get(code) or _state_owner(code)
+        return {found} if found else place
     if code in _US_STATE_CODES and not _WORK_MODE_ONLY.match(head):
         return {"US"}
+    if owner := _state_owner(code):
+        return {owner}
+    if place:
+        return place
     return {code} if code in _ISO_CODES else set()
 
 
@@ -598,19 +760,53 @@ def location_codes(location: str) -> set[str]:
         return set()
     codes: set[str] = set()
     for segment in re.split(r"[;|/]", location):
-        codes |= _code_after_comma(segment)
-    parts = [p for p in re.split(r"[;|/]|\s[-\u2013\u2014]\s|,|\band\b", location) if p.strip()]
-    for part in [location, *parts]:
-        cleaned = re.sub(r"[()\[\]]|\bremote\b|\bhybrid\b|\bon-?site\b", " ", part, flags=re.I)
-        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -,:")
+        codes |= _code_after_comma(segment) or _segment_codes(segment)
+    return codes
+
+
+def _clean_place(part: str) -> str:
+    cleaned = re.sub(r"[()\[\]]|\bremote\b|\bhybrid\b|\bon-?site\b", " ", part, flags=re.I)
+    return re.sub(r"\s+", " ", cleaned).strip(" -,:")
+
+
+def _is_broad(part: str) -> bool:
+    """True when ``part`` is exactly a country, state, region or "anywhere", not a city."""
+    key = _norm(part)
+    return (
+        key in REGIONS
+        or key in ANYWHERE
+        or key in _US_STATE_NAMES
+        or part.strip() in _BROAD_EXACT
+        or (part.strip().lower() in _BROAD_FOLDED)
+    )
+
+
+def _segment_codes(segment: str) -> set[str]:
+    """Countries one place names ("Sydney, New South Wales, Australia", "Remote - EU", "Berlin and London").
+
+    A city directly followed by its state or country is placed there, even when another country has a city of
+    that name: "London, Ontario, Canada" is Canada, "Cambridge, Massachusetts" the US.
+    """
+    found: list[tuple[set[str], bool]] = []  # (codes, names a whole country or state)
+    for part in re.split(r"\s[-\u2013\u2014]\s|,|\band\b", segment):
+        cleaned = _clean_place(part)
         if len(cleaned) < _MIN_PLACE_CHARS:
             continue
         if cleaned.lower() in _US_STATE_NAMES:
-            codes.add("US")
+            found.append(({"US"}, True))
             continue
         resolved = resolve_place(cleaned)
         if resolved and "*" not in resolved:
-            codes |= set(resolved)
+            found.append((set(resolved), _is_broad(cleaned)))
+    codes: set[str] = set()
+    for index, (part_codes, broad) in enumerate(found):
+        placed_by_next = index + 1 < len(found) and found[index + 1][1]
+        if broad or not placed_by_next:
+            codes |= part_codes
+    if not found:
+        cleaned = _clean_place(segment)
+        resolved = resolve_place(cleaned) if len(cleaned) >= _MIN_PLACE_CHARS else None
+        codes = set(resolved) if resolved and "*" not in resolved else set()
     return codes
 
 

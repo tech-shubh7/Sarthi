@@ -115,9 +115,45 @@ class MasterResume(BaseModel):
 
 _EMAIL = re.compile(r"[\w.+-]{1,64}@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
 _PHONE = re.compile(r"(?<![\w.])\+?\d[\d\s().-]{8,16}\d(?![\w.])")
-_LINK = re.compile(
-    r"(?i)\b(?:https?://)?(?:www\.)?(?:linkedin\.com/in/|github\.com/|gitlab\.com/)[\w./-]+|\bhttps?://[^\s)>\]]+"
+_PROFILE_SITES = (
+    r"linkedin\.com/in/|github\.com/|gitlab\.com/|leetcode\.com/|kaggle\.com/|medium\.com/|(?:x|twitter)\.com/"
+    r"|behance\.net/|dribbble\.com/|stackoverflow\.com/users/|huggingface\.co/|dev\.to/|codeforces\.com/"
+    r"|hackerrank\.com/|codechef\.com/users/|[\w-]+\.hashnode\.dev|[\w-]+\.github\.io|[\w-]+\.vercel\.app"
+    r"|[\w-]+\.netlify\.app|[\w-]+\.substack\.com"
 )
+_LINK = re.compile(
+    rf"(?i)(?<![@\w.])(?:https?://)?(?:www\.)?(?:{_PROFILE_SITES})[\w./@%~-]*|\bhttps?://[^\s)>\]|,]+"
+)
+# A bare personal site in the header ("priya.dev", "www.asharao.in"): only there, where it is a contact.
+_SITE = re.compile(
+    r"(?<![@\w.])(?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*"
+    r"\.(?:dev|io|me|com|in|ai|app|site|xyz|tech|page|net|org|co|uk)(?:/[\w./%~-]*)?(?![\w@])"
+)  # lowercase only: "ASP.NET" or "B.Tech" in a headline is not a website
+MAX_LINKS = 8
+
+
+def link_key(link: str) -> str:
+    """The comparable form of a link: "https://www.GitHub.com/a/" -> "github.com/a"."""
+    return re.sub(r"^(?:https?://)?(?:www\.)?", "", link.strip().lower()).rstrip("/")
+
+
+def links_from(text: str) -> list[str]:
+    """Profile and portfolio links in the resume text, in order, each once (the fullest form kept)."""
+    header = "\n".join(text.splitlines()[:_HEADER_LINES])
+    found = [m.rstrip(".,;:") for m in _LINK.findall(text)]
+    found += [m.rstrip(".,;:") for m in _SITE.findall(header) if "@" not in m]
+    links: dict[str, str] = {}
+    for link in found:
+        key = link_key(link)
+        if not key or "@" in key.split("/")[0]:
+            continue
+        if key not in links or (
+            link.lower().startswith("http") and not links[key].lower().startswith("http")
+        ):
+            links[key] = link
+    return list(links.values())[:MAX_LINKS]
+
+
 _NAME_LINE = re.compile(r"^[A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*){1,3}$")
 _NOT_A_NAME = re.compile(r"(?i)\b(?:resume|curriculum|vitae|cv|profile|engineer|developer|contact)\b")
 _MIN_PHONE_DIGITS = 10
@@ -135,12 +171,16 @@ def contact_from(text: str) -> Contact:
         if _MIN_PHONE_DIGITS <= len(digits) <= _MAX_PHONE_DIGITS and not only_years:
             phone = candidate.strip()
             break
-    links = []
-    for found in _LINK.findall(text):
-        link = found.rstrip(".,;")
-        if "@" not in link and link not in links:
-            links.append(link)
-    return Contact(email=email, phone=phone, location=_header_place(text), links=tuple(links[:4]))
+    return Contact(email=email, phone=phone, location=_header_place(text), links=tuple(links_from(text)))
+
+
+def merged_links(*groups: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    """Links from several readings, each once (by ``link_key``), in first-seen order."""
+    seen: dict[str, str] = {}
+    for group in groups:
+        for link in group:
+            seen.setdefault(link_key(link), link)
+    return tuple(seen.values())[:MAX_LINKS]
 
 
 _HEADER_LINES = 8
@@ -150,11 +190,20 @@ _SEPARATORS = re.compile(r"[|•·●	]")
 
 def _header_place(text: str) -> str:
     """The city or country in the resume's header ("Ahmedabad, India"), "" when none is written there."""
-    for line in text.splitlines()[:_HEADER_LINES]:
-        for part in _SEPARATORS.split(line):
+    name = name_from(text)  # "Jordan Blake" or "Georgia Lee" is a person, not a place
+    lines = [line for line in text.splitlines()[:_HEADER_LINES] if line.strip()]
+    for number, line in enumerate(lines):
+        parts = _SEPARATORS.split(line)
+        if number == 0 and len(parts) > 1 and _NAME_LINE.match(parts[0].strip()):
+            parts = parts[1:]  # "Jordan Blake | New York, NY | ...": the name leads the first line
+        for part in parts:
             place = part.strip(" ,-")
+            place = re.sub(
+                r"\s+\d{4,6}(?:-\d{4})?$", "", place
+            )  # a postcode: "New York, NY 10001", "NSW 2000"
             if (
                 place
+                and place != name
                 and len(place) <= _MAX_PLACE_CHARS
                 and not re.search(r"@|\d{3}|https?:|www\.|\.com", place)
                 and geo.location_codes(place)

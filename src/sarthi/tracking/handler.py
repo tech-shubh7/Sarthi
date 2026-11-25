@@ -10,30 +10,32 @@ employer has written.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
 from sarthi.ai.client import AiClient
 from sarthi.ai.replies import read_reply
-from sarthi.clock import Clock, from_iso, utcnow
+from sarthi.clock import Clock, from_iso, to_iso, utcnow
 from sarthi.db.applications import ApplicationStore
 from sarthi.db.chat import ChatStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.replies import ReplyRecord, ReplyStore
 from sarthi.db.tasks import TaskRecord
 from sarthi.queue import names
-from sarthi.queue.tasks import Priority, RetryableError, TaskQueue
+from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQueue
 from sarthi.tracking.followup import followup_draft
-from sarthi.tracking.mail import Mail, MailError, fetch_new
+from sarthi.tracking.mail import Mail, MailBatch, MailError, MailLoginError, fetch_new
 from sarthi.tracking.matcher import Applied, match
 from sarthi.tracking.triage import Kind, triage
 
 log = logging.getLogger(__name__)
 
-UID_KEY = "mail.last_uid"
+POSITION_KEY = "mail.position"  # {"box": which mailbox and folder, "validity": UIDVALIDITY, "uid": last read}
+STATUS_KEY = "mail.status"  # {"at": ISO time, "ok": bool, "text": the last read's outcome in plain words}
 FIRST_LOOK_BACK = timedelta(days=30)
 MIN_AI_CONFIDENCE = 0.5
 MAX_REMINDERS = 2
@@ -48,8 +50,13 @@ class Mailbox:
     host: str
     port: int
     user: str
-    password: str
+    password: str = field(repr=False)  # never in a log line or traceback that prints the mailbox
     folder: str = "INBOX"
+
+    @property
+    def identity(self) -> str:
+        """Which mailbox and folder: UIDs read in one say nothing about another."""
+        return f"{self.user.lower()}@{self.host.lower()}:{self.port}/{self.folder}"
 
 
 class ReplyTracker:
@@ -64,14 +71,18 @@ class ReplyTracker:
         queue: TaskQueue,
         *,
         ai: AiClient,
-        mailbox: Mailbox | None,
+        mailbox: Mailbox | Callable[[], Mailbox | None] | None,
         every: timedelta = timedelta(minutes=10),
         followup_after: timedelta = timedelta(days=10),
         name: Callable[[], str] = lambda: "",
-        fetch: Callable[..., list[Mail]] = fetch_new,
+        fetch: Callable[..., MailBatch] = fetch_new,
         clock: Clock = utcnow,
     ) -> None:
-        """Read ``mailbox`` (None: tracking is off) every ``every``; ``name`` signs follow-up drafts."""
+        """Read ``mailbox`` (None: tracking is off) every ``every``; ``name`` signs follow-up drafts.
+
+        ``mailbox`` may be a function, asked before every read: a mailbox changed on the dashboard counts
+        from the next read on, without a restart.
+        """
         self.replies = replies
         self.applications = applications
         self.jobs = jobs
@@ -89,7 +100,7 @@ class ReplyTracker:
 
     def schedule(self, delay: float = 0, key: str = "a") -> None:
         """Queue the next mailbox read (only when a mailbox is set up)."""
-        if self.mailbox is not None:
+        if self.current_mailbox() is not None:
             self.queue.enqueue(names.MAIL_CHECK, key, delay=delay, priority=Priority.NORMAL)
 
     def schedule_quiet(self, delay: float = 0, key: str = "a") -> None:
@@ -119,28 +130,62 @@ class ReplyTracker:
         finally:
             self.schedule(self.every.total_seconds(), self._other(task.key))
 
+    def current_mailbox(self) -> Mailbox | None:
+        """The mailbox to read now, or None when tracking is off."""
+        box = self.mailbox
+        return box() if callable(box) else box
+
+    def position(self, box: Mailbox) -> tuple[int, int]:
+        """(UIDVALIDITY, last UID read) in ``box``; (0, 0) for a mailbox or folder not read before."""
+        try:
+            saved = json.loads(self.chats.get_state(POSITION_KEY) or "{}")
+            if saved.get("box") == box.identity:
+                return int(saved.get("validity") or 0), int(saved.get("uid") or 0)
+        except (ValueError, TypeError, AttributeError):
+            pass
+        return 0, 0
+
+    def _keep_position(self, box: Mailbox, validity: int, uid: int) -> None:
+        state = {"box": box.identity, "validity": validity, "uid": uid}
+        self.chats.set_state(POSITION_KEY, json.dumps(state))
+
+    def _keep_status(self, ok: bool, text: str) -> None:
+        """The last read's outcome, for the dashboard (never a password: ``MailError`` texts carry none)."""
+        state = {"at": to_iso(self._clock()), "ok": ok, "text": text[:300]}
+        self.chats.set_state(STATUS_KEY, json.dumps(state))
+
     async def check_mail(self) -> int:
         """Read new emails; returns how many were replies about applications."""
-        box = self.mailbox
+        box = self.current_mailbox()
         if box is None:
             return 0
-        after = int(self.chats.get_state(UID_KEY) or 0)
+        validity, after = self.position(box)
         since = (self._clock() - FIRST_LOOK_BACK).date()
         try:
-            mails = await asyncio.to_thread(
-                self._fetch, box.host, box.port, box.user, box.password, after, since=since, folder=box.folder
-            )
+            batch = await asyncio.to_thread(
+                self._fetch, box.host, box.port, box.user, box.password, after,
+                since=since, folder=box.folder, validity=validity,
+            )  # fmt: skip
+        except MailLoginError as error:
+            self._keep_status(False, str(error))
+            # Not retried at once: failed logins in a row can get the account locked. The next read is due
+            # in ``every`` anyway, and a password fixed on the dashboard counts from then.
+            raise PermanentError(f"mailbox: {error}") from None
         except MailError as error:
+            self._keep_status(False, str(error))
             raise RetryableError(f"mailbox: {error}") from None
+        if batch.validity != validity:
+            after = 0  # the server renumbered the folder: what was read before is no guide
         applied = self._applied()
         found = 0
-        for mail in mails:
+        for mail in batch.mails:
             if not self.replies.seen(mail.message_id) and await self._read(mail, applied):
                 found += 1
-            self.chats.set_state(
-                UID_KEY, str(max(after, mail.uid))
-            )  # progress kept even if a later one fails
             after = max(after, mail.uid)
+            self._keep_position(box, batch.validity, after)  # progress kept even if a later one fails
+        self._keep_position(box, batch.validity, max(after, batch.last_uid))
+        new = len(batch.mails)
+        self._keep_status(True, f"{new} new email{'' if new == 1 else 's'}, {found} about your applications")
         return found
 
     async def _read(self, mail: Mail, applied: list[Applied]) -> bool:

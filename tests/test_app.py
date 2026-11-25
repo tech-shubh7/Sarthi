@@ -6,7 +6,7 @@ import pytest
 from pydantic import SecretStr
 from typer.testing import CliRunner
 
-from sarthi.app import ALIVE_KEY, SetupError, build, next_digest_at
+from sarthi.app import ALIVE_KEY, build, next_digest_at
 from sarthi.cli import app as cli
 from sarthi.clock import to_iso
 from sarthi.config import Settings, get_settings
@@ -26,9 +26,15 @@ def test_next_digest_today_or_tomorrow() -> None:
     assert next_digest_at(evening, 19).astimezone(IST).date() == morning.date() + timedelta(days=1)
 
 
-def test_build_needs_a_bot_token(tmp_path: Path) -> None:
-    with pytest.raises(SetupError, match="SARTHI_TELEGRAM_BOT_TOKEN"):
-        build(Settings(_env_file=None, data_dir=tmp_path))
+async def test_build_without_any_bot_runs_with_the_dashboard_only(tmp_path: Path) -> None:
+    sarthi = build(Settings(_env_file=None, data_dir=tmp_path, llm_fast_models=[], llm_quality_models=[]))
+    try:
+        assert sarthi.telegram is False
+    finally:
+        await sarthi.bot.api.aclose()
+        for client in sarthi.ai_clients:
+            await client.aclose()
+        sarthi.conn.close()
 
 
 async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, clock: FakeClock) -> None:
@@ -144,17 +150,6 @@ def test_pair_command_prints_a_code(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert result.exit_code == 0
     assert "/start " in result.stdout
     assert "expires in 15 minutes" in result.stdout
-
-
-def test_bot_command_explains_a_missing_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SARTHI_DATA_DIR", str(tmp_path))
-    get_settings.cache_clear()
-    try:
-        result = CliRunner().invoke(cli, ["run"])
-    finally:
-        get_settings.cache_clear()
-    assert result.exit_code == 1
-    assert "SARTHI_TELEGRAM_BOT_TOKEN" in result.output
 
 
 class SilentApi:
@@ -313,6 +308,9 @@ async def test_the_dashboards_actions_do_what_the_telegram_buttons_do(
         assert web.set_auto_line("90") is None
         assert web.controls().auto_line == 90
         sarthi.bot.chats.set_state(PENDING + job_id, '{"code": "ABC234", "screenshot": "screenshots/x.png"}')
+        assert web.pending() == {}  # its page is not open (e.g. after a restart): no Submit that cannot work
+        sarthi.bot.chats.set_state(PENDING + job_id, '{"code": "ABC234", "screenshot": "screenshots/x.png"}')
+        sarthi.applier.engine.can_submit = lambda job, code: code == "ABC234"  # type: ignore[method-assign]
         assert web.pending()[job_id].screenshot == "screenshots/x.png"
         assert web.submit(job_id)
         submit = sarthi.queue.claim([names.SUBMIT])

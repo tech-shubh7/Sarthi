@@ -37,7 +37,7 @@ def make_bot(
     queue: TaskQueue,
     clock: FakeClock,
     line: int | None = 85,
-    limit: int = 10,
+    limit: int | None = None,
 ) -> TelegramBot:
     settings = AutoApplySettings(line=line, daily_limit=limit, wait_s=WAIT_S)
     matches = MatchStore(conn, clock=clock)
@@ -191,8 +191,38 @@ async def test_each_user_sets_their_own_line_from_the_chat(
     assert bot.auto.line() is None
 
 
+async def test_job_boards_are_included_only_when_the_user_says_so(bot: TelegramBot, api: FakeApi) -> None:
+    assert not bot.auto.boards()
+    await bot.handle_update(message(OWNER, "/autoapply"))
+    assert "waits for your Submit" in api.texts()[-1]
+    await bot.handle_update(message(OWNER, "/autoapply boards on"))
+    assert bot.auto.boards()
+    assert "Also on LinkedIn, Naukri" in api.texts()[-1]
+    await bot.handle_update(message(OWNER, "/autoapply boards maybe"))
+    assert "boards on, or" in api.texts()[-1]
+    assert bot.auto.boards()
+    await bot.handle_update(message(OWNER, "/autoapply boards off"))
+    assert not bot.auto.boards()
+
+
 async def test_paused_alerts_never_auto_apply(bot: TelegramBot, chats: ChatStore) -> None:
     await bot.handle_update(message(OWNER, "/pause"))
     job_id = strong(bot, 99)
     await alert(bot, job_id)
     assert not chats.is_auto(job_id)
+
+
+async def test_no_daily_cap_unless_the_user_sets_one(
+    api: FakeApi,
+    chats: ChatStore,
+    job_store: JobStore,
+    conn: sqlite3.Connection,
+    queue: TaskQueue,
+    clock: FakeClock,
+) -> None:
+    bot = make_bot(api, chats, job_store, conn, queue, clock)
+    pair(bot, chats, clock)
+    jobs = [strong(bot, 95, n) for n in range(15)]
+    for job_id in jobs:
+        await alert(bot, job_id)
+    assert all(chats.is_auto(j) for j in jobs)

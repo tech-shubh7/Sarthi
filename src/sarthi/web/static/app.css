@@ -177,6 +177,8 @@ meter.bar.saffron::-moz-meter-bar { background: var(--brand-saffron); }
 .button[aria-disabled="true"] { opacity: .45; pointer-events: none; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .row-actions form { margin: 0; }
+.row-actions.docs { margin-top: 6px; gap: 4px; }
+.row-actions.docs .button { color: var(--accent); padding: 0 8px; }
 
 /* ---------- pills, scores ---------- */
 .pill {
@@ -220,6 +222,10 @@ meter.bar.saffron::-moz-meter-bar { background: var(--brand-saffron); }
 
 /* ---------- tables ---------- */
 .table-card { overflow: hidden; }
+.table-card.section + .table-card.section { margin-top: 22px; }
+.table-title { margin: 0; padding: 18px 16px 14px; }
+.table-note { margin: 0; padding: 0 16px 14px; color: var(--muted); font-size: 14px; max-width: 90ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0 16px 16px; list-style: none; }
 .table { width: 100%; border-collapse: collapse; }
 .table th {
   text-align: left; padding: 12px 16px; background: var(--raise); color: var(--muted);
@@ -273,7 +279,7 @@ meter.bar.saffron::-moz-meter-bar { background: var(--brand-saffron); }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 20px; }
 .field { margin: 0 0 14px; }
 .field label { display: block; margin: 0 0 6px; font-weight: 600; font-size: 14px; }
-.field input[type=text], .field select, .field textarea {
+.field input[type=text], .field input[type=email], .field input[type=password], .field select, .field textarea {
   width: 100%; min-height: 42px; padding: 9px 12px; border-radius: var(--r); border: 1px solid var(--line-strong);
   background: #fffefb; color: var(--ink); font: inherit; transition: border-color .15s, box-shadow .15s;
 }
@@ -291,6 +297,17 @@ meter.bar.saffron::-moz-meter-bar { background: var(--brand-saffron); }
 .error { margin: 6px 0 0; color: var(--bad); font-size: 13px; font-weight: 600; }
 .has-error input, .has-error select, .has-error textarea { border-color: var(--bad); }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--raise); border-radius: 0 0 var(--r-lg) var(--r-lg); }
+
+/* ---------- activity: questions, auto-apply, what Sarthi did ---------- */
+.section > p.help { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+.field-label { margin: 0 0 6px; font-weight: 600; font-size: 14px; }
+.activity { list-style: none; margin: 0; padding: 0; }
+.activity-item { padding: 14px 20px; border-top: 1px solid var(--line); }
+.activity-item:first-child { border-top: 0; }
+.activity-head { margin: 0 0 6px; font-size: 14px; }
+.activity-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; color: var(--muted); }
+.screen-link { overflow-wrap: anywhere; }
+.logins { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ---------- small screens ---------- */
 @media (max-width: 920px) {

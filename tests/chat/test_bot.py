@@ -10,7 +10,7 @@ from sarthi.db.chat import ChatStore, JobStatus
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchRecord, MatchStore
 from sarthi.db.tasks import TaskRecord
-from sarthi.queue.tasks import DeferError, PermanentError, TaskQueue
+from sarthi.queue.tasks import PermanentError, TaskQueue
 from tests.conftest import FakeClock
 from tests.matching.conftest import make_job
 
@@ -152,8 +152,8 @@ async def test_alert_sends_a_card_once(
     bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock
 ) -> None:
     job_id = saved_job(bot)
-    with pytest.raises(DeferError):
-        await bot.handle_alert(TaskRecord(1, "alert", job_id, {}, 1))  # not paired yet
+    await bot.handle_alert(TaskRecord(1, "alert", job_id, {}, 1))  # not paired yet: on the dashboard only
+    assert api.sent == [] and chats.job_status(job_id) is None  # so a later alert or digest still sends it
     pair(bot, chats, clock)
     await bot.handle_alert(TaskRecord(1, "alert", job_id, {}, 1))
     await bot.handle_alert(TaskRecord(1, "alert", job_id, {}, 2))  # a retried task never sends twice
@@ -270,8 +270,7 @@ async def test_commands(bot: TelegramBot, api: FakeApi, chats: ChatStore, clock:
 async def test_digest_is_quiet_when_nothing_is_new(
     bot: TelegramBot, api: FakeApi, chats: ChatStore, clock: FakeClock
 ) -> None:
-    with pytest.raises(DeferError):
-        await bot.handle_digest(TaskRecord(1, "digest", "d", {}, 1))
+    await bot.handle_digest(TaskRecord(1, "digest", "d", {}, 1))  # not paired: nothing to send, no wait
     pair(bot, chats, clock)
     await bot.handle_digest(TaskRecord(1, "digest", "d", {}, 1))
     assert api.sent == []

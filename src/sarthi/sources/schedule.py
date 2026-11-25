@@ -157,7 +157,8 @@ class SourceScheduler:
                 continue  # board searches need the user's roles
             new_search = planned.kind == "boards" and changed  # new roles or countries: search now
             if new_search or self._due(planned, self.states.get(name), now):
-                self.queue.enqueue(names.SOURCE_CHECK, name, priority=Priority.NORMAL)
+                # Its own lane: at NORMAL, checks queued behind a re-match backlog waited ~24 h.
+                self.queue.enqueue(names.SOURCE_CHECK, name, priority=Priority.SOURCE)
                 queued += 1
         return queued
 

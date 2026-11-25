@@ -1,6 +1,3 @@
-# Adapted from JobRadar (MIT), src/jobradar/db/repo.py (task methods) @ fdd739b.
-# Copyright (c) ThePlator. Modifications (c) Sarthi contributors.
-# Changes: stdlib sqlite3 instead of SQLAlchemy/SQLModel; priority is NOT NULL; task_counts() added here.
 """Storage for the durable task queue. The retry policy lives in ``sarthi.queue``; this is only SQL."""
 
 from __future__ import annotations
@@ -153,13 +150,24 @@ class TaskStore:
                 {"id": task_id, "until": until},
             )
 
-    def reclaim_stuck(self, started_before: str) -> int:
-        """Return tasks left ``running`` by a crash to pending. Returns how many."""
+    def reclaim_stuck(self, started_before: str | None, max_attempts: int) -> int:
+        """Return tasks left ``running`` by a crash to pending. Returns how many.
+
+        ``started_before`` None: every running row (at startup, when no worker of this process holds one).
+        The interrupted attempt counts (``claim`` counted it): a task that crashed the process
+        ``max_attempts`` times is failed instead of crashing it forever. A row re-enqueued while it was
+        running (``rerun``, e.g. the user tapped Apply again) gets a fresh run with a fresh count.
+        """
         with transaction(self._conn) as c:
             cursor = c.execute(
-                "UPDATE task SET status = 'pending', run_after = :now, started_at = NULL, rerun = 0 "
-                "WHERE status = 'running' AND started_at < :cutoff",
-                {"now": self._now(), "cutoff": started_before},
+                "UPDATE task SET"
+                " status = CASE WHEN NOT rerun AND attempts >= :max THEN 'failed' ELSE 'pending' END,"
+                " last_error = CASE WHEN NOT rerun AND attempts >= :max"
+                "   THEN 'interrupted: Sarthi stopped during every attempt' ELSE last_error END,"
+                " attempts = CASE WHEN rerun THEN 0 ELSE attempts END,"
+                " run_after = :now, started_at = NULL, rerun = 0 "
+                "WHERE status = 'running' AND (:cutoff IS NULL OR started_at < :cutoff)",
+                {"now": self._now(), "cutoff": started_before, "max": max_attempts},
             )
             return cursor.rowcount
 

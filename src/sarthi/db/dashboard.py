@@ -57,6 +57,8 @@ class ApplicationRow:
     submitted_at: str | None
     reply_kind: str | None
     detail: str = ""  # why it ended this way (e.g. why the user must apply on the site)
+    resume: bool = False  # Sarthi made a tailored resume for this job (job_document.resume_file)
+    letter: bool = False  # ... and a cover letter (job_document.letter_file)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +70,29 @@ class SourceRow:
     last_checked_at: str | None
     failures: int
     last_error: str | None
+    queued_at: str | None = None  # its next read is waiting in the queue since then
+    running: bool = False  # being read right now
+
+
+@dataclass(frozen=True, slots=True)
+class SiteRow:
+    """One site jobs were first found on (``job.source``): a job board, a feed or a hiring system."""
+
+    site: str
+    jobs: int
+    jobs_since: int  # first found since the given time
+    companies: int
+    last_found_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CareerPageRow:
+    """One company's career page on a hiring system (e.g. Greenhouse) and the jobs found on it."""
+
+    company: str
+    system: str
+    jobs: int
+    last_found_at: str
 
 
 def _counts(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -> dict[str, int]:
@@ -170,8 +195,9 @@ class DashboardQueries:
         rows = self._conn.execute(
             "SELECT a.job_id, j.title, j.company, j.canonical_url, a.status, a.site, a.updated_at, a.detail,"
             " a.submitted_at, (SELECT r.kind FROM reply r WHERE r.job_id = a.job_id"
-            " ORDER BY r.received_at DESC LIMIT 1) AS kind"
-            " FROM application a JOIN job j ON j.id = a.job_id ORDER BY a.updated_at DESC LIMIT ? OFFSET ?",
+            " ORDER BY r.received_at DESC LIMIT 1) AS kind, d.resume_file, d.letter_file"
+            " FROM application a JOIN job j ON j.id = a.job_id"
+            " LEFT JOIN job_document d ON d.job_id = a.job_id ORDER BY a.updated_at DESC LIMIT ? OFFSET ?",
             (min(limit, MAX_ROWS), max(offset, 0)),
         )
         return [
@@ -186,6 +212,8 @@ class DashboardQueries:
                 r["submitted_at"],
                 r["kind"],
                 r["detail"] or "",
+                bool(r["resume_file"]),
+                bool(r["letter_file"]),
             )
             for r in rows
         ]
@@ -201,31 +229,80 @@ class DashboardQueries:
         marks = ", ".join("?" * len(job_ids))
         rows = self._conn.execute(
             "SELECT a.job_id, j.title, j.company, j.canonical_url, a.status, a.site, a.updated_at,"  # noqa: S608
-            " a.submitted_at, NULL AS kind FROM application a JOIN job j ON j.id = a.job_id"
+            " a.submitted_at, NULL AS kind, d.resume_file, d.letter_file FROM application a"
+            " JOIN job j ON j.id = a.job_id LEFT JOIN job_document d ON d.job_id = a.job_id"
             f" WHERE a.job_id IN ({marks})",
             job_ids[:MAX_ROWS],
         )
         return [
             ApplicationRow(
                 r["job_id"], r["title"], r["company"], r["canonical_url"], r["status"], r["site"],
-                r["updated_at"], r["submitted_at"], None,
+                r["updated_at"], r["submitted_at"], None, "", bool(r["resume_file"]), bool(r["letter_file"]),
             )
             for r in rows
         ]  # fmt: skip
 
     def sources(self) -> list[SourceRow]:
-        """Every source that was ever read: failing ones first."""
+        """Every source that was ever read or is queued to be read: failing ones first."""
         rows = self._conn.execute(
-            "SELECT name, last_ok_at, last_checked_at, consecutive_failures, last_error FROM source_state"
-            " ORDER BY consecutive_failures DESC, name"
+            "WITH checks AS (SELECT key, status, run_after FROM task WHERE type = 'source_check'"
+            " AND status IN ('pending', 'running')),"
+            " names AS (SELECT name FROM source_state UNION SELECT key FROM checks)"
+            " SELECT n.name, s.last_ok_at, s.last_checked_at, s.last_error, c.status, c.run_after,"
+            " coalesce(s.consecutive_failures, 0) AS failures FROM names n"
+            " LEFT JOIN source_state s ON s.name = n.name LEFT JOIN checks c ON c.key = n.name"
+            " ORDER BY failures DESC, n.name"
         )
         return [
             SourceRow(
                 r["name"],
                 r["last_ok_at"],
                 r["last_checked_at"],
-                int(r["consecutive_failures"]),
+                int(r["failures"]),
                 r["last_error"],
+                r["run_after"] if r["status"] == "pending" else None,
+                r["status"] == "running",
             )
             for r in rows
         ]
+
+    def sites(self, since: datetime) -> list[SiteRow]:
+        """Every site jobs were first found on, most jobs first, with how many were found since ``since``."""
+        rows = self._conn.execute(
+            "SELECT source, count(*) AS jobs, sum(first_seen_at >= ?) AS recent,"
+            " count(DISTINCT lower(company)) AS companies, max(first_seen_at) AS last FROM job"
+            " GROUP BY source ORDER BY jobs DESC, source",
+            (to_iso(since),),
+        )
+        return [
+            SiteRow(r["source"], int(r["jobs"]), int(r["recent"] or 0), int(r["companies"]), r["last"])
+            for r in rows
+        ]
+
+    @staticmethod
+    def _systems_filter(systems: list[str]) -> str:
+        return "source IN (" + ", ".join("?" * len(systems)) + ")"  # only "?" marks: values are parameters
+
+    def career_pages(
+        self, systems: list[str], limit: int = MAX_ROWS, *, offset: int = 0
+    ) -> list[CareerPageRow]:
+        """Companies whose own career pages (on these hiring systems) had jobs, most jobs first (one page)."""
+        if not systems:
+            return []
+        rows = self._conn.execute(
+            "SELECT min(company) AS company, source, count(*) AS jobs, max(first_seen_at) AS last"  # noqa: S608
+            f" FROM job WHERE {self._systems_filter(systems)} GROUP BY source, lower(company)"
+            " ORDER BY jobs DESC, lower(company), source LIMIT ? OFFSET ?",
+            (*systems, min(limit, MAX_ROWS), max(offset, 0)),
+        )
+        return [CareerPageRow(r["company"], r["source"], int(r["jobs"]), r["last"]) for r in rows]
+
+    def count_career_pages(self, systems: list[str]) -> int:
+        """How many company career pages ``career_pages`` would page through."""
+        if not systems:
+            return 0
+        sql = (
+            "SELECT count(*) FROM (SELECT 1 FROM job"  # noqa: S608
+            f" WHERE {self._systems_filter(systems)} GROUP BY source, lower(company))"
+        )
+        return int(self._conn.execute(sql, systems).fetchone()[0])

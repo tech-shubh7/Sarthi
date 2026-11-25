@@ -9,6 +9,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from sarthi.jobs.eligibility import (
+    citizenship_restrictions,
+    language_requirements,
+    level_name,
+    spoken_languages,
+)
 from sarthi.jobs.geo import country_name, seniority_of
 from sarthi.jobs.models import EmploymentType, JobPosting, RemoteType, Sponsorship
 from sarthi.jobs.requirements import LEVEL_MIN_YEARS, min_years_in_title, min_years_required, years_tolerance
@@ -169,10 +175,54 @@ def _check_exclusions(job: JobPosting, profile: Profile, verdict: _Verdict) -> N
             return
 
 
+def _check_eligibility(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:
+    """Citizenship, permanent residency or clearance the posting requires.
+
+    A country the user needs no visa for counts as theirs: the profile does not record citizenship.
+    """
+    text = f"{job.title}\n{job.description}"
+    own = profile.preferences.visa_free_countries
+    for restriction in citizenship_restrictions(text):
+        countries = (
+            {restriction.country} if restriction.country else set(job.country_codes | job.remote_countries)
+        )
+        if not countries:
+            verdict.notes.append(f"Asks for “{restriction.phrase}”: check that includes you")
+        elif not countries & own:
+            verdict.blockers.append(
+                f"Only for citizens or residents of {_names(countries)} (“{restriction.phrase}”)"
+            )
+            return
+
+
+def _check_languages(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:
+    """Languages the posting requires: one the user lacks is a blocker, a higher level than theirs a note."""
+    spoken = spoken_languages(profile.preferences.languages)
+    listed = bool(profile.preferences.languages)  # nothing listed yet: say so, never hide the job
+    for ask in language_requirements(f"{job.title}\n{job.description}"):
+        if ask.language not in spoken:
+            if listed:
+                verdict.blockers.append(
+                    f"Requires {ask.language} (“{ask.phrase}”), not one of your languages"
+                )
+            else:
+                verdict.notes.append(
+                    f"Requires {ask.language} (“{ask.phrase}”): add the languages you speak in Settings"
+                )
+            return
+        own = spoken[ask.language]
+        if ask.level is not None and own is not None and ask.level > own:
+            verdict.notes.append(
+                f"Asks for {ask.language} at {level_name(ask.level)}; you listed {level_name(own)}"
+            )
+
+
 def check_rules(job: JobPosting, profile: Profile) -> RulesResult:
     """Apply every hard rule to ``job``."""
     verdict = _Verdict()
     _check_exclusions(job, profile, verdict)
+    _check_eligibility(job, profile, verdict)
+    _check_languages(job, profile, verdict)
     if job.remote_type is RemoteType.REMOTE:
         _check_remote(job, profile, verdict)
     else:

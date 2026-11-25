@@ -24,8 +24,23 @@ def test_resolve_keeps_order_and_skips_what_cannot_work(caplog: pytest.LogCaptur
     assert endpoints[1].base_url == "http://127.0.0.1:11434/v1"
     assert endpoints[1].free
     assert not endpoints[0].free
-    assert "SARTHI_OPENAI_API_KEY is not set" in caplog.text
     assert "g-key" not in caplog.text
+    assert "SARTHI_OPENAI_API_KEY" not in caplog.text  # another model works: a note, not a warning
+
+
+def test_a_missing_key_is_a_warning_only_when_no_model_is_left(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    with_gemini = Settings(_env_file=None, gemini_api_key=SecretStr("g-key"))
+    resolve(["gemini/gemini-flash", "openai/gpt-x"], with_gemini)
+    assert [(r.levelno, "SARTHI_OPENAI_API_KEY is not set" in r.message) for r in caplog.records] == [
+        (logging.INFO, True)
+    ]
+    caplog.clear()
+    no_keys = Settings(_env_file=None, groq_api_key=None, openai_api_key=None)
+    assert resolve(["groq/gpt-oss", "openai/gpt-x"], no_keys) == []
+    assert caplog.records[0].levelno == logging.WARNING
+    assert "SARTHI_GROQ_API_KEY is not set" in caplog.text
+    assert "SARTHI_OPENAI_API_KEY is not set" in caplog.text
 
 
 def test_scrub_removes_contact_details_only() -> None:

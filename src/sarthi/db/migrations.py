@@ -181,6 +181,17 @@ MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE application ADD COLUMN reminders INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE application ADD COLUMN reminded_at TEXT;
     """,
+    # 10: what Sarthi told the user (or would have, without Telegram), for the dashboard's Activity page
+    """
+    CREATE TABLE notice (
+        id                   INTEGER PRIMARY KEY,
+        kind                 TEXT NOT NULL,             -- documents, questions, preview, result, reply, ...
+        job_id               TEXT REFERENCES job (id) ON DELETE CASCADE,
+        text                 TEXT NOT NULL,             -- plain text (no markup)
+        at                   TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX notice_at ON notice (at);
+    """,
 )
 
 

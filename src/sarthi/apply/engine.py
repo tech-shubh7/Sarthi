@@ -1,7 +1,3 @@
-# Fill / approve / submit flow ported from OpenApply (MIT), src/apply/engine.ts @ db7796e.
-# Copyright (c) OpenApply contributors. Modifications (c) Sarthi contributors: Python Playwright; the approval
-# is a Telegram button carrying the one-time code; the browser is headless and kept open between fill and
-# submit for a limited time.
 """Filling an application form and submitting it only with the user's approval of that exact fill.
 
 ``fill`` opens the form, fills every field it has an answer for (files first: some forms read the resume and
@@ -18,19 +14,43 @@ import logging
 import re
 import secrets
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import Browser, BrowserContext, Page, Playwright, Request, Route, async_playwright
 from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import Response as PlaywrightResponse
 
 from sarthi.apply import adapters, linkedin, naukri
-from sarthi.apply.adapters import Adapter, FillError
+from sarthi.apply.adapters import Adapter, FillError, PostingClosedError
 from sarthi.apply.agent import ApplicationBrowser, Walked
 from sarthi.jobs.forms import FormContext, FormField, suggest
+from sarthi.jobs.net import is_public_url
 
 log = logging.getLogger(__name__)
+
+UrlCheck = Callable[[str], Awaitable[bool]]
+
+
+class EnginePausedError(Exception):
+    """The browser profile is lent to a visible window (a login, a form finished by hand): try later."""
+
+
+CLOSED_TEXT = adapters.CLOSED_TEXT
+UNKNOWN = "unknown"  # Submit was pressed, no answer seen: perhaps sent
+_GONE = frozenset({404, 410})
+
+
+def _gone(response: PlaywrightResponse | None, url: str) -> None:
+    """Raise ``PostingClosedError`` when the job's own address answers 404 or 410 (the posting is gone)."""
+    if response is not None and response.status in _GONE:
+        raise PostingClosedError(
+            f"the posting is closed ({adapters.host_of(url) or 'the site'} answered {response.status}: "
+            "the page no longer exists)"
+        )
+
 
 PAGE_IDLE_S = 30 * 60  # a filled form waits this long for Submit; then it must be filled again
 SUBMIT_WAIT_S = 20.0
@@ -83,7 +103,7 @@ class _Open:
 class ApplyEngine:
     """One headless browser; one open page per job between fill and submit."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  (explicit dependencies)
         self,
         shots_dir: Path,
         *,
@@ -91,25 +111,109 @@ class ApplyEngine:
         headless: bool = True,
         browser: ApplicationBrowser | None = None,
         env: dict[str, str] | None = None,
+        url_check: UrlCheck | None = is_public_url,
     ) -> None:
         """Screenshots go to ``shots_dir``; ``profile_dir`` keeps the user's site logins between runs.
 
         ``browser`` walks the sites no adapter knows (and boards with a saved login); None: they are handed
         over. ``env`` shows a visible browser on another screen (the virtual one of ``sarthi.apply.screen``).
+        ``url_check``: every address the browser opens or loads (frames and tabs included; the job link's
+        redirects are checked after the fact) must pass it. Job links come from public sources, so by
+        default only public internet hosts (no requests into the user's own network).
+        None turns the guard off: tests only (forms from files and localhost).
         """
         self.shots_dir = shots_dir
         self.browser = browser
         self.profile_dir = profile_dir
         self.headless = headless
         self.env = env
+        self.url_check = url_check
+        self._public: dict[str, bool] = {}
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._open: dict[str, _Open] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._busy = 0  # fills and submits under way
+        self._held = 0  # visible windows holding the browser profile
+        self._idle = asyncio.Condition()
 
     def _lock(self, job_id: str) -> asyncio.Lock:
         return self._locks.setdefault(job_id, asyncio.Lock())
+
+    @contextlib.asynccontextmanager
+    async def _in_use(self) -> AsyncIterator[None]:
+        """A fill or submit; ``EnginePausedError`` while a visible window holds the profile."""
+        if self._held:
+            raise EnginePausedError("a browser window is open for you: the application waits for it")
+        self._busy += 1
+        try:
+            yield
+        finally:
+            self._busy -= 1
+            async with self._idle:
+                self._idle.notify_all()
+
+    @property
+    def busy(self) -> bool:
+        """True while a fill or a submit is under way."""
+        return self._busy > 0
+
+    @contextlib.asynccontextmanager
+    async def paused(self) -> AsyncIterator[None]:
+        """Lend the browser profile to a visible window: new fills wait, running ones finish, then it closes.
+
+        Closing the browser under a running fill made that fill fail half way (a false hand-over), and the
+        visible browser could not open the profile while this one still held it.
+        """
+        self._held += 1
+        try:
+            async with self._idle:
+                await self._idle.wait_for(lambda: self._busy == 0)
+            await self.aclose()
+            yield
+        finally:
+            self._held -= 1
+
+    async def _allowed(self, url: str) -> bool:
+        """``url_check`` for one address, remembered per scheme and host (a page loads many files)."""
+        if self.url_check is None:
+            return True
+        scheme = url.partition(":")[0].lower()
+        if scheme in ("data", "blob", "about"):
+            return True  # made inside the page: nothing leaves the browser
+        key = f"{scheme}://{adapters.host_of(url)}"
+        if key not in self._public:
+            checked = "http" + url[2:] if scheme in ("ws", "wss") else url
+            self._public[key] = await self.url_check(checked)
+        return self._public[key]
+
+    async def _guard(self, route: Route, request: Request) -> None:
+        """Every request of the browser (pages, frames, tabs, files): non-public addresses are refused."""
+        if await self._allowed(request.url):
+            await route.continue_()
+            return
+        log.warning("blocked a request to a non-public address (%s)", adapters.host_of(request.url))
+        await route.abort("blockedbyclient")
+
+    async def _check_redirects(self, response: PlaywrightResponse | None) -> None:
+        """Refuse a page reached through a redirect to a non-public address.
+
+        Playwright routes only the first request of a redirect chain, so ``_guard`` cannot stop the hop
+        itself; its answer is never used (filled, screenshotted or shown to the user).
+        """
+        request = response.request if response is not None else None
+        while request is not None:
+            await self._check_link(request.url)
+            request = request.redirected_from
+
+    async def _check_link(self, url: str) -> None:
+        """Refuse a job link to a non-public address before the browser opens it."""
+        if not await self._allowed(url):
+            raise FillError(
+                f"its link ({adapters.host_of(url) or url[:80]}) is not a public web address, "
+                "so Sarthi did not open it"
+            )
 
     async def _new_page(self) -> Page:
         if self._context is None:
@@ -125,12 +229,15 @@ class ApplyEngine:
                     viewport={"width": 1280, "height": 1600} if self.headless else None,
                     env=_browser_env(self.env),
                     args=["--window-position=0,0", "--window-size=1280,900"] if self.env else [],
+                    service_workers="block",  # a service worker's requests would skip the address guard
                 )
             else:
                 self._browser = await self._playwright.chromium.launch(headless=self.headless)
                 self._context = await self._browser.new_context(
-                    locale="en-US", viewport={"width": 1280, "height": 1600}
+                    locale="en-US", viewport={"width": 1280, "height": 1600}, service_workers="block"
                 )
+            if self.url_check is not None:
+                await self._context.route("**/*", self._guard)
         page = await self._context.new_page()
         page.set_default_timeout(15_000)
         return page
@@ -195,21 +302,28 @@ class ApplyEngine:
         ``one_click``: a job board with the user's login, where its "Apply" may send at once (it is held for
         approval).
         """
-        async with self._lock(job_id):
+        async with self._in_use(), self._lock(job_id):
             await self.close_job(job_id)
+            await self._check_link(url)
             page = await self._new_page()
             if linkedin.is_linkedin(url) or naukri.is_naukri(url):
                 return await self._fill_board(job_id, page, url, ctx)
             adapter = adapters.adapter_for(url)
             try:
-                await page.goto(
+                response = await page.goto(
                     adapters.apply_url(url), wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS
                 )
+                await self._check_redirects(response)
+                _gone(response, url)
                 adapter = await adapters.refine_for_page(page, adapter)
             except PlaywrightError as error:
                 with contextlib.suppress(PlaywrightError):
                     await page.close()
                 raise FillError(f"the form did not load: {str(error).splitlines()[0][:200]}") from error
+            except FillError:
+                with contextlib.suppress(PlaywrightError):
+                    await page.close()
+                raise
             if adapter is adapters.GENERIC and self.browser is not None:
                 walked = await self._walk(page, url, ctx, one_click=one_click)
                 if not walked.known_form:
@@ -266,6 +380,20 @@ class ApplyEngine:
         ordered = [f for f in fields if f.type == "file"] + [f for f in fields if f.type != "file"]
         for form_field in ordered:
             await self._fill_one(page, adapter, form_field, ctx, result)
+        if not fields and not result.filled:
+            # Any hiring system: a closed posting shows its page without the form (Greenhouse, Lever and
+            # Ashby wait for a form that never comes and find nothing): never offered for Submit.
+            closed = CLOSED_TEXT.search(await adapters.body_text(page))
+            with contextlib.suppress(PlaywrightError):
+                await page.close()
+            if closed:
+                raise PostingClosedError(f'the posting is closed (the site says "{closed.group(0)}")')
+            raise FillError("no application form on the page (the job may be closed)")
+        if adapter is adapters.GENERIC and all(_is_search(f) for f in fields):
+            # A job description or a site's search box, not an application form: never offered for Submit.
+            with contextlib.suppress(PlaywrightError):
+                await page.close()
+            raise FillError("no application form was found on the page: apply on the site yourself")
         result.captcha = bool((await adapters.detect_captcha(page)).get("interactive"))
         result.screenshot = await self._screenshot(page, job_id, "filled", adapter)
         result.code = new_code()
@@ -326,8 +454,11 @@ class ApplyEngine:
             await page.wait_for_timeout(800)
 
     async def submit(self, job_id: str, code: str) -> SubmitResult:
-        """Submit the approved fill. Refuses without the code, a still-open page, or with blanks left."""
-        async with self._lock(job_id):
+        """Submit the approved fill. Refuses without the code, a still-open page, or with blanks left.
+
+        After the press, no confirmation is ``unknown`` (it may have been sent), never ``failed``.
+        """
+        async with self._in_use(), self._lock(job_id):
             if not self.can_submit(job_id, code):
                 return SubmitResult(
                     "expired", "That approval is no longer valid (the form was closed or filled again)."
@@ -342,10 +473,10 @@ class ApplyEngine:
             if (await adapters.detect_captcha(page)).get("interactive"):
                 return SubmitResult("needs_human", "The form shows a CAPTCHA, which Sarthi never solves.")
             before = await adapters.body_text(page)
-            try:
-                await page.locator(adapter.submit).first.click()
-            except PlaywrightError as error:
-                return SubmitResult("failed", f"Could not click submit: {str(error).splitlines()[0][:200]}")
+            # The application browser's walk names the exact button it stopped at: that one first.
+            prefer = str(adapter.extra.get("button") or "")
+            if refused := await adapters.press_submit(page, adapter.submit, prefer=prefer):
+                return SubmitResult(*refused, await self._screenshot(page, job_id, refused[0]))
             outcome, detail = await self._outcome(page, adapter, opened.url, before)
             if adapter is naukri.NAUKRI and outcome != "submitted" and await naukri.chatbot_open(page):
                 outcome, detail = (
@@ -378,7 +509,9 @@ class ApplyEngine:
                     return SubmitResult("submitted", f"You sent it; confirmation seen at {page.url}", shot)
                 now = await adapters.body_text(page)
                 moved = page.url.split("#")[0] != form_url.split("#", maxsplit=1)[0]
-                if adapters.THANKS.search(now) and (moved or not adapters.THANKS.search(before)):
+                if adapters.THANKS.search(now) and (
+                    moved or (not adapters.THANKS.search(before) and await adapters.form_gone(page, adapter))
+                ):
                     shot = await self._screenshot(page, job_id, "submitted")
                     return SubmitResult("submitted", f"You sent it; thank-you page seen at {page.url}", shot)
             except PlaywrightError:
@@ -406,11 +539,24 @@ class ApplyEngine:
                     adapter.extra.get("agent")
                     and adapters.THANKS.search(now)
                     and not adapters.THANKS.search(before)
+                    and await adapters.form_gone(page, adapter)
                 ):
                     return "submitted", f"Thank-you message shown at {page.url}"
             if (await adapters.detect_captcha(page)).get("interactive"):
                 return "needs_human", "A CAPTCHA appeared after clicking submit."
-        return "failed", "No confirmation within 20 seconds; check the form before trying again."
+        # Submit was pressed: it may well have gone out. Never "failed" (a retry could send it twice).
+        return UNKNOWN, (
+            "Submit was pressed but no confirmation appeared within 20 seconds: it may have been sent. "
+            "Check the site (or your email) before applying again."
+        )
+
+
+_SEARCH = re.compile(r"\b(?:search|keywords?|find jobs?)\b", re.IGNORECASE)
+
+
+def _is_search(form_field: FormField) -> bool:
+    """A site's search box (often the only "form" on a careers page), not a question of an application."""
+    return bool(_SEARCH.search(form_field.label))
 
 
 LOGIN_PAGES = {
@@ -422,6 +568,7 @@ LOGIN_PAGES = {
     "foundit": "https://www.foundit.in/rio/login",
     "glassdoor": "https://www.glassdoor.com/profile/login_input.htm",
     "shine": "https://www.shine.com/myshine/login/",
+    "hirist": "https://www.hirist.tech/login",
 }
 SITE_NAMES = {
     "linkedin": "LinkedIn",
@@ -432,6 +579,7 @@ SITE_NAMES = {
     "foundit": "foundit",
     "glassdoor": "Glassdoor",
     "shine": "Shine",
+    "hirist": "Hirist",
 }
 _LOGIN_PATH = re.compile(r"log-?in|sign-?in|auth|sso|account|register", re.IGNORECASE)
 _SIGNED_IN = {

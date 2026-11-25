@@ -66,6 +66,15 @@ def test_parse_years(text: str, years: float | None) -> None:
         ("$150k", "GB", "USD", 150_000, SalaryPeriod.YEAR),
         ("60000", "GB", "GBP", 60_000, SalaryPeriod.YEAR),
         ("50000 / month", "IN", "INR", 50_000, SalaryPeriod.MONTH),
+        ("$120k", "CA", "CAD", 120_000, SalaryPeriod.YEAR),  # Canadian dollars in Toronto
+        ("$9000 per month", "SG", "SGD", 9_000, SalaryPeriod.MONTH),
+        ("120000", "US", "USD", 120_000, SalaryPeriod.YEAR),
+        ("€60.000", "DE", "EUR", 60_000, SalaryPeriod.YEAR),  # dots group thousands in Germany
+        ("1.500.000", "DE", "EUR", 1_500_000, SalaryPeriod.YEAR),  # was a crash
+        ("60 000 EUR", "NL", "EUR", 60_000, SalaryPeriod.YEAR),
+        ("AED 25000 per month", "AE", "AED", 25_000, SalaryPeriod.MONTH),
+        ("90000", "AU", "AUD", 90_000, SalaryPeriod.YEAR),
+        ("150000", "BR", "BRL", 150_000, SalaryPeriod.YEAR),
         ("12 LPA", "IN", "INR", 1_200_000, SalaryPeriod.YEAR),
     ],
 )
@@ -293,3 +302,20 @@ def test_the_header_place_and_links_reach_the_contact_line() -> None:
     )
     assert (contact.location, contact.links) == ("Pune, India", ("https://github.com/aarav",))
     assert contact_from("Ravi Kumar\nravi@example.com\nSkills: Java, Python").location == ""
+
+
+@pytest.mark.parametrize(
+    ("header", "place"),
+    [
+        ("Jordan Blake | New York, NY 10001 | +1 212 555 0100", "New York, NY"),
+        ("Mia Chen · Sydney NSW 2000 · mia@example.com", "Sydney NSW"),
+        ("Lena Vogel | München, Germany | +49 89 1234567", "München, Germany"),
+        ("Sam Okafor | Toronto, ON | sam@example.com", "Toronto, ON"),
+        ("Jordan Blake\nChicago, IL", "Chicago, IL"),  # a name that is also a country is not a place
+        ("Noor Haddad | Dubai, UAE | +971 50 123 4567", "Dubai, UAE"),
+    ],
+)
+def test_header_places_from_around_the_world(header: str, place: str) -> None:
+    from sarthi.profile.master import contact_from  # noqa: PLC0415
+
+    assert contact_from(f"{header}\nSoftware Engineer").location == place

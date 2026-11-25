@@ -13,6 +13,8 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+CONNECTOR_URL = "https://sarthi-connect.sarthi.workers.dev"  # the project's one-tap Telegram connector
+
 
 class Settings(BaseSettings):
     """All Sarthi settings. Environment variables use the ``SARTHI_`` prefix."""
@@ -32,9 +34,10 @@ class Settings(BaseSettings):
         description="Only for a bot of your own; without it Sarthi uses the shared bot (relay_url).",
     )
     telegram_connect_url: str = Field(
-        default="",
+        default=CONNECTOR_URL,
         description=(
             "The Sarthi connector (one-tap setup): makes the user a Telegram bot of their own, no @BotFather."
+            " Set it empty to run without Telegram."
         ),
     )
     relay_url: str = Field(
@@ -50,7 +53,10 @@ class Settings(BaseSettings):
     def _blank_is_unset(cls, value: object, info: object) -> object:
         """``SARTHI_X=`` (a line copied from .env.example and left empty) means "not set" for secrets."""
         name = getattr(info, "field_name", "")
-        optional = name.endswith(("_token", "_key", "_password")) or name == "auto_apply_min_score"
+        optional = name.endswith(("_token", "_key", "_password")) or name in (
+            "auto_apply_min_score",
+            "auto_apply_daily_limit",
+        )
         if isinstance(value, str) and not value.strip() and optional:
             return None
         return value
@@ -112,7 +118,10 @@ class Settings(BaseSettings):
     # window, and sent without a tap only when every answer came from the profile. The user can change the
     # line in the chat (/autoapply 85, /autoapply off).
     auto_apply_min_score: int | None = Field(default=None, ge=75, le=100)
-    auto_apply_daily_limit: int = Field(default=10, ge=1, le=50)
+    # Also send without a tap on job boards with the user's login (LinkedIn, Naukri, Indeed, ...). Off by
+    # default: those sites may restrict accounts that apply in bulk. /autoapply boards on|off changes it.
+    auto_apply_job_boards: bool = False
+    auto_apply_daily_limit: int | None = Field(default=None, ge=1)  # None: no cap of its own
     auto_apply_wait_minutes: int = Field(default=5, ge=0, le=1440)
 
     # Reply tracking: Sarthi reads (never changes) your mailbox over IMAP.

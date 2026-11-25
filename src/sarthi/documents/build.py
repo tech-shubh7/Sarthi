@@ -12,7 +12,14 @@ import re
 from dataclasses import dataclass, field
 
 from sarthi.ai.documents import CoverAnswer, TailorAnswer
-from sarthi.documents.truth import fact_problems, style_problems
+from sarthi.documents.truth import (
+    echo_problems,
+    fact_problems,
+    opening_problems,
+    style_problems,
+    title_problems,
+    verb_upgrade,
+)
 from sarthi.profile.master import Job, MasterResume, SkillGroup
 
 MIN_BULLETS_KEPT = 2
@@ -31,6 +38,7 @@ class Built:
 def _tidy(text: str) -> str:
     """AI text with its em dashes made plain and whitespace normalised."""
     text = re.sub(r"\s*—\s*", ", ", text)
+    text = re.sub(r"[\u2010-\u2012]", "-", text)  # models' "non-breaking" hyphens; \s takes U+00A0
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -38,15 +46,23 @@ class Checker:
     """Checks one AI line against the master resume."""
 
     def __init__(
-        self, master: MasterResume, resume_text: str, own_skills: tuple[str, ...], *, strict: bool = False
+        self,
+        master: MasterResume,
+        resume_text: str,
+        own_skills: tuple[str, ...],
+        *,
+        strict: bool = False,
+        job_text: str = "",
     ) -> None:
         """Known facts are ``resume_text`` (the uploaded resume) and the person's skills.
 
         ``strict`` also replaces lines with style problems (used after the AI had its second try).
+        ``job_text`` is the posting, so a line that copies its sentences is caught.
         """
         self.known_text = resume_text
         self.skills = (*master.all_skills(), *own_skills)
         self.strict = strict
+        self.job_text = job_text
 
     def facts(self, text: str) -> list[str]:
         """New numbers or skills in ``text``."""
@@ -61,9 +77,12 @@ def _use(candidate: str, fallback: str, where: str, checker: Checker, built: Bui
     text = _tidy(candidate)
     if not text:
         return fallback
-    facts = checker.facts(text)
+    facts = checker.facts(text) + title_problems(
+        text, checker.known_text
+    )  # a resume line, never the job's title
     if facts:
         built.reverted.append(f"{where}: {'; '.join(facts)}")
+        built.problems += [f"{where} {p}" for p in facts]
         return fallback
     style = checker.style(text)
     if style and checker.strict:
@@ -73,32 +92,79 @@ def _use(candidate: str, fallback: str, where: str, checker: Checker, built: Bui
     return text
 
 
+LONGER = 1.10  # a re-worded line may be 10% longer (it is printed in the space the old line used) ...
+LONGER_CHARS = 12  # ... or a few characters, for short lines
+SHORTER = 0.6  # and not much shorter: a line cut to half has lost what it said
+
+
+def length_problem(new: str, old: str) -> str:
+    """Why ``new`` cannot take ``old``'s place in the person's own layout ("" when it can)."""
+    if len(new) > max(len(old) * LONGER, len(old) + LONGER_CHARS):
+        return f"is {len(new)} characters, the original line is {len(old)}: keep its length"
+    if len(new) < len(old) * SHORTER:
+        return f"is {len(new)} characters, the original line is {len(old)}: say all it said"
+    return ""
+
+
+def _fitted(candidate: str, original: str, where: str, checker: Checker, built: Built) -> str:
+    """``candidate`` when it is true, written fresh and fits ``original``'s space, else ``original``."""
+    upgraded = verb_upgrade(_tidy(candidate), original)
+    if upgraded:  # a level the person did not hold: never used
+        built.reverted.append(f"{where}: {'; '.join(upgraded)}")
+        built.problems += [f"{where} {p}" for p in upgraded]
+        return original
+    text = _use(candidate, original, where, checker, built)
+    if text == original:
+        return text
+    problems = [
+        p for p in echo_problems(text, checker.job_text) if not echo_problems(original, checker.job_text)
+    ]
+    problems += [p for p in [length_problem(text, original)] if p] + opening_problems(text, original)
+    if problems:
+        built.problems += [f"{where} {p}" for p in problems]
+        if checker.strict:
+            built.reverted.append(f"{where}: {'; '.join(problems)}")
+            return original
+    return text
+
+
 def _bullets(job: Job, suggested: list[str], where: str, checker: Checker, built: Built) -> tuple[str, ...]:
-    kept: list[str] = []
-    for i, bullet in enumerate(suggested[:MAX_BULLETS]):
-        text = _use(bullet, "", f"{where} bullet {i + 1}", checker, built)
-        if text and text not in kept:
-            kept.append(text)
-    if len(kept) < min(MIN_BULLETS_KEPT, len(job.bullets)):
-        return job.bullets[:MAX_BULLETS]  # too much was untrue: the master's own bullets
-    return tuple(kept)
+    """Each bullet re-worded in its own place: the person's resume keeps its bullets, order and layout."""
+    if len(suggested) != len(job.bullets):
+        built.problems.append(
+            f"{where}: gave {len(suggested)} bullets for {len(job.bullets)}; give exactly {len(job.bullets)}"
+        )
+        return job.bullets
+    return tuple(
+        _fitted(new, old, f"{where} bullet {i + 1}", checker, built)
+        for i, (new, old) in enumerate(zip(suggested, job.bullets, strict=True))
+    )
 
 
-def tailored_resume(
+def tailored_resume(  # noqa: PLR0913  (the resume's inputs)
     master: MasterResume,
     answer: TailorAnswer | None,
     resume_text: str,
     own_skills: tuple[str, ...] = (),
     *,
     strict: bool = False,
+    job_text: str = "",
 ) -> Built:
-    """The resume for one job. Facts from ``master``; wording and order from ``answer`` where it is true."""
-    master = master.model_copy(update={"summary": short_summary(master.summary)})
+    """The resume for one job. Facts from ``master``; wording and order from ``answer`` where it is true.
+
+    Every position keeps all its bullets in their order and every line keeps about its length, so the same
+    text can be written into the person's own resume file (``edits``) as well as Sarthi's layout.
+    """
     built = Built(master)
     if answer is None:
         return built
-    checker = Checker(master, resume_text, own_skills, strict=strict)
+    checker = Checker(master, resume_text, own_skills, strict=strict, job_text=job_text)
     by_index = {item.index: item.bullets for item in answer.experience}
+    built.problems += [
+        f"position {i} ({job.company}) is missing: give all {len(job.bullets)} of its bullets"
+        for i, job in enumerate(master.experience)
+        if job.bullets and not by_index.get(i)
+    ]
     experience = tuple(
         job.model_copy(update={"bullets": _bullets(job, by_index[i], f"{job.company}", checker, built)})
         if by_index.get(i)
@@ -110,13 +176,47 @@ def tailored_resume(
     built.resume = master.model_copy(
         update={
             "headline": _use(answer.headline, master.headline, "headline", checker, built),
-            "summary": _use(answer.summary, master.summary, "summary", checker, built),
+            "summary": _fitted(answer.summary, master.summary, "summary", checker, built)
+            if master.summary
+            else "",
             "experience": experience,
             "projects": projects,
             "skills": _skills_first(master, answer.skills_first),
         }
     )
     return built
+
+
+@dataclass(frozen=True, slots=True)
+class Edit:
+    """One line of the person's resume and its tailored wording."""
+
+    old: str
+    new: str
+    where: str
+
+
+def edits(master: MasterResume, tailored: MasterResume) -> list[Edit]:
+    """What changed between the master resume and its tailored version, line by line.
+
+    The summary, each bullet in its place and each skills line re-ordered: the text to replace in the
+    person's own resume file. Lines left as they were are not listed.
+    """
+    found: list[Edit] = []
+    if tailored.summary and tailored.summary != master.summary:
+        found.append(Edit(master.summary, tailored.summary, "summary"))
+    for job, new_job in zip(master.experience, tailored.experience, strict=False):
+        if len(job.bullets) != len(new_job.bullets):
+            continue
+        for k, (old, new) in enumerate(zip(job.bullets, new_job.bullets, strict=True)):
+            if old != new:
+                found.append(Edit(old, new, f"{job.company} bullet {k + 1}"))
+    new_groups = {g.label: g.items for g in tailored.skills}
+    for group in master.skills:
+        items = new_groups.get(group.label, group.items)
+        if items != group.items and sorted(items) == sorted(group.items):
+            found.append(Edit(", ".join(group.items), ", ".join(items), f"skills {group.label}".strip()))
+    return found
 
 
 SUMMARY_WORDS = 50

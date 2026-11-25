@@ -8,9 +8,10 @@ import pytest
 
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
+from sarthi.jobs import net
 from sarthi.queue import names
 from sarthi.queue.tasks import MAX_ATTEMPTS, RetryableError, TaskQueue
-from sarthi.sources import fulltext, net
+from sarthi.sources import fulltext
 from sarthi.sources.fill import TextFiller
 from sarthi.sources.fulltext import Fetcher
 from sarthi.sources.structured import description_text, find_job_posting

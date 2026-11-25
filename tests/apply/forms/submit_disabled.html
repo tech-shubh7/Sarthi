@@ -1,0 +1,12 @@
+<!doctype html><html><head><title>Apply</title></head><body>
+<form id="f" onsubmit="event.preventDefault(); location.href='thanks.html';">
+  <div class="field"><label for="n">Full name *</label><input id="n" required></div>
+  <button id="go" type="submit" disabled>Submit</button>
+</form>
+<script>
+  // The site checks the answers for a moment before it enables Submit (?never: it never does).
+  if (!location.search.includes("never")) {
+    setTimeout(() => { document.getElementById("go").disabled = false; }, 1500);
+  }
+</script>
+</body></html>

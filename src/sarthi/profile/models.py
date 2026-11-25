@@ -44,6 +44,12 @@ class Preferences(BaseModel):
         default=frozenset(),
         description="Countries where the user needs no visa sponsorship. Empty: home only.",
     )
+    languages: tuple[ShortText, ...] = Field(
+        default=(),
+        max_length=12,
+        description='Languages the user speaks, with a level when known ("German B1"). English is assumed; '
+        "no other language is.",
+    )
     remote: RemotePreference = RemotePreference.OK
     seniority: frozenset[Seniority] = Field(default=frozenset(), description="Wanted levels. Empty: any.")
     employment_types: frozenset[EmploymentType] = frozenset({EmploymentType.FULL_TIME})
@@ -83,4 +89,6 @@ class Profile(BaseModel):
     @property
     def version(self) -> str:
         """Short hash of the profile; matches are re-run when it changes."""
-        return hashlib.sha256(self.model_dump_json().encode()).hexdigest()[:12]
+        # A field added later is left out while unset, so an upgrade alone does not re-run every match.
+        unset = {"preferences": {"languages"}} if not self.preferences.languages else None
+        return hashlib.sha256(self.model_dump_json(exclude=unset).encode()).hexdigest()[:12]

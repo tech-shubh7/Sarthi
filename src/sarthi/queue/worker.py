@@ -1,6 +1,3 @@
-# Adapted from JobRadar (MIT), src/jobradar/queue/worker.py @ fdd739b.
-# Copyright (c) ThePlator. Modifications (c) Sarthi contributors.
-# Changes: renamed Defer -> DeferError; log messages carry the context inline.
 """Async worker loop: claims tasks, runs their handlers with bounded concurrency, applies retry/backoff."""
 
 from __future__ import annotations

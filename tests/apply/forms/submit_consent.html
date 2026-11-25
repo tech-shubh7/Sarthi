@@ -1,0 +1,16 @@
+<!doctype html><html><head><title>Apply</title>
+<style>
+  #cookie-banner { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 10; }
+  #cookie-banner .box { position: absolute; bottom: 0; left: 0; right: 0; background: #fff; padding: 16px; }
+</style></head><body>
+<form id="f" onsubmit="event.preventDefault(); location.href='thanks.html#' + (window.choice || 'none');">
+  <div class="field"><label for="n">Full name *</label><input id="n" required></div>
+  <button type="submit">Submit application</button>
+</form>
+<div id="cookie-banner" role="dialog" aria-label="Cookie consent">
+  <div class="box">We use cookies to improve this site.
+    <button type="button" onclick="window.choice='accept'; this.closest('#cookie-banner').remove()">Accept all</button>
+    <button type="button" onclick="window.choice='reject'; this.closest('#cookie-banner').remove()">Reject all</button>
+  </div>
+</div>
+</body></html>

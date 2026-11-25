@@ -1,10 +1,3 @@
-# Ported from OpenApply (MIT), src/match.ts (scoreJob) @ db7796e. Copyright (c) OpenApply contributors.
-# Modifications (c) Sarthi contributors.
-# Changes: TypeScript -> Python; location scoring moved to sarthi.matching.rules (ISO countries instead
-# of a US-centred place regex); the salary floor is compared only within the same currency and period;
-# resume bullet terms come from plain resume text; seniority uses Sarthi's levels; tech names such as
-# node.js are no longer stemmed to node.j; with no seniority set, levels are inferred from years of
-# experience.
 """Layer 0 of the match funnel: a free, instant score from title, skills, seniority, salary and recency."""
 
 from __future__ import annotations

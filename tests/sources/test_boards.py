@@ -104,6 +104,22 @@ async def test_one_search_per_role_and_country_with_country_boards() -> None:
     assert bangladesh["site_name"] == ["linkedin", "bdjobs"]  # Indeed does not cover Bangladesh
 
 
+async def test_each_country_gets_boards_jobspy_has_and_only_its_own_local_boards() -> None:
+    scrape = FakeScrape({"data engineer": pd.DataFrame()})
+    source = JobBoardSource(("linkedin", "indeed", "naukri", "seek"), scraper=scrape)
+    query = SearchQuery(roles=("data engineer",), countries=("AU", "GB", "IN", "AE"), hours_old=24)
+    await source.fetch(query)
+
+    sites = [(call["site_name"], call["location"], call["country_indeed"]) for call in scrape.calls]
+    assert sites == [
+        (["linkedin", "indeed"], "Australia", "australia"),  # no Seek in JobSpy: it failed every search
+        (["linkedin", "indeed"], "United Kingdom", "uk"),  # Naukri lists Indian jobs only
+        (["linkedin", "indeed", "naukri"], "India", "india"),
+        (["linkedin", "indeed"], "United Arab Emirates", "united arab emirates"),
+        (["bayt"], "UAE", "united arab emirates"),  # Bayt's own name for the country
+    ]
+
+
 async def test_a_failed_search_is_skipped_but_all_failing_retries() -> None:
     scrape = FakeScrape({"a": RuntimeError("blocked"), "b": pd.DataFrame([row()])})
     assert len(await JobBoardSource(scraper=scrape).fetch(SearchQuery(roles=("a", "b")))) == 1

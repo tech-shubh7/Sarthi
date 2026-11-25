@@ -117,6 +117,26 @@ class ChatStore:
         """True while a job is marked for auto-apply."""
         return self.get_state(f"{_AUTO}{job_id}") == "1"
 
+    def applying_alive(self, job_id: str, steps: tuple[str, ...]) -> bool:
+        """True while an application for this job is under way or settled.
+
+        That is: a step of ``steps`` waiting or running, a question waiting for the user, or an application
+        that was sent, handed over, or is filled with its page still open (``apply.pending.<job>``, see
+        sarthi.chat.applying).
+
+        False for an Apply whose chain died (e.g. a task that ran out of attempts): it may be started again.
+        """
+        marks = ", ".join("?" * len(steps))  # only "?" marks go into the SQL: the values are parameters
+        row = self._conn.execute(
+            f"SELECT EXISTS (SELECT 1 FROM task WHERE key = ? AND type IN ({marks})"  # noqa: S608
+            " AND status IN ('pending', 'running'))"
+            " OR EXISTS (SELECT 1 FROM pending_question WHERE job_id = ?)"
+            " OR EXISTS (SELECT 1 FROM application WHERE job_id = ? AND (status NOT IN ('failed', 'filled')"
+            " OR EXISTS (SELECT 1 FROM app_state WHERE key = 'apply.pending.' || ?))) AS alive",
+            (job_id, *steps, job_id, job_id, job_id),
+        ).fetchone()
+        return bool(row["alive"])
+
     def status_counts(self) -> dict[str, int]:
         """How many jobs are in each user status."""
         rows = self._conn.execute("SELECT status, count(*) AS n FROM job_user GROUP BY status")

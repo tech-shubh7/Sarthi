@@ -316,9 +316,11 @@ async def test_report_gives_up_waiting_for_a_slow_ai(
     assert "still being checked" in api.texts()[0]
 
 
-async def test_report_waits_for_pairing(bot: TelegramBot) -> None:
-    with pytest.raises(DeferError):
-        await bot.handle_catchup_report(report())
+async def test_report_without_a_chat_ends_the_catch_up(bot: TelegramBot, api: FileApi) -> None:
+    bot.catchup.start(24)
+    await bot.handle_catchup_report(report())  # not paired: the matches are on the dashboard
+    assert api.texts() == []
+    assert not bot.catchup.running()  # alerts are no longer held
 
 
 # ---- spreadsheet safety ------------------------------------------------------------------------------------

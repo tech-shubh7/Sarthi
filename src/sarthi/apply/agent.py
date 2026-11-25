@@ -76,6 +76,7 @@ APPLY = re.compile(
 LOGGED_OUT = re.compile(
     r"^\s*(?:log\s*-?\s*in|sign\s*-?\s*in)(?:\s*(?:/|or|&)\s*(?:register|sign\s*up))?\s*$", re.I
 )
+SIGN_IN_TO_APPLY = re.compile(r"(?:sign|log)\s*-?\s*in\s+to\s+(?:apply|continue)", re.IGNORECASE)
 COOKIE_OK = re.compile(
     r"^\s*(?:accept|accept\s+all|allow\s+all|i\s+agree|agree|got\s+it|ok(?:ay)?)\b", re.IGNORECASE
 )
@@ -106,6 +107,10 @@ BUTTONS_JS = """
     if (!el.getClientRects().length) continue;
     const st = getComputedStyle(el);
     if (st.visibility === "hidden" || st.display === "none" || +st.opacity === 0) continue;
+    // A faded-out or click-through copy (Shine's sticky "Apply Now" bar before it slides in): not pressable.
+    if (st.pointerEvents === "none") continue;
+    const seen = { opacityProperty: true, visibilityProperty: true };
+    if (el.checkVisibility && !el.checkVisibility(seen)) continue;
     if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
     const text = clean(el.innerText || el.value || el.getAttribute("aria-label") || el.title).slice(0, 80);
     if (!text) continue;
@@ -198,7 +203,7 @@ class Walked:
             container=AGENT.container,
             label=AGENT.label,
             submit=f"{self.submit.selector}, {fallback}",
-            extra={"agent": True},
+            extra={"agent": True, "button": self.submit.selector},
         )
 
 
@@ -299,6 +304,14 @@ def dead_end(url: str, fields: list[FormField], buttons: list[Button], text: str
         )
     if one_click and not fields and any(LOGGED_OUT.search(b.text) for b in buttons):
         raise LoginWallError(f"{urlparse(url).hostname or 'the site'} shows you as signed out")
+    # A guest's way in, and nothing else: "Upload your resume, we'll auto-fill your details" (a new account
+    # made from the resume) next to "Already on Shine? Sign in to apply". Not an application form.
+    usable_apply = any(APPLY.search(b.text) and not NEVER.search(b.text) for b in buttons)
+    if not fields and not usable_apply and any(SIGN_IN_TO_APPLY.search(b.text) for b in buttons):
+        raise LoginWallError(
+            f"{urlparse(url).hostname or 'the site'} shows you as signed out (it offers only "
+            '"Sign in to apply" or a new account made from your resume)'
+        )
 
 
 def guarded(step: Step, *, one_click: bool) -> Step:
@@ -381,7 +394,11 @@ class ApplicationBrowser:
             if step is None or (seen[signature] > 1 and step.state == "go"):
                 step = await self._ask(text, fields, filled, buttons, one_click=one_click)
             if step.state == "ready" and step.button is not None:
-                if fields and not walked.filled and not one_click:
+                if not walked.filled and not one_click:
+                    # A Submit-like button with nothing filled on the way (no form at all, often a closed
+                    # posting, or no question matched): never offered for Submit.
+                    if not fields:
+                        raise FillError("no application form on the page (the job may be closed)")
                     raise FillError("none of the form's questions could be matched to your profile")
                 walked.submit = step.button
                 walked.note = step.why
@@ -394,6 +411,10 @@ class ApplicationBrowser:
                     account=step.state == "account",
                 )
             if step.state == "closed":
+                if adapters.CLOSED_TEXT.search(text):
+                    raise adapters.PostingClosedError(
+                        f"the posting is closed ({step.why or 'the site says so'})"
+                    )
                 raise FillError(f"the job is closed or this is not an application ({step.why or 'no form'})")
             if step.state != "go" or step.button is None:
                 if one_click and not fields:

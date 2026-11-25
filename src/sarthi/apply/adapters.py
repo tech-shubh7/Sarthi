@@ -1,6 +1,3 @@
-# Ported from OpenApply (MIT), src/apply/adapters/*.ts and src/apply/detect.ts @ db7796e.
-# Copyright (c) OpenApply contributors. Modifications (c) Sarthi contributors: Python Playwright; one
-# dataclass per hiring system instead of an adapter factory.
 """How each hiring system's application form is read, filled and submitted (rule-based, no AI).
 
 Greenhouse, Lever and Ashby have dedicated layouts; any other form is read by its labels (``generic``). A
@@ -48,6 +45,10 @@ _FIELD_TYPES = frozenset(
 
 class FillError(RuntimeError):
     """One field could not be filled (the message says why, for the user)."""
+
+
+class PostingClosedError(FillError):
+    """The site says the posting is gone or no longer takes applications."""
 
 
 def _host(url: str) -> str:
@@ -163,11 +164,35 @@ _GREENHOUSE_FRAME = (
     'iframe[src*="greenhouse.io/embed/job_board"]'
 )
 LEVER_VERIFY_ERROR = re.compile(r"there was an error verifying your application", re.I)
+# A closed posting's own words (the liveness idea of JobRadar, MIT: only a definite answer counts). Read only
+# on a page where no form was found, so a description that mentions a filled position changes nothing.
+CLOSED_TEXT = re.compile(
+    r"no longer accepting applications|not accepting applications|(?:position|role|job|vacancy)"
+    r" has (?:already )?been filled|\bis no longer (?:open|available|active|accepting)"
+    r"|this (?:job|posting|position) (?:posting )?(?:has )?(?:expired|closed)|job not found"
+    r"|(?:posting|job) (?:has been )?closed",
+    re.IGNORECASE,
+)
+# Not "thank you for your interest": careers pages print it in their footer, next to an unsent form.
 THANKS = re.compile(
-    r"thank you for (applying|your application|your interest|submitting)|application (has been |was )?"
+    r"thank you for (applying|your application|submitting)|application (has been |was )?"
     r"(submitted|received)|we('ve| have) received your application|successfully submitted",
     re.I,
 )
+
+
+async def form_gone(page: Page, adapter: Adapter) -> bool:
+    """The form is no longer on screen: the button the walk stopped at, else the form root, is gone.
+
+    New thank-you text at the same address counts as sent only then: a footer or a banner beside a form
+    still on screen says nothing about the form.
+    """
+    selector = str(adapter.extra.get("button") or "") or adapter.root
+    try:
+        shown = [await m.is_visible() for m in await page.locator(selector).all()]
+    except PlaywrightError:
+        return False
+    return not any(shown)
 
 
 def adapter_for(url: str) -> Adapter:
@@ -424,6 +449,109 @@ async def fill_field(page: Page, adapter: Adapter, form_field: FormField, value:
         await element.fill(value)
     if adapter is ASHBY and form_field.type in ("text", "textarea", "email", "tel", "url", "number"):
         await element.blur()  # Ashby saves text answers on blur
+
+
+# ---- pressing submit -------------------------------------------------------------------------------------
+
+SUBMIT_FIND_S = 10.0  # a submit button may be enabled a moment after the last answer (validation)
+SUBMIT_CLICK_MS = 8_000
+CONSENT_BUTTON_ATTR = "data-sarthi-consent"
+# A control the user can see and press: on the page, not faded out (a hidden sticky bar's twin of the real
+# button), not click-through, not disabled.
+_SUBMIT_STATE_JS = """(el) => {
+  const st = getComputedStyle(el);
+  const seen = el.getClientRects().length > 0 && st.visibility !== "hidden" && st.pointerEvents !== "none"
+    && (!el.checkVisibility || el.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+  const enabled = !el.disabled && el.getAttribute("aria-disabled") !== "true"
+    && !el.closest("fieldset[disabled]");
+  return { seen, enabled };
+}"""
+# What sits on top of the button's centre: "" when the button itself; else a short description, and whether
+# it is a cookie or consent banner (then its least-sharing choice is marked for a real click).
+_COVER_JS = """(el, [attr, okPattern, leastPattern]) => {
+  el.scrollIntoView({ block: "center", inline: "center" });
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+  for (let n = el; n; n = n.parentNode || n.host) { if (n === hit) return { cover: "" }; }
+  if (!hit || el.contains(hit)) return { cover: "" };
+  const clean = (s) => (s || "").replace(/\\s+/g, " ").trim();
+  const box = hit.closest('[id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i], '
+    + '[aria-label*="cookie" i], [aria-label*="consent" i], #CybotCookiebotDialog, .cc-window')
+    || (/cookie|consent/i.test(hit.innerText || "") ? hit.closest("[role=dialog], dialog, div") : null);
+  const desc = clean(hit.getAttribute("aria-label") || hit.innerText || hit.id || hit.tagName).slice(0, 80);
+  if (!box) return { cover: desc, consent: false };
+  const shown = (b) => b.getClientRects().length > 0 && !b.disabled;
+  const buttons = Array.from(box.querySelectorAll("button, [role=button], a, input[type=button]"))
+    .filter(shown);
+  const text = (b) => clean(b.innerText || b.value || b.getAttribute("aria-label"));
+  const pick = buttons.find((b) => new RegExp(leastPattern, "i").test(text(b)))
+    || buttons.find((b) => new RegExp(okPattern, "i").test(text(b)));
+  if (pick) pick.setAttribute(attr, "1");
+  return { cover: desc, consent: true, dismiss: pick ? text(pick) : "" };
+}"""
+CONSENT_OK = r"^\s*(?:accept|accept all|allow all|i agree|agree|got it|ok(?:ay)?|close)\b"
+CONSENT_LEAST = r"^\s*(?:reject all|decline all|necessary only|only necessary|essential only|use necessary)"
+
+
+async def _submit_target(page: Page, selector: str, prefer: str) -> tuple[Locator | None, bool]:
+    """The first submit control the user can see and press (``prefer`` first), waiting a little for one.
+
+    Returns (the control or None, whether a visible one was there but disabled).
+    """
+    end = time.monotonic() + SUBMIT_FIND_S
+    disabled = False
+    while True:
+        candidates = (await page.locator(prefer).all() if prefer else []) + await page.locator(selector).all()
+        for candidate in candidates:
+            try:
+                state = await candidate.evaluate(_SUBMIT_STATE_JS)
+            except PlaywrightError:
+                continue  # gone while looking
+            if state.get("seen") and state.get("enabled"):
+                return candidate, False
+            disabled = disabled or bool(state.get("seen"))
+        if time.monotonic() > end:
+            return None, disabled
+        await asyncio.sleep(0.3)
+
+
+async def _cover(target: Locator) -> dict[str, Any]:
+    try:
+        found = await target.evaluate(_COVER_JS, [CONSENT_BUTTON_ATTR, CONSENT_OK, CONSENT_LEAST])
+    except PlaywrightError:
+        return {"cover": ""}
+    return found if isinstance(found, dict) else {"cover": ""}
+
+
+async def press_submit(page: Page, selector: str, *, prefer: str = "") -> tuple[str, str] | None:
+    """Press the form's submit control like a person would; None when pressed, else (outcome, why).
+
+    Hidden twins of the button (a faded sticky bar, a mobile copy) are skipped; a button disabled until the
+    form validates gets a few seconds; a cookie or consent banner over it is dismissed (its least-sharing
+    choice when it offers one). Nothing is force-clicked: anything else covering the button goes to the user.
+    """
+    target, disabled = await _submit_target(page, selector, prefer)
+    if target is None:
+        if disabled:
+            return "needs_human", "The submit button stayed disabled: the form may still need an answer."
+        return "failed", "No visible submit button was found on the form; check it on the site."
+    for attempt in range(2):
+        cover = await _cover(target)
+        if cover.get("consent") and cover.get("dismiss"):
+            with contextlib.suppress(PlaywrightError):
+                await page.locator(f"[{CONSENT_BUTTON_ATTR}]").first.click(timeout=3_000)
+                await page.wait_for_timeout(500)
+        try:
+            await target.click(timeout=SUBMIT_CLICK_MS)
+        except PlaywrightError as error:
+            if attempt == 0:
+                continue
+            what = str(cover.get("cover") or "")
+            if what:
+                return "needs_human", f'"{what}" covers the submit button on the page; submit it yourself.'
+            return "failed", f"Could not press submit: {str(error).splitlines()[0][:200]}"
+        return None
+    return None
 
 
 # ---- after submitting ------------------------------------------------------------------------------------

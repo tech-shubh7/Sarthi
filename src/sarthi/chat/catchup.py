@@ -156,8 +156,11 @@ class CatchUp:
         rows.sort(key=lambda row: (row.match.score, row.match.decision == "alert"), reverse=True)
         return rows
 
-    async def handle_report(self, task: TaskRecord, chat_id: int) -> None:
-        """``catchup_report`` task: when matching is done, send the batch and stop holding alerts."""
+    async def handle_report(self, task: TaskRecord, chat_id: int | None) -> str:
+        """``catchup_report`` task: when matching is done, send the batch and stop holding alerts.
+
+        ``chat_id`` None (no Telegram): nothing is sent; the matches are on the dashboard. Returns a summary.
+        """
         started = from_iso(str(task.payload.get("started") or to_iso(self._clock())))
         # A job whose description is still being read is matched next: wait for both.
         waiting = self.queue.active(names.MATCH) + self.queue.active(names.FILL_TEXT)
@@ -166,9 +169,12 @@ class CatchUp:
         hours = int(task.payload.get("hours") or 24)
         rows = self._rows(started - timedelta(hours=hours))
         try:
-            await self._send(chat_id, hours, task, rows, unfinished=waiting)
+            if chat_id is not None:
+                await self._send(chat_id, hours, task, rows, unfinished=waiting)
         finally:
             self.chats.set_state(ACTIVE_KEY, None)
+        strong = sum(1 for row in rows if row.match.decision == "alert")
+        return f"Catch-up of the last {window_label(hours)}: {len(rows)} match(es), {strong} strong."
 
     async def _send(
         self, chat_id: int, hours: int, task: TaskRecord, rows: list[Row], unfinished: int

@@ -1,6 +1,3 @@
-# Adapted from JobRadar (MIT), src/jobradar/pipeline/scam.py @ fdd739b.
-# Copyright (c) ThePlator. Modifications (c) Sarthi contributors.
-# Changes: docstrings for public names; ScamCheck is frozen with slots; named risk thresholds.
 """Scam signals in a job's post and page.
 
 Points add up: 3+ is high risk (never alerted), 2 is medium. Rules are deliberately few and

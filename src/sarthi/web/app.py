@@ -1,6 +1,3 @@
-# Security layer adapted from JobRadar (MIT), src/jobradar/web/app.py @ fdd739b (trusted hosts, headers,
-# versioned assets) and the time helper from src/jobradar/web/views.py (``ago``). Copyright (c) ThePlator.
-# Modifications (c) Sarthi contributors: Sarthi's pages and data, settings and actions, no JavaScript.
 """The dashboard's web app: overview, matches, applications, sources and settings.
 
 It runs on this computer only. A browser sends requests to 127.0.0.1 from any site you have open, so:
@@ -14,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 import sqlite3
 from collections.abc import Awaitable, Callable
@@ -32,8 +30,13 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sarthi import __version__
 from sarthi.clock import Clock, utcnow
 from sarthi.db.dashboard import DashboardQueries
+from sarthi.db.documents import DocumentStore
+from sarthi.db.inbox import InboxQueries
+from sarthi.db.notices import NoticeStore
 from sarthi.web.actions import DashboardActions
+from sarthi.web.mail_form import PRESETS, mail_from_form, mail_values
 from sarthi.web.settings_form import REMOTE_CHOICES, form_values, profile_from_form
+from sarthi.web.sources_view import SiteMap, sources_view
 
 HERE = Path(__file__).parent
 HEADERS = {
@@ -55,22 +58,30 @@ PAGE_SIZE = 25
 JOB_ACTIONS = ("apply", "skip", "later")
 BACK_TO = ("/matches", "/", "/applications")
 KEPT_PARAMS = ("show", "q", "page")  # what a page's address may carry back after a change
+ANSWER = "a."  # a question's answer field on the Activity page: "a." + the form field's key
+NOTICES_SHOWN = 50
 # What a change did, by a fixed key in the address: nothing a page elsewhere puts in a link is ever shown.
 DONE = {
     "profile": "Saved. Recent jobs are being matched again with your new profile.",
     "alerts": "Saved.",
+    "mail": "Mail settings saved. They count from the next check: no restart needed.",
     "apply": "Apply started: the tailored resume comes first, then the filled form waits for your Submit.",
     "skip": "Skipped.",
     "later": "Saved for later.",
-    "submitted": "Submitting. The result shows here and in Telegram.",
+    "submitted": "Submitting. The result shows here (and in Telegram, if connected).",
     "cancelled": "Cancelled: nothing was sent.",
     "gone": "That is no longer waiting.",
     "applied": "Marked as applied. Good luck!",
     "refill": "Filling the form again. It shows here for your Submit in a minute or two.",
-    "finish": "Opening the form, filled, on this computer (in Docker the link arrives in Telegram). Solve "
-    "the CAPTCHA and press Submit there: Sarthi sees it and records it.",
-    "busy": "A browser window is already open (a login or another form), or Telegram is not connected yet. "
-    "Finish that one first.",
+    "finish": "Opening the form, filled, on this computer (in Docker its link shows at the top of this "
+    "page). Solve the CAPTCHA and press Submit there: Sarthi sees it and records it.",
+    "busy": "A browser window is already open (a login or another form). Finish that one first.",
+    "answered": "Saved. When every question is answered, Sarthi fills the form and it waits for your Submit.",
+    "declined": "OK, Sarthi won't apply to that one.",
+    "auto_cancelled": "Auto-apply cancelled. You can still tap Apply on the job.",
+    "auto_now": "Applying now.",
+    "login": "Opening the login page on this computer (in Docker its link shows at the top of this page). "
+    "Sarthi never sees your password.",
 }
 
 
@@ -137,9 +148,15 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
     *,
     actions: DashboardActions | None = None,
     data_dir: Path | None = None,
+    sites: SiteMap | None = None,
 ) -> FastAPI:
-    """The dashboard over ``conn`` (open it with ``read_only``); ``actions`` None: nothing can be changed."""
+    """The dashboard over ``conn`` (open it with ``read_only``); ``actions`` None: nothing can be changed.
+
+    ``sites`` says which source reads which site (built by the composition root from the sources).
+    """
     queries = DashboardQueries(conn)
+    inbox, notices = InboxQueries(conn), NoticeStore(conn)
+    site_map = sites or SiteMap()
     token = secrets.token_urlsafe(32)  # new each start: a form from an older tab must be loaded again
     app = FastAPI(title="Sarthi", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
@@ -160,13 +177,16 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         now = clock()
         start = now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
         overview = queries.overview(start)
+        inbox_counts = inbox.counts(now - timedelta(days=MATCH_DAYS))
         done = DONE.get(request.query_params.get("done", ""), "")
+        context.setdefault("screen", actions.screen_link() if actions is not None else None)
         return templates.TemplateResponse(
             request,
             name,
             {
                 "nav": nav,
                 "ov": overview,
+                "inbox": inbox_counts,
                 "ago": lambda iso: ago(iso, now),
                 "csrf": token,
                 "can_edit": actions is not None,
@@ -236,13 +256,24 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         )  # fmt: skip
 
     @app.get("/sources", response_class=HTMLResponse)
-    async def sources(request: Request) -> HTMLResponse:
-        return page(request, "sources.html", "sources", rows=queries.sources())
+    async def sources(request: Request, page_no: int = Query(1, alias="page")) -> HTMLResponse:
+        total = queries.count_career_pages(list(site_map.career))
+        number, pages = _page(page_no, total)
+        view = sources_view(queries, clock(), PAGE_SIZE, (number - 1) * PAGE_SIZE, site_map)
+        return page(
+            request, "sources.html", "sources", page=number, pages=pages, total=total, size=PAGE_SIZE,
+            link_page=lambda n: f"/sources?page={n}#career-pages", **view,
+        )  # fmt: skip
 
     def settings_page(
-        request: Request, values: dict[str, str] | None = None, errors: dict[str, str] | None = None
+        request: Request,
+        values: dict[str, str] | None = None,
+        errors: dict[str, str] | None = None,
+        mail_form: dict[str, str] | None = None,
+        mail_result: tuple[bool, str] | None = None,
     ) -> HTMLResponse:
         profile = actions.profile() if actions is not None else None
+        mail = actions.mail() if actions is not None else None
         return page(
             request,
             "settings.html",
@@ -252,7 +283,12 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
             errors=errors or {},
             has_profile=profile is not None,
             controls=actions.controls() if actions is not None else None,
+            login_sites=actions.login_sites() if actions is not None else [],
             remote_choices=REMOTE_CHOICES,
+            mail=mail,
+            mail_form=mail_form if mail_form is not None else mail_values(mail),
+            mail_result=mail_result,
+            mail_presets=PRESETS,
         )
 
     @app.get("/settings", response_class=HTMLResponse)
@@ -292,6 +328,26 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
             return settings_page(request, errors={"auto_line": problem})
         return back("/settings", "alerts")
 
+    @app.post("/settings/mail", response_model=None)
+    async def save_mail(request: Request) -> Response:
+        act, form = await checked_form(request)
+        result = mail_from_form(_text_fields(form), act.mail())
+        if result.settings is None:
+            return settings_page(request, errors=result.errors, mail_form=result.values)
+        act.save_mail(result.settings, result.password)
+        return back("/settings", "mail", "mail")
+
+    @app.post("/settings/mail/test", response_model=None)
+    async def test_mail(request: Request) -> Response:
+        act, form = await checked_form(request)
+        result = mail_from_form(_text_fields(form), act.mail(), testing=True)
+        if result.settings is None:
+            return settings_page(request, errors=result.errors, mail_form=result.values)
+        said = await act.test_mail(result.settings, result.password)
+        return settings_page(
+            request, mail_form=result.values, mail_result=(said.startswith("Connected"), said)
+        )
+
     @app.post("/jobs/{job_id}/{action}", response_model=None)
     async def choose(request: Request, job_id: str, action: str) -> Response:
         act, form = await checked_form(request)
@@ -318,6 +374,57 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
             )
         raise HTTPException(404, "No such action.")
 
+    # ---- without Telegram: questions, auto-apply's veto, site logins ----
+
+    def activity_page(
+        request: Request,
+        errors: dict[str, dict[str, str]] | None = None,
+        values: dict[str, str] | None = None,
+    ) -> HTMLResponse:
+        return page(
+            request, "activity.html", "activity", status=400 if errors else 200, groups=inbox.questions(),
+            auto=inbox.auto_waiting(), notices=notices.recent(NOTICES_SHOWN), errors=errors or {},
+            values=values or {},
+        )  # fmt: skip
+
+    @app.get("/activity", response_class=HTMLResponse)
+    async def activity(request: Request) -> HTMLResponse:
+        return activity_page(request)
+
+    @app.post("/questions/{job_id}", response_model=None)
+    async def answer_questions(request: Request, job_id: str) -> Response:
+        act, form = await checked_form(request)
+        if form.get("decline") == "1":
+            if not act.decline_questions(job_id):
+                raise HTTPException(404, "No such job.")
+            return back("/activity", "declined")
+        answers = {
+            name.removeprefix(ANSWER): ", ".join(str(v).strip() for v in form.getlist(name) if str(v).strip())
+            for name in set(form.keys())
+            if name.startswith(ANSWER)
+        }
+        problems = act.answer_questions(job_id, answers)
+        if problems:
+            typed = {ANSWER + key: text for key, text in answers.items()}
+            return activity_page(request, {job_id: problems}, typed)
+        return back("/activity", "answered", f"job-{job_id}")
+
+    @app.post("/auto/{job_id}/{action}", response_model=None)
+    async def auto_apply(request: Request, job_id: str, action: str) -> Response:
+        act, _ = await checked_form(request)
+        if action == "cancel":
+            return back("/activity", "auto_cancelled" if act.cancel_auto(job_id) else "gone")
+        if action == "now":
+            return back("/activity", "auto_now" if act.apply_now(job_id) else "gone")
+        raise HTTPException(404, "No such action.")
+
+    @app.post("/settings/login/{site}", response_model=None)
+    async def site_login(request: Request, site: str) -> Response:
+        act, _ = await checked_form(request)
+        if site not in dict(act.login_sites()):
+            raise HTTPException(404, "No such site.")
+        return back("/settings", "login" if act.site_login(site) else "busy", "logins")
+
     @app.get("/applications/{job_id}/form.png", response_model=None)
     async def form_picture(job_id: str) -> Response:
         waiting = actions.pending().get(job_id) if actions is not None else None
@@ -328,5 +435,27 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         if base not in path.parents or path.suffix.lower() != ".png" or not path.is_file():
             raise HTTPException(404)  # only screenshots Sarthi wrote into its own data folder
         return FileResponse(path, media_type="image/png")
+
+    def document(job_id: str, letter: bool) -> FileResponse:
+        """The exact PDF Sarthi made for this job: only a file inside its own data folder, else 404."""
+        record = DocumentStore(conn).get(job_id)
+        if record is None or data_dir is None:
+            raise HTTPException(404)
+        base = data_dir.resolve()
+        path = (base / (record.letter_file if letter else record.resume_file)).resolve()
+        if base not in path.parents or path.suffix.lower() != ".pdf" or not path.is_file():
+            raise HTTPException(404)
+        name = re.sub(r"[^A-Za-z0-9_.-]+", "_", path.name)  # a plain name for the download
+        return FileResponse(
+            path, media_type="application/pdf", filename=name, content_disposition_type="inline"
+        )
+
+    @app.get("/applications/{job_id}/resume.pdf", response_model=None)
+    async def resume_pdf(job_id: str) -> Response:
+        return document(job_id, letter=False)
+
+    @app.get("/applications/{job_id}/cover-letter.pdf", response_model=None)
+    async def cover_letter_pdf(job_id: str) -> Response:
+        return document(job_id, letter=True)
 
     return app

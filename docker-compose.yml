@@ -1,9 +1,7 @@
-# Adapted from JobRadar (MIT), docker-compose.yml @ fdd739b. Copyright (c) ThePlator.
-# Modifications (c) Sarthi contributors.
-#
-#   cp .env.example .env        # then add one AI key (a free Gemini or Groq key is enough)
-#   docker compose up -d        # Sarthi; open http://127.0.0.1:8765 and tap "Connect Telegram"
+#   cp .env.example .env        # then add one AI key (a free Gemini, Groq or OpenRouter key is enough)
+#   docker compose up -d        # Sarthi; open http://127.0.0.1:8765 (README: profile, then Telegram)
 #   docker compose logs -f sarthi
+# After changing .env, run `docker compose up -d` again: `restart` keeps the old settings.
 #
 # A local AI model, optional (needs ~2 GB of free memory):
 #   docker compose --profile ollama up -d
@@ -13,6 +11,7 @@ services:
   sarthi:
     build: .
     image: sarthi:local
+    init: true # a real PID 1: docker stop reaches Sarthi, which hands its tasks back
     restart: unless-stopped
     env_file: .env
     environment:

@@ -14,7 +14,7 @@ from sarthi.chat.document_report import report_text
 from sarthi.documents.build import cover_letter, plain_letter, tailored_resume, without_claims
 from sarthi.documents.handler import file_stem, resume_hash
 from sarthi.documents.keywords import keyword_report
-from sarthi.documents.render import ats_problems, letter_pdf, paper_for, pdf_text, resume_pdf
+from sarthi.documents.render import ats_problems, letter_date, letter_pdf, paper_for, pdf_text, resume_pdf
 from sarthi.documents.truth import fact_problems, figure_key, new_numbers, style_problems
 from sarthi.jobs.skills import same_skill, skills_in
 from sarthi.profile.master import (
@@ -229,11 +229,10 @@ def test_facts_always_come_from_the_master() -> None:
         experience=[
             TailoredJob(
                 index=0,
-                bullets=[
-                    "Added RAG search with LangChain and pgvector",
-                    "Built 12 FastAPI services handling 5k requests per minute",
-                    "Scaled services to 10M users",  # invented number
-                    "Ran Kubernetes clusters",  # invented skill
+                bullets=[  # one per bullet, in place (the person's own layout keeps its lines)
+                    "Built 12 FastAPI services that handle 5k requests per minute",
+                    "Scaled services to 10M users with Redis",  # invented number
+                    "Ran Kubernetes clusters for RAG search",  # invented skill
                 ],
             ),
             TailoredJob(index=7, bullets=["ignored: no such position"]),
@@ -250,13 +249,14 @@ def test_facts_always_come_from_the_master() -> None:
         "Present",
     )
     assert job.bullets == (
-        "Added RAG search with LangChain and pgvector",
-        "Built 12 FastAPI services handling 5k requests per minute",
+        "Built 12 FastAPI services that handle 5k requests per minute",
+        "Cut p95 latency by 40% with Redis caching",  # untrue lines keep the person's own words
+        "Added a RAG search with LangChain and pgvector",
     )
-    assert len(built.reverted) == 2
+    assert len(built.reverted) == 3  # 10M, Kubernetes, and a title the resume never gives
     assert built.resume.experience[1] == master().experience[1]
     assert built.resume.contact == master().contact
-    assert built.resume.headline == "AI Backend Engineer | Python, RAG"
+    assert built.resume.headline == "Backend Engineer"
     first_group = built.resume.skills[0]
     assert first_group.items[0] == "LangChain"  # the job's skills first, only ones the person has
     assert "Kubernetes" not in built.resume.all_skills()
@@ -452,9 +452,10 @@ def test_letter_pdf_and_paper() -> None:
     built = letter(["I am applying for the AI Engineer role.", "I built 12 FastAPI services."])
     pdf = letter_pdf(master(), built, paper_for("US"), today=date(2026, 11, 21))
     text, _ = pdf_text(pdf)
-    assert "21 November 2026" in text
+    assert "November 21, 2026" in text  # how US readers write a date
     assert "Dear Gamma hiring team," in text
     assert paper_for("IN") == "a4"
+    assert letter_date(date(2026, 11, 21), paper_for("GB")) == "21 November 2026"
 
 
 def test_ats_reports_what_is_missing() -> None:

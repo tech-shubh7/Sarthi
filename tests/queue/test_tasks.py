@@ -132,6 +132,46 @@ def test_reclaim_stuck_after_crash(queue: TaskQueue, clock: FakeClock) -> None:
     assert task.attempts == 2
 
 
+def test_restart_reclaims_every_running_task_at_once(queue: TaskQueue, clock: FakeClock) -> None:
+    queue.enqueue("apply", "j1")
+    assert queue.claim() is not None  # Sarthi restarted a minute later
+    clock.advance(60)
+    assert queue.reclaim_stuck() == 0  # (a catch-up beside a running Sarthi leaves it alone)
+    assert queue.reclaim_stuck(everything=True) == 1
+    task = queue.claim()
+    assert task is not None
+    assert task.key == "j1"
+
+
+def test_retap_on_a_stuck_task_gets_a_fresh_run(queue: TaskQueue, task_store: TaskStore) -> None:
+    queue.enqueue("apply", "j1")
+    for _ in range(MAX_ATTEMPTS - 1):  # crashed in every attempt so far
+        assert queue.claim() is not None
+        queue.reclaim_stuck(everything=True)
+    task = queue.claim()  # the last attempt, left running by a crash
+    assert task is not None
+    assert task.attempts == MAX_ATTEMPTS
+    queue.enqueue("apply", "j1")  # the user taps Apply again on the stuck row: rerun=1
+    assert queue.reclaim_stuck(everything=True) == 1
+    again = queue.claim()
+    assert again is not None
+    assert again.attempts == 1
+    assert task_store.task_counts()[TaskStatus.FAILED] == 0
+
+
+def test_a_task_that_crashes_the_process_stops_after_max_attempts(
+    queue: TaskQueue, task_store: TaskStore
+) -> None:
+    queue.enqueue("apply", "j1")
+    for _ in range(MAX_ATTEMPTS):
+        assert queue.claim() is not None  # then the process dies
+        assert queue.reclaim_stuck(everything=True) == 1
+    assert queue.claim() is None
+    assert task_store.task_counts()[TaskStatus.FAILED] == 1
+    row = task_store._conn.execute("SELECT last_error FROM task").fetchone()
+    assert "interrupted" in row["last_error"]
+
+
 REPORTS: dict[str, Callable[[TaskQueue, TaskRecord], object]] = {
     "complete": lambda q, t: q.complete(t),
     "retry": lambda q, t: q.retry(t, "late error"),

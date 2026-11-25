@@ -9,7 +9,7 @@ from sarthi.db.source_state import SourceState, SourceStateStore
 from sarthi.db.tasks import TaskRecord, TaskStatus, TaskStore
 from sarthi.jobs.models import JobPosting
 from sarthi.profile.models import Profile
-from sarthi.queue.tasks import PermanentError, RetryableError, TaskQueue
+from sarthi.queue.tasks import PermanentError, Priority, RetryableError, TaskQueue
 from sarthi.sources.base import SearchQuery
 from sarthi.sources.ingest import Ingestor
 from sarthi.sources.schedule import (
@@ -109,6 +109,23 @@ async def test_tick_queues_due_sources_and_waits_for_a_profile(
     with_profile = make_scheduler([(boards, "boards"), (company, "company")], make_profile())
     assert with_profile.tick() == 2
     assert pending(task_store) == 2
+
+
+async def test_a_due_source_is_read_before_an_older_backlog(
+    make_scheduler: Any, queue: TaskQueue, task_store: TaskStore, clock: FakeClock
+) -> None:
+    for n in range(50):  # e.g. pages to read again after an upgrade, queued earlier
+        queue.enqueue("fill_text", f"job-{n}", priority=Priority.NORMAL)
+    clock.advance(1)
+    scheduler = make_scheduler([(FakeSource("feed:remotive", []), "feed")], None)
+    assert scheduler.tick() == 1
+    claimed = task_store.claim(["fill_text", "source_check"])
+    assert claimed is not None
+    assert (claimed.type, claimed.key) == ("source_check", "feed:remotive")
+    queue.enqueue("match", "new-job", priority=Priority.ALERT)
+    first = task_store.claim(["match", "fill_text"])
+    assert first is not None
+    assert first.type == "match"  # a new job's match still goes before everything
 
 
 async def test_a_checked_source_waits_its_interval(

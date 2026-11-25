@@ -87,4 +87,4 @@ class FormChecker:
             log.info("%s: %d question(s) for the user before applying", job.company, len(missing))
             return
         self.answers.clear(task.key)
-        self.queue.enqueue(names.APPLY, task.key, priority=Priority.NORMAL)
+        self.queue.enqueue(names.APPLY, task.key, priority=Priority.APPLY)

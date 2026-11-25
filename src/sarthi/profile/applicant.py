@@ -99,6 +99,8 @@ def applicant(
         website=website,
         location=master.contact.location or home,
         country=home,
+        home_country=profile.preferences.home_country,
+        authorized_countries=profile.preferences.visa_free_countries,
         needs_sponsorship=sponsorship,
         work_authorized=authorised,
         willing_to_relocate=relocation(profile, job),

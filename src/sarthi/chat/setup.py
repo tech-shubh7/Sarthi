@@ -46,6 +46,7 @@ from sarthi.profile.answers import (
     parse_years,
 )
 from sarthi.profile.models import Preferences, Profile, RemotePreference
+from sarthi.profile.original import keep_original
 from sarthi.profile.repair import clean_list, repair
 from sarthi.profile.resume import MAX_UPLOAD_BYTES, ResumeError, extract_text
 from sarthi.profile.store import load_profile, save_profile
@@ -235,6 +236,7 @@ def draft_from(profile: Profile) -> dict[str, Any]:
         "years": p.years_experience,
         "skills": [*profile.skills, *p.keywords],
         "salary": p.min_salary.model_dump(mode="json") if p.min_salary else None,
+        "languages": list(p.languages),  # set on the dashboard's settings page; kept through a new setup
         "resume_text": profile.resume_text,
     }
 
@@ -249,6 +251,7 @@ def profile_from(draft: dict[str, Any]) -> Profile:
         remote=RemotePreference(draft.get("remote", RemotePreference.OK)),
         years_experience=draft.get("years"),
         min_salary=Salary.model_validate(draft["salary"]) if draft.get("salary") else None,
+        languages=tuple(draft.get("languages", [])),
     )
     skills = tuple(draft.get("skills", []))
     return Profile(preferences=prefs, skills=skills, resume_text=draft.get("resume_text", ""))
@@ -349,6 +352,7 @@ class SetupFlow:
         it must not be taken as a change to the visa answer.
         """
         field, text = self.asking, normalize_answer(text)
+        home = str(((self._state() or {}).get("draft") or {}).get("home") or "")
         if field is None or field in _LIST_FIELDS:
             return False
         if field in _COUNTRY_FIELDS:
@@ -358,7 +362,7 @@ class SetupFlow:
             Field.HOME: lambda t: len(parse_countries(t).codes) == 1 or first_country(t) is not None,
             Field.REMOTE: lambda t: parse_remote_text(t) is not None,
             Field.YEARS: lambda t: parse_years(t) is not None,
-            Field.SALARY: lambda t: is_salary_skip(t) or find_salary(t, "IN") is not None,
+            Field.SALARY: lambda t: is_salary_skip(t) or find_salary(t, home) is not None,
         }
         return checks[field](text)
 
@@ -416,6 +420,7 @@ class SetupFlow:
         try:
             data = await self.api.download(str(document.get("file_id", "")), MAX_UPLOAD_BYTES)
             text = extract_text(data)
+            keep_original(self.profile_file.parent, data, text)  # tailored resumes keep its design
         except ResumeError as error:
             await self.api.send_message(chat_id, str(error))
             return

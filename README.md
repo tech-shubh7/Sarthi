@@ -42,7 +42,7 @@ into one more form. Sarthi does that part, and leaves the decisions to you.
 | 🔎 **Finds jobs** | LinkedIn and Indeed (plus Naukri, Seek and others by country), free remote-job feeds, Hacker News "Who is hiring", company career pages on Greenhouse, Lever, Ashby, Workday and ~90 more hiring systems, and optional Adzuna/Jooble keys. |
 | 🎯 **Matches honestly** | Hard rules first (country, visa, years, seniority, scams), then an AI checks each must-have against your resume. Wrong-role jobs are hidden, not shown at 70%. |
 | 📲 **Alerts you on Telegram** | Strong matches come straight away (at most a few an hour), the rest in a daily digest. Tap Apply, Skip or Later. |
-| 📄 **Tailors your documents** | A resume reordered and reworded for the job, and a short cover letter, both checked so they never claim anything your resume does not say. |
+| 📄 **Tailors your documents** | Your own resume, in your own design, with each line reworded toward the job (same length, same links and contact details), and a short cover letter, both checked so they never claim anything your resume does not say. |
 | 📝 **Fills applications** | Greenhouse, Lever and Ashby forms directly, other career sites through a careful AI browser. Questions only you can answer are asked once in the chat and remembered. |
 | 🤖 **Auto-apply (optional)** | Above a match % you choose, with a 5-minute window to cancel, a daily cap, and never on job boards. |
 | 📬 **Tracks replies** | Reads (never sends or deletes) your mailbox and tells you about interviews, tests and rejections. |
@@ -55,23 +55,34 @@ You need [Docker](https://docs.docker.com/get-docker/) and a free AI key (a
 
 ```bash
 git clone https://github.com/tech-shubh7/Sarthi.git && cd Sarthi
-cp .env.example .env      # open it and add your AI key (see "AI models" below)
-docker compose up -d
+cp .env.example .env      # open it and paste one free AI key, e.g. SARTHI_GEMINI_API_KEY=...
+docker compose up -d      # the first start builds the image: about 10 minutes and 3.5 GB
 ```
 
-Then open **http://127.0.0.1:8765**.
+Then open **http://127.0.0.1:8765**. Sarthi starts searching right away. **Telegram is optional:** the
+dashboard does everything on its own (matches, applying, form questions, Submit, auto-apply, site logins,
+replies and follow-up drafts). Telegram only adds alerts on your phone.
 
-1. **Connect Telegram.** Tap the *Connect Telegram* link on the dashboard. In Telegram, tap **Start**, then
-   **Create my Sarthi bot**, and finally **Start** in your new bot. That's it: you get a bot of your own,
-   with no @BotFather and no token to copy, and it talks only to the Sarthi on your computer
-   ([how it works](deploy/telegram-connect/README.md)). Prefer to make the bot yourself? Create one with
-   [@BotFather](https://t.me/BotFather) and put its token in `SARTHI_TELEGRAM_BOT_TOKEN`.
-2. **Set up your profile.** Send `/setup` to the bot and upload your resume, or fill in **Settings** on the
-   dashboard. Sarthi suggests job titles and skills from your resume; you confirm or edit them.
-3. **Wait for matches.** The first ones usually arrive within the hour.
+1. **Set up your profile.** Open **Settings** on the dashboard, add your resume (PDF, .docx, LaTeX .tex or
+   .txt), the job titles you want and the country you live in, and save. (Or, once Telegram is connected,
+   send `/setup` to the bot and upload your resume: it suggests job titles and skills for you to confirm.)
+   Sarthi keeps the file (in `data/resume/`, readable only by you) and tailors resumes **in its design**:
+   a PDF has its changed lines rewritten in place when the new words fit; a .tex or .docx source is
+   edited in place and compiled when a LaTeX engine (Tectonic) or LibreOffice is installed, otherwise the
+   edited source is saved next to a PDF in Sarthi's own layout. Your links and contact details are always
+   kept; a resume that would drop one is not made.
+2. **Connect Telegram (optional)** to get alerts on your phone: tap *Connect Telegram* on the dashboard's
+   Overview, then **Create** and **Start** in Telegram. Sarthi's connector makes you a bot of your own, no
+   @BotFather and no token to copy ([how it works](deploy/telegram-connect/README.md)). Prefer your own
+   bot? Set `SARTHI_TELEGRAM_BOT_TOKEN` to a token from [@BotFather](https://t.me/BotFather). No Telegram
+   at all? Set `SARTHI_TELEGRAM_CONNECT_URL=` (empty). After changing `.env`, run `docker compose up -d`
+   again (a plain `restart` does not re-read it).
+3. **Wait for matches.** The first ones usually arrive within the hour, on the dashboard's **Matches**
+   page and in Telegram.
 
 Everything Sarthi keeps (database, resume, documents, site logins) lives in `./data`. Stop it with
-`docker compose down`; your data stays.
+`docker compose down`; your data stays. On Linux, the container runs as user id 1000: if `id -u` says
+otherwise, run `sudo chown -R 1000:1000 data` once.
 
 ## Using Sarthi
 
@@ -94,25 +105,28 @@ the filled form with **Submit** and **Cancel**.
 
 ### On the dashboard (http://127.0.0.1:8765)
 
-- **Overview:** the whole funnel at a glance, from jobs found to replies received.
+- **Overview:** the whole funnel at a glance, and what waits for you.
+- **Activity:** questions an application form asks (answer them here), auto-applies you can still cancel,
+  and everything Sarthi did: documents made, applications sent, employer replies and follow-up drafts.
 - **Matches:** every match from the last week with its score; Apply, Later or Skip from here.
 - **Applications:** filled forms waiting for your Submit (with a screenshot), and everything sent.
 - **Sources:** which job sources are working and which are not.
-- **Settings:** your profile (including a new resume), pausing alerts, and the auto-apply line.
+- **Settings:** your profile (including a new resume), pausing alerts, the auto-apply line and job site logins.
 
 The dashboard and Telegram are two views of the same thing: an answer given in one shows in the other.
 It is reachable from your computer only, and every change has to come from its own pages.
 
 ### Logging in to job boards
 
-Boards such as LinkedIn and Naukri only let you apply when you are signed in. Send `/login`, pick the site,
-and open the link Sarthi gives you: it shows that site's real login page in your browser
+Boards such as LinkedIn and Naukri only let you apply when you are signed in. On the dashboard, use
+**Settings → Job site logins** (or send `/login` in Telegram), pick the site, and open the link Sarthi gives you: it shows that site's real login page in your browser
 (http://127.0.0.1:6080 under Docker). You type your password into the site itself. Sarthi keeps only the
 session cookie, in `./data`, and never sees or stores your password.
 
 ### Auto-apply
 
-Off by default. When you set a line (say 85%), each new match at or above it is announced in Telegram:
+Off by default. When you set a line (say 85%), each new match at or above it is announced on the dashboard's
+Activity page (with Cancel and Apply now) and in Telegram, if connected:
 *"I'll apply to Backend Engineer at Acme in 5 minutes unless you cancel."* If you do nothing, Sarthi prepares
 the documents and fills the form. It submits by itself only if every answer came from your profile or your
 saved answers, the site is a company career page (never LinkedIn, Naukri or another job board), and fewer
@@ -122,7 +136,9 @@ always gives you the normal preview.
 ## AI models
 
 Sarthi works with free cloud tiers, paid APIs or a model on your own computer. List models in `.env`, best
-first; when one is busy or out of quota, the next one answers.
+first; when one is busy or out of quota, the next one answers. The lists in `.env.example` already cover
+the free Gemini, Groq and OpenRouter tiers, so a key for any one of them is enough to start; models whose
+key is empty are skipped.
 
 ```ini
 SARTHI_LLM_FAST_MODELS=["gemini/gemini-3.5-flash-lite","openrouter/nvidia/nemotron-3.5-super-vl:free"]
@@ -151,7 +167,7 @@ are most likely to touch:
 | `SARTHI_DIGEST_HOUR` | `19` | When the daily digest arrives (local time) |
 | `SARTHI_APPLY_DAILY_LIMIT` | `30` | Applications per site per day |
 | `SARTHI_AUTO_APPLY_MIN_SCORE` | off | Auto-apply line (75 to 100); also settable in the chat |
-| `SARTHI_MAIL_IMAP_HOST` … | off | Mailbox to watch for replies (read-only; Gmail needs an app password) |
+| `SARTHI_MAIL_IMAP_HOST` … | off | Mailbox to watch for replies (read-only; Gmail needs an app password). Easier: Settings → Mail on the dashboard, with Test connection |
 
 ## Privacy and safety
 
@@ -169,14 +185,15 @@ Found a security problem? Please follow [SECURITY.md](SECURITY.md) instead of op
 Python 3.12 and [uv](https://docs.astral.sh/uv/) are needed.
 
 ```bash
+git clone https://github.com/tech-shubh7/Sarthi.git && cd Sarthi
 uv sync
-uv run playwright install chromium
-cp .env.example .env      # then fill it in
-uv run sarthi run         # dashboard at http://127.0.0.1:8765
+uv run playwright install chromium   # on Linux: add --with-deps (installs Chromium's libraries via sudo)
+cp .env.example .env                 # then paste one free AI key, as in the Quick start
+uv run sarthi run                    # dashboard at http://127.0.0.1:8765
 ```
 
-With your own bot token, link your chat once with `uv run sarthi pair`. `uv run sarthi --help` lists every
-command.
+Then follow steps 1 to 3 of the Quick start (after changing `.env`, stop Sarthi with Ctrl+C and run it
+again). `uv run sarthi --help` lists every command.
 
 ## FAQ
 
@@ -189,8 +206,9 @@ your resume does not show. If your resume does show it, add the skill in Setting
 **The AI says it is busy.** Free tiers have per-minute and per-day limits. Add a second provider to your
 model lists, or wait; jobs are matched once a model answers again.
 
-**Can I use it without Telegram?** You can browse, edit settings, apply and approve forms on the dashboard,
-but alerts and form questions come through Telegram for now.
+**Can I use it without Telegram?** Yes. Telegram is optional: the dashboard does everything. Apply from
+Matches, answer form questions on Activity, check and submit the filled form on Applications, and log in to
+job sites from Settings. You can connect Telegram later and use both; an answer given in one shows in the other.
 
 ## Contributing
 

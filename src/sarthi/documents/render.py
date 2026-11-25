@@ -37,6 +37,16 @@ def paper_for(country: str) -> str:
     return "us-letter" if country in LETTER_PAPER_COUNTRIES else "a4"
 
 
+def letter_date(day: date, paper: str) -> str:
+    """The letter's date as its readers write it.
+
+    "November 24, 2026" where letter paper is used (the US, Canada, ...), "24 November 2026" elsewhere.
+    """
+    if paper == "us-letter":
+        return f"{day:%B} {day.day}, {day.year}"
+    return f"{day.day} {day:%B} {day.year}"
+
+
 def contact_line(master: MasterResume) -> list[str]:
     """Email, phone, place and links, in that order, skipping blanks."""
     contact = master.contact
@@ -72,7 +82,7 @@ def letter_pdf(master: MasterResume, letter: Letter, paper: str = "a4", today: d
         "paper": paper,
         "name": master.name or "",
         "contact": contact_line(master),
-        "date": (today or date.today()).strftime("%d %B %Y"),  # noqa: DTZ011  (the user's local date)
+        "date": letter_date(today or date.today(), paper),  # noqa: DTZ011  (the user's local date)
         "greeting": letter.greeting,
         "paragraphs": letter.paragraphs,
         "sign_off": letter.sign_off,
@@ -96,8 +106,12 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
-def ats_problems(pdf: bytes, master: MasterResume) -> list[str]:
-    """What a tracking system could not read back from the resume PDF (empty when all is readable)."""
+def ats_problems(pdf: bytes, master: MasterResume, *, own_design: bool = False) -> list[str]:
+    """What a tracking system could not read back from the resume PDF (empty when all is readable).
+
+    ``own_design``: the user's own file, whose section headings are theirs ("Work History"), so headings
+    are not checked; names, employers, titles, schools and dates are.
+    """
     text, pages = pdf_text(pdf)
     seen = _norm(text)
     problems: list[str] = []
@@ -107,9 +121,9 @@ def ats_problems(pdf: bytes, master: MasterResume) -> list[str]:
         problems.append(f"{pages} pages (recruiters expect at most {MAX_RESUME_PAGES})")
     expected = [("name", master.name), ("email", master.contact.email)]
     sections = (("experience", master.experience), ("skills", master.skills), ("education", master.education))
-    expected += [("section", heading) for heading, present in sections if present]
+    expected += [] if own_design else [("section", heading) for heading, present in sections if present]
     for job in master.experience:
-        expected += [("employer", job.company), ("title", job.title)]
+        expected += [("employer", job.company), ("title", job.title), ("date", job.start), ("date", job.end)]
     expected += [("school", s.school) for s in master.education]
     for kind, value in expected:
         if value and _norm(value) not in seen:

@@ -34,7 +34,10 @@ _FRESHER = frozenset({"fresher", "fresh", "0", "none", "new grad", "student", "n
 _SPLIT = re.compile(r"\s*(?:,|;|\n|\s/\s|\band\b|\s&\s)\s*", re.IGNORECASE)
 _LAKH = 100_000
 _THOUSAND = 1_000
-_CURRENCY_CODES = "INR|USD|GBP|EUR|AED|CAD|AUD|SGD|JPY|CHF|SEK|NOK|DKK|PLN|NZD|HKD|SAR|QAR"
+_CURRENCY_CODES = (
+    "INR|USD|GBP|EUR|AED|CAD|AUD|SGD|JPY|CHF|SEK|NOK|DKK|PLN|NZD|HKD|SAR|QAR|KWD|BHD|OMR|ZAR|BRL|MXN|MYR|IDR|"
+    "PHP|THB|VND|KRW|CNY|TWD|PKR|BDT|LKR|NPR|EGP|NGN|KES|ILS|TRY|CZK|HUF|RON"
+)
 _SALARY = re.compile(
     rf"^(?P<cur1>{_CURRENCY_CODES}|[₹$£€]|rs\.?)?\s*(?P<amount>\d+(?:[.,]\d+)*)\s*"
     r"(?P<unit>crores?|cr|lakhs?|lacs?|lpa|k|l)?\b\.?\s*"
@@ -53,7 +56,27 @@ _SYMBOLS = {"₹": "INR", "$": "USD", "£": "GBP", "€": "EUR"}
 _HOME_CURRENCY = {
     "IN": "INR", "US": "USD", "GB": "GBP", "CA": "CAD", "AU": "AUD", "SG": "SGD", "AE": "AED",
     "DE": "EUR", "FR": "EUR", "NL": "EUR", "IE": "EUR", "ES": "EUR", "IT": "EUR", "JP": "JPY",
+    "AT": "EUR", "BE": "EUR", "PT": "EUR", "FI": "EUR", "GR": "EUR", "LU": "EUR", "EE": "EUR", "LV": "EUR",
+    "LT": "EUR", "SK": "EUR", "SI": "EUR", "HR": "EUR", "CY": "EUR", "MT": "EUR", "CH": "CHF", "SE": "SEK",
+    "NO": "NOK", "DK": "DKK", "PL": "PLN", "CZ": "CZK", "HU": "HUF", "RO": "RON", "NZ": "NZD", "HK": "HKD",
+    "SA": "SAR", "QA": "QAR", "KW": "KWD", "BH": "BHD", "OM": "OMR", "ZA": "ZAR", "BR": "BRL", "MX": "MXN",
+    "MY": "MYR", "ID": "IDR", "PH": "PHP", "TH": "THB", "VN": "VND", "KR": "KRW", "CN": "CNY", "TW": "TWD",
+    "PK": "PKR", "BD": "BDT", "LK": "LKR", "NP": "NPR", "EG": "EGP", "NG": "NGN", "KE": "KES", "IL": "ILS",
+    "TR": "TRY",
 }  # fmt: skip
+_DOLLAR_COUNTRIES = frozenset({"CA", "AU", "SG", "NZ", "HK"})  # where "$" is the local dollar
+
+
+def _amount(text: str) -> float:
+    """A typed amount: "1,20,000", "120,000.50", and the European "60.000" and "60.000,50"."""
+    if "," in text and "." in text:
+        decimal = "." if text.rfind(".") > text.rfind(",") else ","
+    elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", text):
+        decimal = ","  # "60.000": sixty thousand, with dots grouping the thousands
+    else:
+        decimal = "."
+    grouping = "," if decimal == "." else "."
+    return float(text.replace(grouping, "").replace(decimal, "."))
 
 
 def is_none(text: str) -> bool:
@@ -188,12 +211,16 @@ def parse_salary(text: str, home_country: str) -> Salary | None:
     12 lakh a year, "120" in USD is 120k). Returns None when the text is not understood.
     """
     match = _SALARY.match(
-        text.strip().replace("\u00a0", " ").replace("₹ ", "₹")
+        re.sub(r"(?<=\d) (?=\d{3}(?!\d))", "", text.strip())  # "60 000": a space grouping the thousands
+        .strip()
+        .replace("\u00a0", " ")
+        .replace("₹ ", "₹")
     )  # no-break spaces from phones
     if match is None:
         return None
-    amount = float(match["amount"].replace(",", ""))
     unit = (match["unit"] or "").lower().rstrip("s")
+    # "1.5 lakh" is one and a half; a bare "60.000" is sixty thousand as much of Europe writes it.
+    amount = _amount(match["amount"]) if not unit else float(match["amount"].replace(",", ""))
     raw_currency = (match["cur1"] or match["cur2"] or match["sym2"] or "").lower().rstrip(".")
     if raw_currency == "rs":
         raw_currency = "inr"
@@ -205,6 +232,8 @@ def parse_salary(text: str, home_country: str) -> Salary | None:
         amount *= _LAKH
     in_inr = unit not in {"", "k"} or raw_currency in {"inr", "₹"}
     currency = _SYMBOLS.get(raw_currency, raw_currency.upper()) if raw_currency else ""
+    if raw_currency == "$" and home_country in _DOLLAR_COUNTRIES:
+        currency = _HOME_CURRENCY[home_country]  # "$120k" in Toronto is Canadian dollars
     currency = currency or ("INR" if in_inr else _HOME_CURRENCY.get(home_country, ""))
     if not unit and amount < _SMALL_INR_IS_LAKHS:
         amount *= _LAKH if currency == "INR" else _THOUSAND

@@ -1,7 +1,3 @@
-# Decision table adapted from JobRadar (MIT), src/jobradar/pipeline/decide.py @ fdd739b.
-# Copyright (c) ThePlator. Modifications (c) Sarthi contributors.
-# Changes: outcomes are hide / digest / instant alert (no Notion inbox); medium scam risk can never alert;
-# rules come from sarthi.matching.rules.
 """What happens to a matched job. Rules run in order; the first that applies wins.
 
 | # | When                                         | Then          |

@@ -13,7 +13,8 @@
 
 {% if ov.pair_link %}
 <section class="card connect" aria-label="Connect Telegram">
-  <h2>Connect Telegram</h2>
+  <h2>Connect Telegram (optional)</h2>
+  <p class="lede">Get alerts on your phone. Everything also works here on the dashboard without it.</p>
   {% if ov.pair_step == 'create' %}
   <p class="lede">Telegram opens with your bot's name already filled in. Tap <b>Create</b>: nothing to type, no token to copy.</p>
   <ol class="steps">
@@ -34,6 +35,18 @@
   </div>
   {% endif %}
   <p class="hint">Link not opening? Copy it into Telegram: <span class="copy-link">{{ ov.pair_link }}</span>. A fresh one appears here every 15 minutes until you connect.</p>
+</section>
+{% endif %}
+
+{% if inbox.total or inbox.strong %}
+<section class="card card-pad section" aria-label="Waiting for you">
+  <h2 class="card-title">{{ icon('check') }}Waiting for you</h2>
+  <dl class="facts">
+    {% if inbox.strong %}<dt><a href="/matches?show=alert">Strong matches to answer</a></dt><dd>{{ inbox.strong }}</dd>{% endif %}
+    {% if inbox.questions %}<dt><a href="/activity#questions">Jobs whose form asks you something</a></dt><dd>{{ inbox.questions }}</dd>{% endif %}
+    {% if inbox.forms %}<dt><a href="/applications">Filled forms waiting for your Submit</a></dt><dd>{{ inbox.forms }}</dd>{% endif %}
+    {% if inbox.auto %}<dt><a href="/activity#auto-apply">Auto-applies you can still cancel</a></dt><dd>{{ inbox.auto }}</dd>{% endif %}
+  </dl>
 </section>
 {% endif %}
 

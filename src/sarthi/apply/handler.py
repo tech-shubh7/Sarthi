@@ -3,7 +3,9 @@
 Rule-based filling (``engine.py``) works on Greenhouse, Lever, Ashby and plain forms. Anything that needs a
 person is handed over with the link, never forced: a CAPTCHA, a Workday account, a job board that needs a
 login (LinkedIn, Indeed, Naukri, ...), a form that did not load, or required fields that could not be entered.
-Guards: one application per role at a company, and a daily limit per site.
+A LinkedIn or Naukri job that applies on the company's own site continues there (when that address is a public
+web page), with the same guards and approval. Guards: one application per role at a company, and a daily
+limit per site (the site the form is on).
 """
 
 from __future__ import annotations
@@ -15,18 +17,27 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from sarthi.apply import adapters
-from sarthi.apply.adapters import FillError
+from sarthi.apply import adapters, linkedin, naukri
+from sarthi.apply.adapters import FillError, PostingClosedError
 from sarthi.apply.agent import LoginWallError
-from sarthi.apply.engine import ApplyEngine, SubmitResult
+from sarthi.apply.engine import (
+    UNKNOWN,
+    ApplyEngine,
+    EnginePausedError,
+    FillResult,
+    SubmitResult,
+)
+from sarthi.apply.external import ExternalApplyError
 from sarthi.apply.linkedin import LimitReachedError, LoginNeededError
 from sarthi.clock import Clock, utcnow
 from sarthi.db.answers import AnswerStore
-from sarthi.db.applications import ApplicationStatus, ApplicationStore
+from sarthi.db.applications import SENT, ApplicationStatus, ApplicationStore
 from sarthi.db.chat import ChatStore
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
+from sarthi.jobs.forms import FormContext
+from sarthi.jobs.net import is_public_url
 from sarthi.profile.applicant import form_context
 from sarthi.profile.models import Profile
 from sarthi.queue import names
@@ -42,6 +53,7 @@ LOGIN_BOARDS = (
     "wellfound.com", "hirist.", "shine.com",
 )  # fmt: skip
 LIMIT_WAIT_S = 6 * 3600
+PAUSED_WAIT_S = 60  # a browser window (a login, a form finished by hand) holds the profile
 DAY = timedelta(days=1)
 
 
@@ -72,6 +84,15 @@ def login_help(error: LoginWallError) -> str:
     )
 
 
+async def external_refusal(url: str) -> str:
+    """Why a board's company-site address is not opened ("" when it may be): it must be a public web page."""
+    if not await is_public_url(url):
+        return f"its link ({site_of(url) or url[:80]}) is not a public web address, so Sarthi did not open it"
+    if linkedin.is_linkedin(url) or naukri.is_naukri(url):
+        return "its link leads back to a job board"
+    return ""
+
+
 class Applier:
     """Handles ``apply`` and ``submit`` tasks."""
 
@@ -89,11 +110,14 @@ class Applier:
         daily_limit: int = 30,
         chats: ChatStore | None = None,
         clock: Clock = utcnow,
+        auto_on_boards: Callable[[], bool] = lambda: False,
     ) -> None:
         """Fill forms with ``engine``; record outcomes in ``applications``; tell the chat via ``queue``.
 
-        ``chats`` says which jobs are marked for auto-apply.
+        ``chats`` says which jobs are marked for auto-apply; ``auto_on_boards`` whether auto-apply also sends
+        on job boards with the user's login (the user's own choice, read at each application).
         """
+        self.auto_on_boards = auto_on_boards
         self.engine = engine
         self.jobs = jobs
         self.documents = documents
@@ -126,7 +150,7 @@ class Applier:
         except ValueError:
             return str(path)
 
-    async def handle_apply(self, task: TaskRecord) -> None:  # noqa: PLR0911, PLR0912  (each way an application can stop)
+    async def handle_apply(self, task: TaskRecord) -> None:  # noqa: PLR0911  (each way an application can stop)
         """Fill the job's form and ask the user to approve it (or hand it over)."""
         profile = self._load_profile()
         if profile is None:
@@ -143,35 +167,19 @@ class Applier:
         if job is None or ctx is None:
             return
         url = str(job.apply_url or job.url)
+        if self.applications.was_sent(task.key):  # a second tap, a refill, a reclaimed task: never twice
+            self._result(task.key, "duplicate", f"You already applied to {job.title} at {job.company}.")
+            return
         if self.documents.get(task.key) is None:  # the tailored resume and letter come first
             self.queue.enqueue(names.DOCUMENTS, task.key, {"apply": True}, priority=Priority.ALERT)
             return
         if (key := self.jobs.role_key_of(task.key)) and self.applications.sent_for_role(key, task.key):
             self._result(task.key, "duplicate", f"You already applied to {job.title} at {job.company}.")
             return
-        if adapters.is_workday(url):
-            self._hand_over(task.key, url, "Workday forms need your own Workday account for this employer.")
+        filled = await self._fill(task.key, url, ctx)
+        if filled is None:
             return
-        board = needs_login(url)
-        if board and not self.engine.walks:
-            self._hand_over(task.key, url, f"{site_of(url)} needs your own logged-in account to apply.")
-            return
-        since = self._clock() - DAY
-        if self.applications.sent_to_site_since(site_of(url), since) >= self.daily_limit:
-            raise DeferError(3600)  # the site's daily limit: try again in an hour
-        try:
-            result = await self.engine.fill(task.key, url, ctx, one_click=board)
-        except LimitReachedError:
-            raise DeferError(LIMIT_WAIT_S) from None  # the site's own daily limit: later, not by hand
-        except LoginNeededError as error:
-            self._hand_over(task.key, url, str(error))
-            return
-        except LoginWallError as error:
-            self._hand_over(task.key, url, login_help(error))
-            return
-        except FillError as error:
-            self._hand_over(task.key, url, f"The form could not be filled: {error}")
-            return
+        result, url, board = filled  # url: where the form is (a board job's company site, when it went on)
         auto = self.chats is not None and self.chats.is_auto(task.key)
         if auto and self.chats is not None:
             self.chats.set_auto(task.key, on=False)  # one try: whatever happens next, the user decides
@@ -192,11 +200,18 @@ class Applier:
             self._hand_over(task.key, url, f"Some required fields could not be entered: {fields}")
             return
         self.applications.record(task.key, ApplicationStatus.FILLED, site=site_of(url))
-        if auto and not board:
-            # Every answer came from the profile, a saved answer or the posting (questions only the user can
-            # answer stop above), and this is not a job board: sent without a tap, as the user chose.
+        if task.payload.get("approved"):
+            # The user tapped Submit on an earlier fill of this form that closed before it was sent: their
+            # approval carries over to this fill, which has no blanks, no failed field and no CAPTCHA.
             self.queue.enqueue(
-                names.SUBMIT, task.key, {"code": result.code, "auto": True}, priority=Priority.ALERT
+                names.SUBMIT, task.key, {"code": result.code, "approved": True}, priority=Priority.APPLY
+            )
+            return
+        if auto and (not board or self.auto_on_boards()):
+            # Every answer came from the profile, a saved answer or the posting (questions only the user can
+            # answer stop above); a job board only when the user included them: sent without a tap.
+            self.queue.enqueue(
+                names.SUBMIT, task.key, {"code": result.code, "auto": True}, priority=Priority.APPLY
             )
             return
         self.queue.enqueue(
@@ -208,8 +223,56 @@ class Applier:
                 "filled": result.filled[:30],
                 "system": result.adapter,
             },
-            priority=Priority.ALERT,
+            priority=Priority.APPLY,
         )
+
+    async def _fill(  # noqa: PLR0911  (each way a fill can stop)
+        self, job_id: str, url: str, ctx: FormContext
+    ) -> tuple[FillResult, str, bool] | None:
+        """Fill the form at ``url`` with the guards; None when the job was handed over instead.
+
+        A board job that applies on the company's own site goes on to that site once, when its address is a
+        public web page: the same guards (Workday, logins, the site's daily limit) then apply to that site.
+        Returns the fill, the address it was made at and whether that is a job board (its "Apply" may send).
+        """
+        for hop in range(2):
+            if adapters.is_workday(url):
+                self._hand_over(job_id, url, "Workday forms need your own Workday account for this employer.")
+                return None
+            board = needs_login(url)
+            if board and not self.engine.walks:
+                self._hand_over(job_id, url, f"{site_of(url)} needs your own logged-in account to apply.")
+                return None
+            if self.applications.sent_to_site_since(site_of(url), self._clock() - DAY) >= self.daily_limit:
+                raise DeferError(3600)  # the site's daily limit: try again in an hour
+            try:
+                return await self.engine.fill(job_id, url, ctx, one_click=board), url, board
+            except ExternalApplyError as error:
+                why = await external_refusal(error.url) if hop == 0 else "it led to yet another job board"
+                if why:
+                    self._hand_over(job_id, url, f"This job applies on the company's own site, but {why}.")
+                    return None
+                log.info("%s applies on the company's site: going on to %s", job_id, site_of(error.url))
+                url = error.url
+            except LimitReachedError:
+                raise DeferError(LIMIT_WAIT_S) from None  # the site's own daily limit: later, not by hand
+            except LoginNeededError as error:
+                self._hand_over(job_id, url, str(error))
+                return None
+            except LoginWallError as error:
+                self._hand_over(job_id, url, login_help(error))
+                return None
+            except EnginePausedError:
+                raise DeferError(PAUSED_WAIT_S) from None
+            except PostingClosedError as error:  # recorded as closed, not handed to the user
+                detail = f"Not applied: {error}."
+                self.applications.record(job_id, ApplicationStatus.FAILED, site=site_of(url), detail=detail)
+                self._result(job_id, "closed", detail, url=url)
+                return None
+            except FillError as error:
+                self._hand_over(job_id, url, f"The form could not be filled: {error}")
+                return None
+        return None  # not reached: the second hop always returns
 
     async def finish_by_hand(self, job_id: str, engine: ApplyEngine) -> SubmitResult | None:
         """Fill the form in ``engine`` (a browser on the user's screen) and wait for their own Submit.
@@ -234,9 +297,13 @@ class Applier:
         if job is None or ctx is None:
             return None
         url = str(job.apply_url or job.url)
-        await engine.fill(
-            job_id, url, ctx, one_click=needs_login(url)
-        )  # blanks: the user fills them there too
+        try:
+            await engine.fill(job_id, url, ctx, one_click=needs_login(url))  # blanks: the user fills them
+        except ExternalApplyError as error:
+            if why := await external_refusal(error.url):
+                raise FillError(f"this job applies on the company's own site, but {why}") from error
+            url = error.url
+            await engine.fill(job_id, url, ctx, one_click=needs_login(url))
         outcome = await engine.watch(job_id)
         status = (
             ApplicationStatus.SUBMITTED if outcome.outcome == "submitted" else ApplicationStatus.NEEDS_HUMAN
@@ -255,20 +322,31 @@ class Applier:
         if job is None:
             return
         url = str(job.apply_url or job.url)
-        outcome = await self.engine.submit(task.key, str(task.payload.get("code") or ""))
+        filled = self.applications.get(task.key)
+        site = filled.site if filled is not None and filled.site else site_of(url)  # the form's site, filled
+        if filled is not None and filled.status in SENT:
+            self._result(task.key, "duplicate", f"You already applied to {job.title} at {job.company}.")
+            return
+        try:
+            outcome = await self.engine.submit(task.key, str(task.payload.get("code") or ""))
+        except EnginePausedError:
+            raise DeferError(PAUSED_WAIT_S) from None
         shot = self._relative(outcome.screenshot)
         if outcome.outcome == "expired":
-            self._result(task.key, "expired", outcome.detail)
-            self.queue.enqueue(
-                names.APPLY, task.key, priority=Priority.NORMAL
-            )  # fill again for a fresh approval
+            # The filled page closed (a restart, 30 idle minutes, a login window) before the Submit: fill it
+            # again. The user's own Submit carries over once, so a clean refill is sent without asking again;
+            # an auto-apply's, or an approval already carried, comes back as the usual preview.
+            carried = not task.payload.get("auto") and not task.payload.get("approved")
+            self._result(task.key, "expired", outcome.detail, approved=carried)
+            self.queue.enqueue(names.APPLY, task.key, {"approved": carried}, priority=Priority.APPLY)
             return
         status = {
             "submitted": ApplicationStatus.SUBMITTED,
             "needs_human": ApplicationStatus.NEEDS_HUMAN,
+            UNKNOWN: ApplicationStatus.NEEDS_HUMAN,  # pressed, perhaps sent: the user checks, no retry
         }.get(outcome.outcome, ApplicationStatus.FAILED)
         detail = outcome.detail
         if task.payload.get("auto") and outcome.outcome == "submitted":
             detail = f"🤖 Sent by auto-apply. {detail}"
-        self.applications.record(task.key, status, site=site_of(url), detail=detail, screenshot=shot)
+        self.applications.record(task.key, status, site=site, detail=detail, screenshot=shot)
         self._result(task.key, outcome.outcome, detail, url=url, screenshot=shot)

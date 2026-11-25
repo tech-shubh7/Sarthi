@@ -1,4 +1,4 @@
-// Ported from OpenApply (MIT), src/apply/captcha.ts @ db7796e. Detection only: Sarthi never solves or evades
+// Detection only: Sarthi never solves or evades
 // a CAPTCHA or bot check; an interactive challenge is handed to the user.
 () => {
   const kinds = new Set();

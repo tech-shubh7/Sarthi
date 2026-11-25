@@ -1,36 +1,95 @@
 {% extends "base.html" %}
-{% from "_macros.html" import empty %}
+{% from "_macros.html" import empty, pager, share, icon %}
 {% block title %}Sources · Sarthi{% endblock %}
 {% block main %}
 <header class="page-head">
   <div>
     <p class="eyebrow">Where jobs come from</p>
     <h1>Sources</h1>
-    <p class="lede">Each job source and its health. A failing source is tried less often until it works again.</p>
+    <p class="lede">Sarthi reads {{ rows|length }} source{{ '' if rows|length == 1 else 's' }}, and most reach many sites: the job-board search covers LinkedIn, Indeed and your country's own board, Freehire covers about 90 hiring systems, and ATS-Scrapers' daily snapshot covers about 192,000 companies' own career pages. A failing source is tried less often until it works again.</p>
   </div>
 </header>
-{% if rows %}
-<section class="stats" aria-label="Source health">
-  <div class="card stat teal"><span class="stat-label">Working</span><b class="stat-n">{{ rows|selectattr('failures', 'eq', 0)|list|length }}</b></div>
-  <div class="card stat saffron"><span class="stat-label">Struggling</span><b class="stat-n">{{ rows|selectattr('failures', 'gt', 0)|selectattr('failures', 'lt', 3)|list|length }}</b></div>
-  <div class="card stat"><span class="stat-label">Failing</span><b class="stat-n">{{ rows|selectattr('failures', 'ge', 3)|list|length }}</b></div>
+{% if rows or sites %}
+<section class="stats" aria-label="Sources at a glance">
+  <div class="card stat teal"><span class="stat-label">Sources working</span><b class="stat-n">{{ rows|selectattr('failures', 'eq', 0)|list|length }}</b><span class="stat-sub">of {{ rows|length }} read</span></div>
+  <div class="card stat saffron"><span class="stat-label">Struggling or failing</span><b class="stat-n">{{ rows|selectattr('failures', 'gt', 0)|list|length }}</b><span class="stat-sub">{{ rows|selectattr('failures', 'ge', 3)|list|length }} failing</span></div>
+  <div class="card stat indigo"><span class="stat-label">Sites with jobs</span><b class="stat-n">{{ sites|length }}</b><span class="stat-sub">{{ '{:,}'.format(site_jobs) }} jobs in all</span></div>
+  <div class="card stat"><span class="stat-label">Company career pages</span><b class="stat-n">{{ '{:,}'.format(total) }}</b><span class="stat-sub">on {{ systems|length }} hiring system{{ '' if systems|length == 1 else 's' }}</span></div>
 </section>
-<div class="card table-card">
+{% endif %}
+
+{% if rows %}
+<section class="card table-card section" aria-labelledby="sources-title">
+<h2 class="card-title table-title" id="sources-title">{{ icon('sources') }}Sources Sarthi reads</h2>
 <table class="table">
-  <thead><tr><th>Source</th><th>Health</th><th>Last worked</th><th>Last checked</th><th>Last problem</th></tr></thead>
+  <thead><tr><th>Source</th><th>Health</th><th>Jobs found</th><th>Last worked</th><th>Last checked</th><th>Last problem</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
       <td data-label="Source"><b>{{ r.name.split(':')[-1] }}</b><span class="job-sub">{{ r.name.split(':')[0] if ':' in r.name else '' }}</span></td>
-      <td data-label="Health">{% if r.failures == 0 %}<span class="pill ok">Working</span>{% elif r.failures < 3 %}<span class="pill warn">{{ r.failures }} failure{{ '' if r.failures == 1 else 's' }}</span>{% else %}<span class="pill bad">Failing · {{ r.failures }} in a row</span>{% endif %}</td>
+      <td data-label="Health">{% if not r.last_checked_at %}<span class="pill info">Not read yet</span>{% elif r.failures == 0 %}<span class="pill ok">Working</span>{% elif r.failures < 3 %}<span class="pill warn">{{ r.failures }} failure{{ '' if r.failures == 1 else 's' }}</span>{% else %}<span class="pill bad">Failing · {{ r.failures }} in a row</span>{% endif %}</td>
+      <td data-label="Jobs" class="num">{{ '{:,}'.format(reader_jobs.get(r.name, 0)) }}</td>
       <td data-label="Worked" class="faint">{{ ago(r.last_ok_at) or 'never' }}</td>
-      <td data-label="Checked" class="faint">{{ ago(r.last_checked_at) }}</td>
+      <td data-label="Checked" class="faint">{{ ago(r.last_checked_at) or 'never' }}{% if r.running %}<span class="job-sub">Reading now</span>{% elif r.queued_at %}<span class="job-sub">Next read queued {{ ago(r.queued_at) }}</span>{% endif %}</td>
       <td data-label="Problem" class="err">{{ (r.last_error or '')[:160] }}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
-</div>
+</section>
+{% endif %}
+
+{% if sites %}
+<section class="card table-card section" aria-labelledby="sites-title">
+<h2 class="card-title table-title" id="sites-title">{{ icon('search') }}Sites the jobs came from</h2>
+<table class="table">
+  <thead><tr><th>Site</th><th>Found through</th><th>Jobs</th><th>Share</th><th>Last {{ recent_days }} days</th><th>Companies</th><th>Last new job</th></tr></thead>
+  <tbody>
+  {% for s in sites %}
+    <tr>
+      <td data-label="Site"><b>{{ s.row.site }}</b>{% if s.career %}<span class="job-sub">Company career pages</span>{% endif %}</td>
+      <td data-label="Through" class="faint">{{ s.reader or 'no longer read' }}</td>
+      <td data-label="Jobs" class="num">{{ '{:,}'.format(s.row.jobs) }}</td>
+      <td data-label="Share">{{ share(s.row.jobs, site_jobs, 'teal' if s.career else '') }}</td>
+      <td data-label="Recent" class="num">{{ '{:,}'.format(s.row.jobs_since) }}</td>
+      <td data-label="Companies" class="num">{{ '{:,}'.format(s.row.companies) }}</td>
+      <td data-label="Last new" class="faint">{{ ago(s.row.last_found_at) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</section>
+{% endif %}
+
+{% if rows or sites %}
+<section class="card table-card section" id="career-pages" aria-labelledby="career-title">
+<h2 class="card-title table-title" id="career-title">{{ icon('matches') }}Company career pages</h2>
+<p class="table-note">Jobs found on companies' own career pages, by hiring system: {{ '{:,}'.format(career_jobs) }} job{{ '' if career_jobs == 1 else 's' }} at {{ '{:,}'.format(total) }} compan{{ 'y' if total == 1 else 'ies' }}.
+{% if catalog and catalog.failures %} The company-page snapshot (ATS-Scrapers) has failed {{ catalog.failures }} time{{ '' if catalog.failures == 1 else 's' }} in a row{% if catalog.last_ok_at %} and last worked {{ ago(catalog.last_ok_at) }}{% endif %}: no new career-page jobs arrive from it until it works again.{% endif %}</p>
+{% if systems %}
+<ul class="chips" aria-label="Hiring systems">
+  {% for s in systems %}<li class="chip">{{ s.site }} · {{ s.companies }} compan{{ 'y' if s.companies == 1 else 'ies' }} · {{ s.jobs }} job{{ '' if s.jobs == 1 else 's' }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% if career %}
+<table class="table">
+  <thead><tr><th>Company</th><th>Hiring system</th><th>Jobs</th><th>Last new job</th></tr></thead>
+  <tbody>
+  {% for c in career %}
+    <tr>
+      <td data-label="Company"><b>{{ c.company }}</b></td>
+      <td data-label="System" class="faint">{{ c.system }}</td>
+      <td data-label="Jobs" class="num">{{ '{:,}'.format(c.jobs) }}</td>
+      <td data-label="Last new" class="faint">{{ ago(c.last_found_at) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{{ pager(page, pages, total, size, link_page) }}
+{% else %}
+<p class="table-note faint">No job from a company's own career page yet.</p>
+{% endif %}
+</section>
 {% else %}
 {{ empty('No source read yet', 'Sources are read as soon as Sarthi runs (sarthi run).') }}
 {% endif %}

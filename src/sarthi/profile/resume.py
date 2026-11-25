@@ -2,7 +2,8 @@
 
 Uploads are untrusted: the size is capped, the type is decided by the file's first bytes (not its name), PDFs
 are read for at most a few pages, and .docx text is pulled out with a pattern instead of an XML parser
-(no entity expansion, no external references). The file itself is never stored.
+(no entity expansion, no external references). LaTeX source is read as its printed text. The file itself
+is kept separately, only on the user's computer, by ``profile.original``.
 """
 
 from __future__ import annotations
@@ -17,12 +18,16 @@ from typing import Any
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
+from sarthi.profile.latex import is_latex, latex_to_text
+
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_PDF_PAGES = 10
 MAX_DOCX_XML_BYTES = 5 * 1024 * 1024
 MAX_TEXT_CHARS = 50_000
 MIN_TEXT_CHARS = 50  # fewer than any real resume: probably a scanned image
 _DOCX_BODY = "word/document.xml"
+_DOCX_RELS = "word/_rels/document.xml.rels"
+_DOCX_LINK = re.compile(r'<Relationship\b(?=[^>]*\bTargetMode="External")[^>]*\bTarget="([^"]+)"')
 _DOCX_TEXT = re.compile(r"<w:t(?:\s[^>]*)?>([^<]*)</w:t>")
 _DOCX_BREAK = re.compile(r"</w:p>|<w:br\s*/>|<w:tab\s*/>")
 _SPACES = re.compile(r"[ \t]+")
@@ -59,7 +64,7 @@ def _tidy(text: str) -> str:
     return _BLANK_LINES.sub("\n\n", "\n".join(lines)).strip()[:MAX_TEXT_CHARS]
 
 
-MAX_LINKS = 6
+MAX_LINKS = 8
 
 
 def _link_targets(pages: Any) -> list[str]:
@@ -76,6 +81,14 @@ def _link_targets(pages: Any) -> list[str]:
             if uri.lower().startswith(("http://", "https://")) and uri not in found:
                 found.append(uri)
     return found[:MAX_LINKS]
+
+
+def pdf_links(data: bytes) -> list[str]:
+    """The web addresses behind a PDF's clickable links ([] when it cannot be read)."""
+    try:
+        return _link_targets(PdfReader(io.BytesIO(data)).pages[:MAX_PDF_PAGES])
+    except (PdfReadError, ValueError, KeyError, TypeError):
+        return []
 
 
 def _pdf_text(data: bytes) -> str:
@@ -101,10 +114,15 @@ def _docx_text(data: bytes) -> str:
             if info.file_size > MAX_DOCX_XML_BYTES:
                 raise ResumeError("This Word file is too large to read.")
             xml = archive.read(_DOCX_BODY).decode("utf-8", errors="replace")
+            rels = archive.read(_DOCX_RELS)[:MAX_DOCX_XML_BYTES] if _DOCX_RELS in archive.namelist() else b""
     except (zipfile.BadZipFile, KeyError):
         raise ResumeError("I couldn't read this Word file. Please send a .docx or PDF.") from None
     with_breaks = _DOCX_BREAK.sub("<w:t>\n</w:t>", xml)  # paragraph ends become text runs holding a newline
-    return html.unescape("".join(_DOCX_TEXT.findall(with_breaks)))
+    text = html.unescape("".join(_DOCX_TEXT.findall(with_breaks)))
+    # "LinkedIn" typed as a hyperlink: the address is only in the relationships file.
+    targets = [html.unescape(t) for t in _DOCX_LINK.findall(rels.decode("utf-8", errors="replace"))]
+    hidden = list(dict.fromkeys(t for t in targets if t.lower().startswith("http") and t not in text))
+    return text + ("\n" + " ".join(hidden[:MAX_LINKS]) if hidden else "")
 
 
 def extract_text(data: bytes) -> str:
@@ -118,6 +136,8 @@ def extract_text(data: bytes) -> str:
         raw = _docx_text(data)
     else:
         raw = data.decode("utf-8", errors="replace")
+        if is_latex(raw):  # a LaTeX source: its printed text, not its macros
+            raw = latex_to_text(raw)
     text = _tidy(raw)
     if len(text) < MIN_TEXT_CHARS:
         raise ResumeError(
