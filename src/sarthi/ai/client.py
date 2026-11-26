@@ -23,7 +23,7 @@ from pydantic import BaseModel, ValidationError
 from sarthi.ai.gate import local_gate
 from sarthi.ai.limits import RATE_LIMITS, RateLimits, estimate_tokens, retry_seconds
 from sarthi.ai.prompts import SYSTEM_RULES, Prompt
-from sarthi.ai.providers import FREE_PROVIDERS, PROVIDER_OPTIONS, Endpoint
+from sarthi.ai.providers import PAID_PROVIDERS, PROVIDER_OPTIONS, Endpoint
 from sarthi.clock import Clock, to_iso, utcnow
 from sarthi.db.ai_store import AiStore
 
@@ -183,7 +183,7 @@ class AiClient:
                     return schema.model_validate_json(cached)
                 except ValidationError:
                     pass  # schema changed since it was cached: ask again
-            if not endpoint.free:
+            if endpoint.paid:
                 try:
                     self._check_budget()
                 except BudgetExhaustedError as error:
@@ -219,7 +219,7 @@ class AiClient:
             return
         now = self._clock()
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        used = self._store.tokens_since(to_iso(midnight), exclude_providers=FREE_PROVIDERS)
+        used = self._store.tokens_since(to_iso(midnight), only_providers=PAID_PROVIDERS)
         if used >= self._budget:
             raise BudgetExhaustedError(max(60.0, (midnight + timedelta(days=1) - now).total_seconds()))
 

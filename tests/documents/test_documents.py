@@ -317,6 +317,15 @@ def test_untrue_letter_becomes_the_plain_one_and_says_why() -> None:
     assert all(not fact_problems(p, RESUME_TEXT, master().all_skills()) for p in result.paragraphs)
 
 
+def test_a_repeated_paragraph_is_kept_once_and_asked_again() -> None:
+    opening = "I am applying for the AI Engineer role. At Acme Labs I built 12 FastAPI services."
+    first = letter([opening, "I would like to build APIs at Gamma.", opening])
+    assert first.paragraphs.count(opening) <= 1
+    assert any("repeated" in p for p in first.problems)  # the first try goes back to the AI
+    second = letter([opening, "I would like to build APIs at Gamma.", f"  {opening} "], strict=True)
+    assert second.from_ai and second.paragraphs == [opening, "I would like to build APIs at Gamma."]
+
+
 def test_cliche_letter_is_retried_then_plain() -> None:
     assert letter(["I am thrilled to apply.", "I built 12 FastAPI services."]).problems
     assert not letter(["I am thrilled to apply.", "I built 12 FastAPI services."], strict=True).from_ai

@@ -39,15 +39,26 @@ class AiStore:
                 (provider, model, prompt_tokens, completion_tokens, to_iso(self._clock())),
             )
 
-    def tokens_since(self, since: str, exclude_providers: frozenset[str] = frozenset()) -> int:
-        """Tokens used since ``since`` (ISO text), not counting ``exclude_providers``."""
-        names = [f":p{i}" for i in range(len(exclude_providers))]
+    def tokens_since(
+        self,
+        since: str,
+        exclude_providers: frozenset[str] = frozenset(),
+        only_providers: frozenset[str] | None = None,
+    ) -> int:
+        """Tokens used since ``since`` (ISO text): ``only_providers`` if given, not ``exclude_providers``."""
         params: dict[str, str] = {"since": since}
-        params |= {f"p{i}": p for i, p in enumerate(sorted(exclude_providers))}
-        exclude = f" AND provider NOT IN ({', '.join(names)})" if names else ""
-        # exclude only adds generated placeholder names; every value stays a bound parameter.
+        where = ""
+        if only_providers is not None:
+            names = [f":o{i}" for i in range(len(only_providers))]
+            params |= {f"o{i}": p for i, p in enumerate(sorted(only_providers))}
+            where += f" AND provider IN ({', '.join(names) or 'NULL'})"
+        if exclude_providers:
+            names = [f":p{i}" for i in range(len(exclude_providers))]
+            params |= {f"p{i}": p for i, p in enumerate(sorted(exclude_providers))}
+            where += f" AND provider NOT IN ({', '.join(names)})"
+        # only generated placeholder names are added; every value stays a bound parameter.
         sql = (
             "SELECT coalesce(sum(prompt_tokens + completion_tokens), 0) FROM llm_usage "  # noqa: S608
-            f"WHERE at >= :since{exclude}"
+            f"WHERE at >= :since{where}"
         )
         return int(self._conn.execute(sql, params).fetchone()[0])

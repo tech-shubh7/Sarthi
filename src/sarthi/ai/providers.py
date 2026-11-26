@@ -16,10 +16,13 @@ from sarthi.config import Settings
 log = logging.getLogger(__name__)
 
 FREE_PROVIDERS = frozenset({"ollama"})
+"""Run on the user's own machine: no API key, one request at a time."""
+PAID_PROVIDERS = frozenset({"openai", "anthropic", "deepseek", "mistral"})
+"""Bill per token: only these count against the daily token budget (Gemini and Groq free tiers, OpenRouter's
+":free" models and local models cost nothing, so matching on them never blocks paid writing)."""
 # Extra request fields per provider. DeepSeek's models think by default, billed as output (13x the output
 # for one tailored line, measured 2026-11-26); Sarthi's structured answers need no thinking.
 PROVIDER_OPTIONS: dict[str, dict[str, object]] = {"deepseek": {"thinking": {"type": "disabled"}}}
-"""Run on the user's own machine: no API key, not counted against the daily token budget."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +61,11 @@ class Endpoint:
     def free(self) -> bool:
         """True for local providers that cost nothing."""
         return self.provider in FREE_PROVIDERS
+
+    @property
+    def paid(self) -> bool:
+        """True for providers that bill per token (the daily token budget applies to these only)."""
+        return self.provider in PAID_PROVIDERS
 
 
 def resolve(names: list[str], settings: Settings) -> list[Endpoint]:

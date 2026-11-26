@@ -142,26 +142,40 @@ async def test_all_models_failing_is_reported(store: AiStore, clock: FakeClock) 
 
 
 async def test_budget_skips_paid_models_but_not_local_ones(store: AiStore, clock: FakeClock) -> None:
-    store.record_usage("gemini", "flash", 900, 100)  # today's budget used up
+    store.record_usage("openai", "mini", 900, 100)  # today's budget used up
     providers = FakeProviders({"localhost": [reply('{"greeting": "local", "count": 0}')]})
-    result = await client(store, providers, [GEMINI, OLLAMA], clock, budget=1000).structured(PROMPT, Answer)
+    result = await client(store, providers, [OPENAI, OLLAMA], clock, budget=1000).structured(PROMPT, Answer)
     assert result.greeting == "local"
     assert [r.url.host for r in providers.requests] == ["localhost"]
 
 
 async def test_budget_spent_with_only_paid_models(store: AiStore, clock: FakeClock) -> None:
-    store.record_usage("gemini", "flash", 1000, 0)
+    store.record_usage("openai", "mini", 1000, 0)
     with pytest.raises(BudgetExhaustedError) as caught:
-        await client(store, FakeProviders({}), [GEMINI], clock, budget=1000).structured(PROMPT, Answer)
+        await client(store, FakeProviders({}), [OPENAI], clock, budget=1000).structured(PROMPT, Answer)
     assert caught.value.retry_after == pytest.approx(15 * 3600)  # clock is 09:00 UTC
 
 
 async def test_budget_resets_the_next_day(store: AiStore, clock: FakeClock) -> None:
-    store.record_usage("gemini", "flash", 1000, 0)
+    store.record_usage("openai", "mini", 1000, 0)
     clock.advance(16 * 3600)
-    providers = FakeProviders({"gemini.test": [reply('{"greeting": "new day", "count": 1}')]})
-    result = await client(store, providers, [GEMINI], clock, budget=1000).structured(PROMPT, Answer)
+    providers = FakeProviders({"openai.test": [reply('{"greeting": "new day", "count": 1}')]})
+    result = await client(store, providers, [OPENAI], clock, budget=1000).structured(PROMPT, Answer)
     assert result.greeting == "new day"
+
+
+async def test_free_tier_tokens_never_use_up_the_paid_budget(store: AiStore, clock: FakeClock) -> None:
+    # Matching on free tiers used up the "paid" budget and blocked the paid writing model (seen 2026-11-26).
+    store.record_usage("gemini", "flash", 5_000_000, 0)
+    store.record_usage("groq", "gpt-oss-20b", 5_000_000, 0)
+    providers = FakeProviders({"openai.test": [reply('{"greeting": "paid", "count": 1}')]})
+    result = await client(store, providers, [OPENAI], clock, budget=1000).structured(PROMPT, Answer)
+    assert result.greeting == "paid"
+    free = FakeProviders({"gemini.test": [reply('{"greeting": "free", "count": 2}')]})
+    store.record_usage("openai", "mini", 5000, 0)  # the paid budget spent: free tiers still answer
+    assert (
+        await client(store, free, [GEMINI], clock, budget=1000).structured(PROMPT, Answer)
+    ).greeting == "free"
 
 
 async def test_local_models_get_a_longer_timeout(store: AiStore, clock: FakeClock) -> None:

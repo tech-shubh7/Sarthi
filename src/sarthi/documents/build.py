@@ -384,10 +384,12 @@ def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
     if answer is None:
         return Letter(greeting, plain, sign_off, from_ai=False)
     checker = Checker(master, resume_text, own_skills)
-    paragraphs = [_tidy(p) for p in answer.paragraphs if _tidy(p)]
+    paragraphs = _distinct([_tidy(p) for p in answer.paragraphs if _tidy(p)])
     checked = [(p, checker.facts(p), checker.style(p)) for p in paragraphs]
     facts = [f for _, found, _ in checked for f in found]
     style = [s for _, _, found in checked for s in found]
+    if len(paragraphs) < len([p for p in answer.paragraphs if _tidy(p)]):
+        style.append("a paragraph was repeated: write each paragraph once")
     if strict:
         kept = [p for p, bad_facts, bad_style in checked if not bad_facts and not bad_style]
         if len(kept) >= MIN_LETTER_PARAGRAPHS:
@@ -396,6 +398,18 @@ def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
     if paragraphs and not facts:
         return Letter(greeting, paragraphs, sign_off, from_ai=True, problems=style)
     return Letter(greeting, plain, sign_off, from_ai=False, problems=facts + style)
+
+
+def _distinct(paragraphs: list[str]) -> list[str]:
+    """Each paragraph once: a model sometimes repeats one (seen: the opening twice, the middle missing)."""
+    seen: set[str] = set()
+    kept = []
+    for paragraph in paragraphs:
+        key = " ".join(paragraph.lower().split())[:120]
+        if key not in seen:
+            seen.add(key)
+            kept.append(paragraph)
+    return kept
 
 
 def without_claims(letter: Letter, claims: list[str]) -> Letter | None:
