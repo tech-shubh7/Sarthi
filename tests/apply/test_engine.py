@@ -95,6 +95,16 @@ async def test_no_confirmation_after_the_press_is_unknown_not_a_success_or_a_ret
     assert "check the site" in outcome.detail.lower()
 
 
+async def test_a_sign_in_wall_after_apply_is_signed_out_not_maybe_sent(
+    engine: ApplyEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sarthi.apply.engine.SUBMIT_WAIT_S", 3.0)
+    result = await engine.fill("job-g", url("guest_wall.html"), FormContext(ASHA))
+    outcome = await engine.submit("job-g", result.code)
+    assert outcome.outcome == "needs_human"
+    assert "signed out" in outcome.detail and "nothing was sent" in outcome.detail
+
+
 async def test_a_page_without_an_application_form_is_never_offered_for_submit(engine: ApplyEngine) -> None:
     with pytest.raises(FillError, match="no application form"):
         await engine.fill("job-np", url("job_page_only.html"), FormContext(ASHA))

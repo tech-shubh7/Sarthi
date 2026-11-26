@@ -25,7 +25,7 @@ from playwright.async_api import Response as PlaywrightResponse
 
 from sarthi.apply import adapters, linkedin, naukri
 from sarthi.apply.adapters import Adapter, FillError, PostingClosedError
-from sarthi.apply.agent import ApplicationBrowser, Walked
+from sarthi.apply.agent import SIGN_IN_TO_APPLY, ApplicationBrowser, Walked
 from sarthi.jobs.forms import FormContext, FormField, suggest
 from sarthi.jobs.net import is_public_url
 
@@ -542,13 +542,27 @@ class ApplyEngine:
                     and await adapters.form_gone(page, adapter)
                 ):
                     return "submitted", f"Thank-you message shown at {page.url}"
-            if (await adapters.detect_captcha(page)).get("interactive"):
-                return "needs_human", "A CAPTCHA appeared after clicking submit."
+            if why := await _held_up(page):
+                return "needs_human", why
         # Submit was pressed: it may well have gone out. Never "failed" (a retry could send it twice).
         return UNKNOWN, (
             "Submit was pressed but no confirmation appeared within 20 seconds: it may have been sent. "
             "Check the site (or your email) before applying again."
         )
+
+
+async def _held_up(page: Page) -> str:
+    """Why the press led nowhere the user wanted, or "": a CAPTCHA, or a board's sign-in wall."""
+    if (await adapters.detect_captcha(page)).get("interactive"):
+        return "A CAPTCHA appeared after clicking submit."
+    if SIGN_IN_TO_APPLY.search(await adapters.body_text(page)):
+        # A board's Apply led to its guest page ("Let's get you applied ... Sign in to apply"): nothing went
+        # out; the user is signed out there (a login fills it again).
+        return (
+            f"{urlparse(page.url).hostname or 'the site'} shows you as signed out: nothing was sent. "
+            "Log in once (Settings or /login) and it is filled again."
+        )
+    return ""
 
 
 _SEARCH = re.compile(r"\b(?:search|keywords?|find jobs?)\b", re.IGNORECASE)
