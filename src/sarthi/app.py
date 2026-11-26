@@ -594,13 +594,15 @@ class App:
                 self.screen_url = screen.url
                 if screen.url is None:
                     await self._say(
-                        chat_id, f"A browser window opened on your computer. Log in to {name} there."
+                        chat_id,
+                        f"A browser window opened on your computer. Log in to {name} there, then close "
+                        "the window: Sarthi checks the login and tells you.",
                     )
                 else:
                     await self._say(
                         chat_id,
-                        f"Open this on the computer running Sarthi and log in to {name} there "
-                        f"(the link works for 10 minutes):\n{screen.url}",
+                        f"Open this on the computer running Sarthi and log in to {name} there, then close "
+                        f"the window (the link works for 10 minutes):\n{screen.url}",
                     )
                 done = await login_to(site, self.settings.data_dir / BROWSER_PROFILE, env=screen.env)
         except ScreenError as error:
@@ -615,7 +617,8 @@ class App:
         if not done:
             await self._say(
                 chat_id,
-                f"Not logged in to {name} (the window was closed or 10 minutes passed). Try again.",
+                f"Not logged in to {name}: the site did not recognise you after the window closed (or 10 "
+                "minutes passed). Try again, and close the window only once you see your account.",
             )
             return
         retried = self.retry_after_login(site)

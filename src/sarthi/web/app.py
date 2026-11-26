@@ -80,8 +80,8 @@ DONE = {
     "declined": "OK, Sarthi won't apply to that one.",
     "auto_cancelled": "Auto-apply cancelled. You can still tap Apply on the job.",
     "auto_now": "Applying now.",
-    "login": "Opening the login page on this computer (in Docker its link shows at the top of this page). "
-    "Sarthi never sees your password.",
+    "login": "Opening the login page in a window on this computer (in Docker its link shows at the top of "
+    "this page). Log in, then close the window; Sarthi checks the login. It never sees your password.",
 }
 
 

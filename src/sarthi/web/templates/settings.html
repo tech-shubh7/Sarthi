@@ -117,7 +117,7 @@
 <section class="card section" id="logins" aria-label="Job site logins">
   <div class="form-section">
     <h3>Job site logins</h3>
-    <p class="help">Log in once so Sarthi can apply there. The site's login page opens on this computer (in Docker, a link shows at the top of the page); you log in on the site itself and Sarthi never sees your password.</p>
+    <p class="help">Log in once so Sarthi can apply there. The site's login page opens on this computer (in Docker, a link shows at the top of the page); you log in on the site itself, then close the window, and Sarthi checks the login. It never sees your password.</p>
     <div class="logins">
       {% for key, name in login_sites %}
       <form method="post" action="/settings/login/{{ key }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button quiet" type="submit">Log in to {{ name }}</button></form>

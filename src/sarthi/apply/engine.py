@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import re
 import secrets
 import time
@@ -601,37 +602,63 @@ _SIGNED_IN = {
     "naukri": re.compile(r"naukri\.com/(?:mnjuser|homepage|myapply)"),
 }
 LOGIN_WAIT_S = 600
+# A page only a signed-in user sees; a signed-out visit is sent to the login page instead.
+SIGNED_IN_CHECK = {
+    "linkedin": "https://www.linkedin.com/feed/",
+    "naukri": "https://www.naukri.com/mnjuser/homepage",
+}
+LOGIN_CHECK_S = 30
 
 
 async def login(
     site: str, profile_dir: Path, *, wait_s: float = LOGIN_WAIT_S, env: dict[str, str] | None = None
 ) -> bool:
-    """Open a visible browser on the site's login page; the user signs in themselves, the session is kept.
+    """Open the site's login page in a plain browser window; the user signs in and closes it.
 
-    Sarthi never sees or stores the password: only the browser's own session cookies, in ``profile_dir``.
-    Returns True once the site shows a signed-in page, False when the window was closed or time ran out.
-    ``env`` puts the window on another screen (the virtual one of ``sarthi.apply.screen``).
+    The window is an ordinary browser that Sarthi does not control while the user types (no automation
+    session attached): sites such as LinkedIn answer an automated window with CAPTCHA after CAPTCHA. It
+    uses Sarthi's own browser profile, so the session stays for applying. Sarthi never sees or stores the
+    password, only the browser's session cookies in ``profile_dir``. Returns True when, after the window
+    is closed (or ``wait_s`` passed), the site recognises the user. ``env`` puts the window on another
+    screen (the virtual one of ``sarthi.apply.screen``).
     """
     profile_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(
-            str(profile_dir),
-            headless=False,
-            env=_browser_env(env),
-            args=["--window-position=0,0", "--window-size=1280,900"] if env else [],
-        )
-        page = context.pages[0] if context.pages else await context.new_page()
-        await page.goto(LOGIN_PAGES[site])
-        end = time.monotonic() + wait_s
-        signed_in = False
-        while time.monotonic() < end and not page.is_closed():
-            if await _signed_in(page, site):
-                signed_in = True
-                break
-            await asyncio.sleep(1)
-        with contextlib.suppress(PlaywrightError):
-            await context.close()
-        return signed_in
+        executable = playwright.chromium.executable_path
+    args = [executable, f"--user-data-dir={profile_dir}", "--no-first-run", "--no-default-browser-check"]
+    if env:
+        args += ["--window-position=0,0", "--window-size=1280,900"]
+    window = await _open_window([*args, LOGIN_PAGES[site]], {**os.environ, **(env or {})})
+    try:
+        await asyncio.wait_for(window.wait(), wait_s)
+    except TimeoutError:
+        window.terminate()
+        await window.wait()
+    return await signed_in(site, profile_dir)
+
+
+async def _open_window(args: list[str], env: dict[str, str]) -> asyncio.subprocess.Process:
+    """Start a plain browser process (replaced in tests)."""
+    return await asyncio.create_subprocess_exec(
+        *args, env=env, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+    )
+
+
+async def signed_in(site: str, profile_dir: Path) -> bool:
+    """True when the saved browser profile is signed in to ``site`` (checked out of sight)."""
+    async with async_playwright() as playwright:
+        context = await playwright.chromium.launch_persistent_context(str(profile_dir), headless=True)
+        try:
+            page = context.pages[0] if context.pages else await context.new_page()
+            target = SIGNED_IN_CHECK.get(site, LOGIN_PAGES[site])
+            await page.goto(target, wait_until="domcontentloaded", timeout=LOGIN_CHECK_S * 1000)
+            await page.wait_for_timeout(2000)  # a client-side redirect to the login page
+            return await _signed_in(page, site)
+        except PlaywrightError:
+            return False
+        finally:
+            with contextlib.suppress(PlaywrightError):
+                await context.close()
 
 
 async def _signed_in(page: Page, site: str) -> bool:
