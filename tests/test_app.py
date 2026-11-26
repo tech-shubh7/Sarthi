@@ -1,3 +1,5 @@
+import time
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,17 @@ from tests.matching.conftest import make_job, make_profile
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
+@pytest.fixture
+def india_clock(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The computer's own clock set to India's, whatever zone the test machine runs in (CI: UTC)."""
+    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+@pytest.mark.usefixtures("india_clock")
 def test_next_digest_today_or_tomorrow() -> None:
     morning = datetime(2026, 11, 20, 9, 0, tzinfo=IST)
     evening = datetime(2026, 11, 20, 20, 0, tzinfo=IST)
