@@ -35,6 +35,9 @@ log = logging.getLogger(__name__)
 UrlCheck = Callable[[str], Awaitable[bool]]
 
 
+INTERRUPTED = "a browser window was opened for you during this fill: it is filled again in a minute"
+
+
 class EnginePausedError(Exception):
     """The browser profile is lent to a visible window (a login, a form finished by hand): try later."""
 
@@ -136,6 +139,8 @@ class ApplyEngine:
         self._open: dict[str, _Open] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._busy = 0  # fills and submits under way
+        self._submitting = 0  # submits under way (a visible window waits for these, never for fills)
+        self._generation = 0  # one more each time a visible window takes the browser: older fills are void
         self._held = 0  # visible windows holding the browser profile
         self._idle = asyncio.Condition()
 
@@ -143,17 +148,38 @@ class ApplyEngine:
         return self._locks.setdefault(job_id, asyncio.Lock())
 
     @contextlib.asynccontextmanager
-    async def _in_use(self) -> AsyncIterator[None]:
+    async def _in_use(self, *, submitting: bool = False) -> AsyncIterator[None]:
         """A fill or submit; ``EnginePausedError`` while a visible window holds the profile."""
         if self._held:
             raise EnginePausedError("a browser window is open for you: the application waits for it")
         self._busy += 1
+        self._submitting += submitting
         try:
             yield
         finally:
             self._busy -= 1
+            self._submitting -= submitting
             async with self._idle:
                 self._idle.notify_all()
+
+    @contextlib.asynccontextmanager
+    async def _interruptible(self) -> AsyncIterator[None]:
+        """A fill that a visible window may cut short: it ends as ``EnginePausedError`` (filled again later).
+
+        Whatever the cut-off fill raised or returned (a closed page, fields it could not enter) says nothing
+        about the form, so it never becomes a hand-over to the user.
+        """
+        generation = self._generation
+        try:
+            yield
+        except EnginePausedError:
+            raise
+        except Exception as error:
+            if self._generation != generation:
+                raise EnginePausedError(INTERRUPTED) from error
+            raise
+        if self._generation != generation:
+            raise EnginePausedError(INTERRUPTED)
 
     @property
     def busy(self) -> bool:
@@ -162,15 +188,17 @@ class ApplyEngine:
 
     @contextlib.asynccontextmanager
     async def paused(self) -> AsyncIterator[None]:
-        """Lend the browser profile to a visible window: new fills wait, running ones finish, then it closes.
+        """Lend the browser profile to a visible window at once: new fills wait, running fills are cut short.
 
-        Closing the browser under a running fill made that fill fail half way (a false hand-over), and the
-        visible browser could not open the profile while this one still held it.
+        A fill may take minutes, and the user who clicked "Log in" should not wait for it: it is voided
+        (``EnginePausedError``, filled again later), never handed over. A submit under way is waited for,
+        since cutting one off could leave an application half sent.
         """
         self._held += 1
         try:
             async with self._idle:
-                await self._idle.wait_for(lambda: self._busy == 0)
+                await self._idle.wait_for(lambda: self._submitting == 0)
+            self._generation += 1
             await self.aclose()
             yield
         finally:
@@ -303,7 +331,7 @@ class ApplyEngine:
         ``one_click``: a job board with the user's login, where its "Apply" may send at once (it is held for
         approval).
         """
-        async with self._in_use(), self._lock(job_id):
+        async with self._in_use(), self._lock(job_id), self._interruptible():
             await self.close_job(job_id)
             await self._check_link(url)
             page = await self._new_page()
@@ -459,7 +487,7 @@ class ApplyEngine:
 
         After the press, no confirmation is ``unknown`` (it may have been sent), never ``failed``.
         """
-        async with self._in_use(), self._lock(job_id):
+        async with self._in_use(submitting=True), self._lock(job_id):
             if not self.can_submit(job_id, code):
                 return SubmitResult(
                     "expired", "That approval is no longer valid (the form was closed or filled again)."

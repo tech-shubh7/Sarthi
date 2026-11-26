@@ -297,10 +297,10 @@ async def test_new_thanks_beside_a_form_still_on_screen_is_not_sent(engine: Appl
     assert done.outcome == "needs_human", done.detail
 
 
-async def test_a_visible_window_pauses_the_engine_without_closing_it_under_a_fill(tmp_path: Path) -> None:
+async def test_a_visible_window_waits_for_a_submit_but_never_for_a_fill(tmp_path: Path) -> None:
     paused_engine = ApplyEngine(tmp_path / "shots", url_check=None)
     order: list[str] = []
-    async with paused_engine._in_use():  # a fill under way
+    async with paused_engine._in_use(submitting=True):  # a submit under way
 
         async def window() -> None:
             async with paused_engine.paused():
@@ -310,11 +310,29 @@ async def test_a_visible_window_pauses_the_engine_without_closing_it_under_a_fil
 
         opening = asyncio.create_task(window())
         await asyncio.sleep(0.05)
-        assert order == []  # the window waits for the running fill
-        order.append("fill done")
+        assert order == []  # the window waits for the submit: cutting it off could half-send it
+        order.append("submit done")
     await opening
-    assert order == ["fill done", "window"]
+    assert order == ["submit done", "window"]
     assert not paused_engine._held
+
+
+async def test_a_visible_window_cuts_a_running_fill_short_and_it_is_filled_again(tmp_path: Path) -> None:
+    paused_engine = ApplyEngine(tmp_path / "shots", url_check=None)
+    window_open = asyncio.Event()
+
+    async def slow_fill() -> None:
+        async with paused_engine._in_use(), paused_engine._interruptible():
+            await window_open.wait()  # the user clicked "Log in" meanwhile
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    filling = asyncio.create_task(slow_fill())
+    await asyncio.sleep(0.01)
+    async with asyncio.timeout(2):  # the window opens at once, it does not wait for the fill
+        async with paused_engine.paused():
+            window_open.set()
+            with pytest.raises(EnginePausedError, match="filled again"):
+                await filling
 
 
 HITS: list[str] = []
