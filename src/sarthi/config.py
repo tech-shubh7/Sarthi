@@ -121,6 +121,8 @@ class Settings(BaseSettings):
     # Also send without a tap on job boards with the user's login (LinkedIn, Naukri, Indeed, ...). Off by
     # default: those sites may restrict accounts that apply in bulk. /autoapply boards on|off changes it.
     auto_apply_job_boards: bool = False
+    # A tapped Apply sends a clean fill without a Submit tap (/autoapply taps on|off changes it).
+    auto_apply_taps_send: bool = False
     auto_apply_daily_limit: int | None = Field(default=None, ge=1)  # None: no cap of its own
     auto_apply_wait_minutes: int = Field(default=5, ge=0, le=1440)
 

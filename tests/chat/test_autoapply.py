@@ -226,3 +226,22 @@ async def test_no_daily_cap_unless_the_user_sets_one(
     for job_id in jobs:
         await alert(bot, job_id)
     assert all(chats.is_auto(j) for j in jobs)
+
+
+async def test_tapped_applies_send_by_themselves_only_when_chosen(
+    bot: TelegramBot, api: FakeApi, chats: ChatStore
+) -> None:
+    first = strong(bot, 90, 1)
+    bot.choose(first, "apply")
+    assert not chats.is_auto(first)  # default: the user checks the form and taps Submit
+    await bot.handle_update(message(OWNER, "/autoapply taps on"))
+    assert bot.auto.taps_send() and "without a Submit tap" in api.texts()[-1]
+    second = strong(bot, 90, 2)
+    bot.choose(second, "apply")
+    assert chats.is_auto(second)
+    await bot.handle_update(message(OWNER, "/autoapply taps maybe"))
+    assert "taps on, or" in api.texts()[-1]
+    await bot.handle_update(message(OWNER, "/autoapply taps off"))
+    third = strong(bot, 90, 3)
+    bot.choose(third, "apply")
+    assert not chats.is_auto(third)

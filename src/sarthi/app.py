@@ -934,6 +934,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
             daily_limit=settings.auto_apply_daily_limit,
             wait_s=settings.auto_apply_wait_minutes * 60,
             job_boards=settings.auto_apply_job_boards,
+            taps_send=settings.auto_apply_taps_send,
         ),
         notices=NoticeStore(conn, clock=clock),
         telegram=mode != NO_TELEGRAM,

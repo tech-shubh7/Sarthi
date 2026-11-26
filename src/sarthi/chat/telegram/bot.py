@@ -625,7 +625,8 @@ class TelegramBot:
         if current not in ANSWERED or (current is JobStatus.LATER and wanted is JobStatus.APPLY):
             current = wanted
             self.chats.set_job_status(job_id, current)
-            self.auto.cancel(job_id)  # the user's own tap: they get the usual preview, nothing sent by itself
+            # The user's own tap: sent by itself when they chose so (/autoapply taps on), else the preview.
+            self.chats.set_auto(job_id, on=self.auto.taps_send())
             if current is JobStatus.APPLY:  # documents first; the application follows them
                 self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
         elif (
@@ -633,6 +634,7 @@ class TelegramBot:
             and wanted is JobStatus.APPLY
             and not self.chats.applying_alive(job_id, APPLY_STEPS)
         ):  # an Apply whose steps died (or whose documents failed): a new tap starts it again
+            self.chats.set_auto(job_id, on=self.auto.taps_send())
             self.queue.enqueue(names.DOCUMENTS, job_id, {"apply": True}, priority=Priority.ALERT)
         return current
 

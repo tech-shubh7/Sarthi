@@ -26,14 +26,18 @@ MIN_LINE = 75  # below this the AI's evidence is too thin to send an application
 LINE_KEY = "auto_apply.line"  # the user's own line ("85") or "off"; unset: the .env setting
 COUNT_KEY = "auto_apply.count"  # "YYYY-MM-DD n": how many were scheduled today
 BOARDS_KEY = "auto_apply.boards"  # "on" / "off": also send on job boards with the user's login; unset: .env
+TAPS_KEY = "auto_apply.taps"  # "on" / "off": a tapped Apply sends a clean fill without a Submit tap
 HELP = (
     "🤖 <b>Auto-apply</b> is {state}.\n\n"
     "When a job's match is at or above your line, I tell you and wait {wait} before applying, so you can "
     "cancel. A form is sent without your tap only when I could fill every answer from your profile; "
     "otherwise you get the usual preview. {boards}{limit}.\n\n"
     "/autoapply 85 sets your line (75-100), /autoapply off turns it off, "
-    "/autoapply boards on (or off) includes LinkedIn, Naukri and other job boards."
+    "/autoapply boards on (or off) includes LinkedIn, Naukri and other job boards, "
+    "/autoapply taps on (or off) sends the jobs you tap Apply on without asking for Submit.\n\n{taps}"
 )
+TAPS_ON = "Apply taps: sent without a Submit tap when every answer came from your profile."
+TAPS_OFF = "Apply taps: you check the filled form and tap Submit."
 BOARDS_ON = (
     "Also on LinkedIn, Naukri and other job boards with your login (they may restrict accounts that apply "
     "in bulk; each site gets at most its daily limit)"
@@ -49,6 +53,7 @@ class AutoApplySettings:
     daily_limit: int | None = None
     wait_s: float = 300
     job_boards: bool = False  # also send on job boards that use the user's own login
+    taps_send: bool = False  # a tapped Apply sends a clean fill without a Submit tap
 
 
 class AutoApply:
@@ -88,6 +93,15 @@ class AutoApply:
         """Include (or leave out) job boards with the user's login."""
         self.chats.set_state(BOARDS_KEY, "on" if on else "off")
 
+    def taps_send(self) -> bool:
+        """True when a tapped Apply sends a clean fill by itself (no Submit tap)."""
+        own = self.chats.get_state(TAPS_KEY)
+        return own == "on" if own in ("on", "off") else self.settings.taps_send
+
+    def set_taps(self, *, on: bool) -> None:
+        """Let a tapped Apply send by itself, or ask for Submit again."""
+        self.chats.set_state(TAPS_KEY, "on" if on else "off")
+
     def wanted(self, match: MatchRecord | None) -> bool:
         """True for a match the AI read and scored at or above the line, while today's limit allows."""
         line = self.line()
@@ -126,11 +140,11 @@ class AutoApply:
     def change_line(self, argument: str) -> str | None:
         """Store ``off`` or a percent (MIN_LINE-100); the problem, or None when stored (or nothing given)."""
         word = argument.strip().lower().rstrip("%").strip()
-        if word.startswith("boards"):
-            choice = word.removeprefix("boards").strip()
-            if choice not in ("on", "off"):
-                return "Say /autoapply boards on, or /autoapply boards off."
-            self.set_boards(on=choice == "on")
+        if word.startswith(("boards", "taps")):
+            kind, _, choice = word.partition(" ")
+            if choice.strip() not in ("on", "off"):
+                return f"Say /autoapply {kind} on, or /autoapply {kind} off."
+            (self.set_boards if kind == "boards" else self.set_taps)(on=choice.strip() == "on")
         elif word in ("off", "stop", "no", "0"):
             self.chats.set_state(LINE_KEY, "off")
         elif word.isdigit() and MIN_LINE <= int(word) <= 100:  # noqa: PLR2004
@@ -148,7 +162,10 @@ class AutoApply:
         cap = self.settings.daily_limit
         limit = f", at most {cap} a day" if cap is not None else ""
         boards = BOARDS_ON if self.boards() else BOARDS_OFF
-        return HELP.format(state=state, wait=_wait_text(self.settings.wait_s), boards=boards, limit=limit)
+        taps = TAPS_ON if self.taps_send() else TAPS_OFF
+        return HELP.format(
+            state=state, wait=_wait_text(self.settings.wait_s), boards=boards, limit=limit, taps=taps
+        )
 
 
 def _wait_text(seconds: float) -> str:
