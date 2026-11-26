@@ -36,6 +36,7 @@ COMPANY_SITE_BUTTON = (
 )
 _ALREADY = re.compile(r"\balready applied\b|^\s*applied\s*$", re.I | re.M)
 _LOGGED_OUT = re.compile(r"\b(login|register)\b to apply|login to apply", re.I)
+_BLOCKED = re.compile(r"^\s*Access Denied\b.*don't have permission to access", re.I | re.S)
 CHATBOT = "[class*='chatbot'], #_chatbot, .chatbot_DrawerContentWrapper"
 
 
@@ -50,6 +51,11 @@ async def open_job(page: Page, url: str) -> None:
     with contextlib.suppress(PlaywrightError):
         await page.wait_for_load_state("networkidle", timeout=10_000)
     text = await adapters.body_text(page)
+    if _BLOCKED.search(text):
+        # Naukri's firewall refuses automated browsers outright; Sarthi does not disguise itself to get past.
+        raise FillError("Naukri's firewall blocked Sarthi's browser (Access Denied): apply there yourself")
+    if closed := adapters.CLOSED_TEXT.search(text):
+        raise adapters.PostingClosedError(f"the posting is closed (Naukri: {closed.group(0)})")
     if _LOGGED_OUT.search(text) or "nlogin" in page.url:
         raise LoginNeededError("Naukri needs you to log in once: run `uv run sarthi login naukri`")
     if _ALREADY.search(text):

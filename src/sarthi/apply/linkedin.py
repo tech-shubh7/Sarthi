@@ -142,6 +142,8 @@ async def open_easy_apply(page: Page, url: str) -> None:
     if not visible:
         if _ALREADY.search(text):
             raise FillError("LinkedIn shows this application as already submitted")
+        if closed := adapters.CLOSED_TEXT.search(text):
+            raise adapters.PostingClosedError(f"the posting is closed (LinkedIn: {closed.group(0)})")
         company_site = await _company_site_button(page)
         if company_site is not None and (target := await external.follow(page, company_site, is_linkedin)):
             raise external.ExternalApplyError(target)

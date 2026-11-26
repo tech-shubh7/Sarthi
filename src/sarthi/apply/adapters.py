@@ -167,8 +167,9 @@ LEVER_VERIFY_ERROR = re.compile(r"there was an error verifying your application"
 # A closed posting's own words (the liveness idea of JobRadar, MIT: only a definite answer counts). Read only
 # on a page where no form was found, so a description that mentions a filled position changes nothing.
 CLOSED_TEXT = re.compile(
-    r"no longer accepting applications|not accepting applications|(?:position|role|job|vacancy)"
-    r" has (?:already )?been filled|\bis no longer (?:open|available|active|accepting)"
+    r"no longer accepting applications|not (?:currently )?accepting applications"
+    r"|(?:position|role|job|vacancy) has (?:already )?been filled"
+    r"|\bis no longer (?:open|available|active|accepting)"
     r"|this (?:job|posting|position) (?:posting )?(?:has )?(?:expired|closed)|job not found"
     r"|(?:posting|job) (?:has been )?closed",
     re.IGNORECASE,
