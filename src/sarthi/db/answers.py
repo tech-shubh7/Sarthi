@@ -14,6 +14,7 @@ from sarthi.db.connection import transaction
 from sarthi.jobs.forms import FieldType, FormField
 
 MAX_ANSWER_CHARS = 2000
+MAX_OPTIONS = 400  # every country of a "Country / Territory" list (~250), not the first 50 (stopped at Congo)
 
 
 class AnswerStore:
@@ -59,7 +60,7 @@ class AnswerStore:
                 "INSERT OR IGNORE INTO pending_question"
                 " (job_id, field_key, label, field_type, options, position) VALUES (?, ?, ?, ?, ?, ?)",
                 [
-                    (job_id, f.key, f.label[:500], f.type, json.dumps(list(f.options)[:50]), i)
+                    (job_id, f.key, f.label[:500], f.type, json.dumps(list(f.options)[:MAX_OPTIONS]), i)
                     for i, f in enumerate(fields)
                 ],
             )

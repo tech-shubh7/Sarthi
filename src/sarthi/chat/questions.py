@@ -23,6 +23,7 @@ from sarthi.queue.tasks import Priority, TaskQueue
 
 ASKING_KEY = "form.asking"  # JSON {"job": id, "key": field key} while a question waits for a typed answer
 MAX_BUTTONS = 10
+MAX_LISTED = 40  # longer option lists (countries) are typed, not listed: a Telegram message holds 4096 chars
 _CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
 
 
@@ -156,7 +157,11 @@ class QuestionFlow:
             rows = [[(option[:60], f"ans:{i}")] for i, option in enumerate(question.options)]
             markup = buttons(*rows, [("⏭ Don't apply to this job", "ans:cancel")])
         else:
-            hint = f"\nAnswers: {escape(', '.join(question.options))}" if question.options else ""
+            if len(question.options) > MAX_LISTED:  # a country list: type it, it is matched to the options
+                first = escape(question.options[0])
+                hint = f"\nType your answer (one of {len(question.options)} choices, e.g. {first})."
+            else:
+                hint = f"\nAnswers: {escape(', '.join(question.options))}" if question.options else ""
             keep = (
                 "I'll use it for this application only."
                 if company_specific(question.label)

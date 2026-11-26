@@ -302,6 +302,14 @@ def test_pending_questions(answers: AnswerStore, job_store: JobStore) -> None:
     assert answers.pending(job_id) == []
 
 
+def test_a_country_list_keeps_every_country(answers: AnswerStore, job_store: JobStore) -> None:
+    job_id = job_store.save(make_job()).job_id
+    countries = (*(f"Country {i:03d}" for i in range(249)), "Zimbabwe")
+    answers.set_pending(job_id, [FormField("c", "Country / Territory", "select", True, countries)])
+    kept = answers.pending(job_id)[0].options
+    assert len(kept) == 250 and kept[-1] == "Zimbabwe"  # not cut at the 50th (Congo)
+
+
 # ---- the form check -------------------------------------------------------------------------------------
 
 
