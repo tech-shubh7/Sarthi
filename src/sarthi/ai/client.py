@@ -23,7 +23,7 @@ from pydantic import BaseModel, ValidationError
 from sarthi.ai.gate import local_gate
 from sarthi.ai.limits import RATE_LIMITS, RateLimits, estimate_tokens, retry_seconds
 from sarthi.ai.prompts import SYSTEM_RULES, Prompt
-from sarthi.ai.providers import FREE_PROVIDERS, Endpoint
+from sarthi.ai.providers import FREE_PROVIDERS, PROVIDER_OPTIONS, Endpoint
 from sarthi.clock import Clock, to_iso, utcnow
 from sarthi.db.ai_store import AiStore
 
@@ -276,6 +276,7 @@ class AiClient:
             "messages": messages,
             "temperature": 0,
             "response_format": {"type": "json_object"},
+            **PROVIDER_OPTIONS.get(endpoint.provider, {}),
         }
         response = await self._post(endpoint, body, headers)
         limit = MAX_RETRY_WAIT_S if urgent else MAX_BACKGROUND_WAIT_S

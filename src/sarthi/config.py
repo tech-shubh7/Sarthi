@@ -140,7 +140,7 @@ class Settings(BaseSettings):
         return bool(self.mail_imap_host and self.mail_user and self.mail_password)
 
     # AI models, tried in order until one answers: "<provider>/<model>", e.g. "gemini/gemini-2.5-flash".
-    # Providers: ollama, gemini, openai, anthropic, groq, openrouter, deepseek (see sarthi.ai.providers).
+    # Providers: ollama, gemini, openai, anthropic, groq, openrouter, deepseek, mistral (sarthi.ai.providers).
     llm_fast_models: list[str] = Field(default=["ollama/llama3.1"], description="For matching.")
     llm_quality_models: list[str] = Field(default=["ollama/llama3.1"], description="For writing.")
     llm_daily_token_budget: int = Field(
@@ -154,6 +154,7 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
     deepseek_api_key: SecretStr | None = None
+    mistral_api_key: SecretStr | None = None
 
     @property
     def db_path(self) -> Path:

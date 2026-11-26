@@ -16,6 +16,9 @@ from sarthi.config import Settings
 log = logging.getLogger(__name__)
 
 FREE_PROVIDERS = frozenset({"ollama"})
+# Extra request fields per provider. DeepSeek's models think by default, billed as output (13x the output
+# for one tailored line, measured 2026-11-26); Sarthi's structured answers need no thinking.
+PROVIDER_OPTIONS: dict[str, dict[str, object]] = {"deepseek": {"thinking": {"type": "disabled"}}}
 """Run on the user's own machine: no API key, not counted against the daily token budget."""
 
 
@@ -33,6 +36,7 @@ PRESETS: dict[str, _Preset] = {
     "groq": _Preset("https://api.groq.com/openai/v1", "groq_api_key"),
     "openrouter": _Preset("https://openrouter.ai/api/v1", "openrouter_api_key"),
     "deepseek": _Preset("https://api.deepseek.com/v1", "deepseek_api_key"),
+    "mistral": _Preset("https://api.mistral.ai/v1", "mistral_api_key"),
 }
 
 
