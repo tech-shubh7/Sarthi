@@ -246,7 +246,7 @@ class CoverAnswer(BaseModel):
 
 COVER_PROMPT = Prompt(
     name="cover_letter",
-    version="3",
+    version="4",
     instructions="""
 Write the body of a short cover letter (3 paragraphs, 170-240 words in total) in the candidate's own voice,
 to the company in <job_posting>, using only facts in <resume_sections>. It should read like a capable person
@@ -264,7 +264,8 @@ template phrases.
 No greeting, no signature, no subject line, no praise of the company ("industry leader", "renowned"). No em
 dashes. Never use: passionate, thrilled, excited to apply, leverage, align with, demonstrate, resonate,
 synergy, I believe, I am confident, furthermore, additionally, moreover, dynamic, innovative, esteemed,
-I am writing to.
+I am writing to. Never hedge or apologise for the fit ("the closest thing I have", "although I have not",
+"I hope", "I may not"): state what the candidate built and let it speak.
 
 Return JSON: {"paragraphs": ["<paragraph 1>", "<paragraph 2>", "<paragraph 3>"]}
 """,

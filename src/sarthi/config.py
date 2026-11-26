@@ -121,6 +121,11 @@ class Settings(BaseSettings):
     # Also send without a tap on job boards with the user's login (LinkedIn, Naukri, Indeed, ...). Off by
     # default: those sites may restrict accounts that apply in bulk. /autoapply boards on|off changes it.
     auto_apply_job_boards: bool = False
+    # Rewrite resume lines for each job with the AI. Off: every application sends the person's own resume
+    # exactly as uploaded (design, links, wording); only the cover letter is written per job. Off by
+    # default: rewritten lines can state things the resume never said (seen: "Python and Node.js" for
+    # Node.js-only work), and a false line costs more than a tailored one gains.
+    tailor_resume: bool = False
     # A tapped Apply sends a clean fill without a Submit tap (/autoapply taps on|off changes it).
     auto_apply_taps_send: bool = False
     auto_apply_daily_limit: int | None = Field(default=None, ge=1)  # None: no cap of its own

@@ -112,8 +112,13 @@ class DocumentMaker:
         ai: AiClient,
         data_dir: Path,
         clock: Clock = utcnow,
+        tailor_resume: bool = True,
     ) -> None:
-        """Read jobs and the profile; write files under ``data_dir``; ask ``ai`` (the quality models)."""
+        """Read jobs and the profile; write files under ``data_dir``; ask ``ai`` (the quality models).
+
+        ``tailor_resume`` False: every job gets the person's own resume unchanged; only the letter is new.
+        """
+        self.tailor_resume = tailor_resume
         self.jobs = jobs
         self.documents = documents
         self.queue = queue
@@ -210,16 +215,21 @@ class DocumentMaker:
         master = await self.master(profile, last=tries.last)
         skills = profile.skills
 
-        answer = await tailor(self.ai, master, job_text, own_skills=skills)
-        self._busy(answer, tries)
-        built = tailored_resume(master, answer, profile.resume_text, skills, job_text=job_text)
-        if built.problems:  # clichés, lengths, copied sentences: one more try with the problems, then strict
-            answer = await tailor(self.ai, master, job_text, built.problems[:12], skills) or answer
-            built = tailored_resume(
-                master, answer, profile.resume_text, skills, strict=True, job_text=job_text
-            )
-
-        built = await self._checked_summary(master, built, tries)
+        if self.tailor_resume:
+            answer = await tailor(self.ai, master, job_text, own_skills=skills)
+            self._busy(answer, tries)
+            built = tailored_resume(master, answer, profile.resume_text, skills, job_text=job_text)
+            if (
+                built.problems
+            ):  # clichés, lengths, copied sentences: one more try with the problems, then strict
+                answer = await tailor(self.ai, master, job_text, built.problems[:12], skills) or answer
+                built = tailored_resume(
+                    master, answer, profile.resume_text, skills, strict=True, job_text=job_text
+                )
+            built = await self._checked_summary(master, built, tries)
+        else:  # the person's own resume as it is (their file, when kept); only the letter is written per job
+            answer = None
+            built = tailored_resume(master, None, profile.resume_text, skills, job_text=job_text)
         letter = await self._letter(
             master, profile, role=job.title, company=job.company, job_text=job_text, tries=tries
         )

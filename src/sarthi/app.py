@@ -978,6 +978,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         ai=quality,
         data_dir=settings.data_dir,
         clock=clock,
+        tailor_resume=settings.tailor_resume,
     )
     forms = FormChecker(
         jobs,

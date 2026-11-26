@@ -55,7 +55,9 @@ def contacts_kept(pdf: bytes, expected: Contact) -> list[str]:
 
 def own_design(original: Original, edits: list[Edit], contact: Contact) -> OwnDesign:
     """The user's file with ``edits`` written in; ``contact`` must survive in the PDF."""
-    if original.kind == "pdf":
+    if original.kind == "pdf" and not edits:  # nothing to change: the person's own file, byte for byte
+        result = OwnDesign(original.data)
+    elif original.kind == "pdf":
         edited = edit_pdf(original.data, edits)
         result = OwnDesign(edited.pdf, applied=edited.applied, skipped=edited.skipped)
     elif original.kind == "docx":

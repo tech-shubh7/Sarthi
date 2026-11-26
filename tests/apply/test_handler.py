@@ -90,9 +90,24 @@ def job_at(
     posting = make_job(url=url, apply_url=url, title=title, company=company, country_codes=[country])
     job_id = jobs.save(posting).job_id
     if docs:  # the tailored resume is made before applying
-        record = DocumentRecord(job_id, "v", f"documents/{job_id}/r.pdf", f"documents/{job_id}/c.pdf")
+        made_for = PROFILE.version
+        record = DocumentRecord(job_id, made_for, f"documents/{job_id}/r.pdf", f"documents/{job_id}/c.pdf")
         DocumentStore(jobs._conn).save(record)
     return job_id
+
+
+async def test_a_resume_made_from_an_older_upload_is_made_again_before_applying(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, LEVER, docs=False)
+    old = DocumentRecord(job_id, "an-older-profile", f"documents/{job_id}/r.pdf", f"documents/{job_id}/c.pdf")
+    DocumentStore(conn).save(old)
+    engine = FakeEngine(FILLED)
+    await applier(conn, job_store, queue, tmp_path, engine, clock).handle_apply(
+        TaskRecord(1, names.APPLY, job_id, {}, 1)
+    )
+    assert engine.filled == []  # nothing filled with the old resume
+    assert payload(queue, names.DOCUMENTS) == {"apply": True}  # a new one is made first
 
 
 def payload(queue: TaskQueue, kind: str) -> dict[str, Any]:

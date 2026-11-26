@@ -123,6 +123,27 @@ async def test_documents_are_made_stored_and_announced(
     assert saved_master.contact.email == "asha.rao@example.com"  # read locally, never from the AI
 
 
+async def test_with_tailoring_off_the_resume_is_never_rewritten_only_the_letter_is_new(
+    job_store: JobStore, documents: DocumentStore, queue: TaskQueue, tmp_path: Path
+) -> None:
+    ai = FakeAi(good_answers())
+    job_id = saved(job_store)
+    own = DocumentMaker(
+        job_store,
+        documents,
+        queue,
+        profile,
+        ai=ai,  # type: ignore[arg-type]
+        data_dir=tmp_path,
+        tailor_resume=False,
+    )
+    await own.handle(TaskRecord(1, names.DOCUMENTS, job_id, {"apply": True}, 1))
+    record = documents.get(job_id)
+    assert record is not None
+    assert record.report["tailored_by_ai"] is False and record.report["letter_by_ai"] is True
+    assert not any("tailor" in name for name in ai.asked)  # the AI is never asked to rewrite the resume
+
+
 async def test_master_is_read_once_per_uploaded_resume(
     job_store: JobStore, documents: DocumentStore, queue: TaskQueue, tmp_path: Path
 ) -> None:

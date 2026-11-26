@@ -343,6 +343,24 @@ def _lower_rest(description: str) -> str:
     return f"is {built.group(2).lower()} {text[built.end() :]}" if built else _as_clause(text)
 
 
+_LEGAL_SUFFIX = re.compile(
+    r"[\s,]+(?:private\s+limited|pvt\.?\s*ltd\.?|limited|ltd\.?|inc\.?|llc|llp|gmbh|corp\.?|co\.)\s*$",
+    re.IGNORECASE,
+)
+ACRONYM_CHARS = 3  # VY, AI, IBM stay in capitals
+SHOUTED_CHARS = 4  # a name in capitals longer than this is calmed (an acronym on its own is left)
+
+
+def letter_company(name: str) -> str:
+    """The company as a person would write it in a greeting: "VY SYSTEMS PRIVATE LIMITED" -> "VY Systems"."""
+    short = name.strip()
+    while (trimmed := _LEGAL_SUFFIX.sub("", short)) != short and trimmed:
+        short = trimmed
+    if short.isupper() and len(short) > SHOUTED_CHARS:
+        short = " ".join(w if len(w) <= ACRONYM_CHARS else w.capitalize() for w in short.split())
+    return short or name
+
+
 def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
     master: MasterResume,
     answer: CoverAnswer | None,
@@ -361,7 +379,7 @@ def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
     built from the resume used. A plain letter carries the problems, so the caller can ask again.
     """
     sign_off = f"Best regards,\n{master.name}" if master.name else "Best regards,"
-    greeting = f"Dear {company} hiring team,"
+    greeting = f"Dear {letter_company(company)} hiring team,"
     plain = plain_letter(master, role, company, job_text)
     if answer is None:
         return Letter(greeting, plain, sign_off, from_ai=False)

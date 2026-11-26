@@ -32,6 +32,8 @@ BANNED_PHRASES: tuple[str, ...] = (
     # career-ops (MIT), modes/pdf.md and modes/cover.md: size words and consultant talk
     "significantly", "dramatically", "stakeholder alignment", "data-driven", "actionable insights",
     "move the needle", "perfect fit", "strong track record", "game-changing", "world-class",
+    # hedging that undersells the candidate (seen in real letters)
+    "the closest thing i have", "although i have not", "i hope to",
 )  # fmt: skip
 _BANNED_PATTERNS: tuple[tuple[str, str], ...] = (
     ("align with", r"\balign(?:s|ed|ing)?\s+with\b"),

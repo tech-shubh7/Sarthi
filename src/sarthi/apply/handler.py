@@ -170,7 +170,10 @@ class Applier:
         if self.applications.was_sent(task.key):  # a second tap, a refill, a reclaimed task: never twice
             self._result(task.key, "duplicate", f"You already applied to {job.title} at {job.company}.")
             return
-        if self.documents.get(task.key) is None:  # the tailored resume and letter come first
+        made = self.documents.get(task.key)
+        if made is None or made.profile_version != profile.version:
+            # The tailored resume and letter come first, made from the current profile and resume: one made
+            # from an older upload (another design, other links) is never sent.
             self.queue.enqueue(names.DOCUMENTS, task.key, {"apply": True}, priority=Priority.ALERT)
             return
         if (key := self.jobs.role_key_of(task.key)) and self.applications.sent_for_role(key, task.key):

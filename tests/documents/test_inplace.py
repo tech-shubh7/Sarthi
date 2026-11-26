@@ -128,6 +128,13 @@ def test_a_document_that_drops_a_contact_detail_fails(designed_pdf: bytes) -> No
     assert "leetcode" in design.problems[0]
 
 
+def test_with_nothing_to_change_the_resume_sent_is_the_uploaded_file_byte_for_byte(
+    designed_pdf: bytes,
+) -> None:
+    design = own_design(Original("pdf", designed_pdf), [], contact())
+    assert design.pdf == designed_pdf and design.kind == "pdf" and not design.problems
+
+
 def test_hidden_pdf_links_reach_the_master_contact(designed_pdf: bytes) -> None:
     found = contact_from(extract_text(designed_pdf))
     assert found.email == "priya.nair@example.com"
