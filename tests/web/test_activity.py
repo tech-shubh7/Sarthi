@@ -71,8 +71,8 @@ def test_questions_auto_applies_and_notices_are_listed(
     page = client.get("/activity/timeline").text
     assert "Dear team, &lt;b&gt;" in page and "Follow-up" in page
     overview = client.get("/").text
-    assert "Your next steps" in overview and "Employer questions and forms to approve" in overview
-    assert "Applications in progress" in overview
+    assert "Needs you" in overview and "Questions to answer or forms to approve" in overview
+    assert 'href="/activity/auto-apply"' in overview and "Auto-applies you can still cancel" in overview
 
 
 def test_answers_go_to_the_running_app_and_problems_come_back(

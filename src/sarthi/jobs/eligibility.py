@@ -22,13 +22,17 @@ _NATIONALITY: dict[str, str] = {
     "singaporean": "SG", "singapore": "SG", "emirati": "AE", "uae": "AE",
     "indian": "IN", "india": "IN", "irish": "IE", "ireland": "IE", "new zealand": "NZ",
     "french": "FR", "israeli": "IL", "saudi": "SA", "japanese": "JP",
+    "qatari": "QA", "kuwaiti": "KW", "omani": "OM", "bahraini": "BH", "malaysian": "MY",
 }  # fmt: skip
 _NATION = "|".join(re.escape(n) for n in sorted(_NATIONALITY, key=len, reverse=True))
 _REQUIRED = r"(?:required|only|mandatory|is a must|needed|necessary|essential)"
 # Each pattern's "nation" group (when present) names the country.
+# Gulf postings say "nationals" ("Saudi nationals only", "UAE National Only") where others say "citizens".
 _CITIZENSHIP = [
-    re.compile(rf"\b(?P<nation>{_NATION})\s+citizen(?:s|ship)?\s+(?:is\s+)?{_REQUIRED}", re.I),
-    re.compile(rf"\bonly\s+(?:open\s+to\s+)?(?P<nation>{_NATION})\s+citizens\b", re.I),
+    re.compile(
+        rf"\b(?P<nation>{_NATION})\s+(?:citizen(?:s|ship)?|nationals?)\s+(?:is\s+|are\s+)?{_REQUIRED}", re.I
+    ),
+    re.compile(rf"\bonly\s+(?:open\s+to\s+|for\s+)?(?P<nation>{_NATION})\s+(?:citizens|nationals)\b", re.I),
     re.compile(
         rf"\bmust\s+(?:be|hold)\s+(?:an?\s+)?(?:(?P<nation>{_NATION})\s+)?"
         r"(?:citizen|national|citizenship|permanent\s+resident|green\s+card)",
@@ -100,7 +104,18 @@ LANGUAGES = (
     "Turkish", "Russian", "Czech", "Hungarian", "Romanian", "Greek", "Malay", "Indonesian", "Thai",
     "Vietnamese", "Hindi", "Tamil", "Telugu", "Bengali", "Urdu", "Flemish", "English",
 )  # fmt: skip
-_NATIVE_NAMES = {"deutsch": "German", "nederlands": "Dutch", "français": "French", "francais": "French"}
+# Languages as their speakers write them: a profile listing "Português" or "日本語" speaks that language.
+_NATIVE_NAMES = {
+    "deutsch": "German", "nederlands": "Dutch", "français": "French", "francais": "French",
+    "português": "Portuguese", "portugues": "Portuguese", "español": "Spanish", "espanol": "Spanish",
+    "castellano": "Spanish", "italiano": "Italian", "polski": "Polish", "svenska": "Swedish",
+    "norsk": "Norwegian", "dansk": "Danish", "suomi": "Finnish", "türkçe": "Turkish", "turkce": "Turkish",
+    "magyar": "Hungarian", "čeština": "Czech", "română": "Romanian", "русский": "Russian",
+    "ελληνικά": "Greek", "עברית": "Hebrew", "العربية": "Arabic", "हिन्दी": "Hindi", "हिंदी": "Hindi",
+    "தமிழ்": "Tamil", "తెలుగు": "Telugu", "বাংলা": "Bengali", "اردو": "Urdu", "日本語": "Japanese",
+    "中文": "Chinese", "普通话": "Mandarin", "廣東話": "Cantonese", "한국어": "Korean",
+    "bahasa indonesia": "Indonesian", "bahasa melayu": "Malay", "tiếng việt": "Vietnamese",
+}  # fmt: skip
 _LANGUAGE = "|".join([*LANGUAGES, *(n.capitalize() for n in _NATIVE_NAMES)])
 # CEFR levels as numbers; words people use for them.
 _LEVELS = {"a1": 1, "a2": 2, "b1": 3, "b2": 4, "c1": 5, "c2": 6}
@@ -220,7 +235,8 @@ def spoken_languages(listed: tuple[str, ...] | list[str]) -> dict[str, int | Non
     """
     spoken: dict[str, int | None] = {"English": None}
     for item in listed:
-        name = re.search(rf"(?i)\b({_LANGUAGE})\b", item)
+        # Not \b: Indic names end in a vowel sign, which is no word character ("हिन्दी", "தமிழ்").
+        name = re.search(rf"(?i)(?<!\w)({_LANGUAGE})(?!\w)", item)
         if not name:
             continue
         language = _NATIVE_NAMES.get(name[1].lower(), name[1].capitalize())

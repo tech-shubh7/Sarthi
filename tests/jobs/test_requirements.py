@@ -70,6 +70,14 @@ from sarthi.jobs.requirements import min_years_required
         ("We have 25 years of operation and an average employee tenure of 15 years", None),
         ("Experience: 0-2 years", None),  # freshers welcome: nothing to hold against the user
         ("Experience: 1-3 years", 1),
+        # Postings in other languages.
+        ("Mindestens 10 Jahre Berufserfahrung im Maschinenbau.", 10),
+        ("Sie bringen 3-5 Jahre Erfahrung in der Konstruktion mit.", 3),
+        ("Al menos 4 años de experiencia en ventas B2B.", 4),
+        ("Mínimo de 2 anos de experiência com atendimento.", 2),
+        ("Vous avez 5 ans d'expérience en comptabilité.", 5),
+        ("Je hebt minimaal 3 jaar werkervaring in het onderwijs.", 3),
+        ("Unser Unternehmen besteht seit 25 Jahren.", None),  # company age, not experience
         # Hostile input never breaks it.
         ("Experience: " + "9" * 5000 + " years", None),
         ("years " * 2000, None),

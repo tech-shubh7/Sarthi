@@ -65,7 +65,7 @@
 {# Why Sarthi could not send an application, said for people. #}
 {% macro reason(detail) -%}
 {%- set d = (detail or '')|replace('The form could not be filled: ', '') -%}
-{%- if 'logged-in account' in d or 'signed out' in d or 'sign in' in d -%}This site needs you signed in. Log in once (/login in Telegram) and tap Apply again, or apply there yourself.
+{%- if 'logged-in account' in d or 'signed out' in d or 'sign in' in d -%}This site needs you signed in. Log in once on the Login needed page (or /login in Telegram) and Sarthi tries again, or apply there yourself.
 {%- elif 'CAPTCHA' in d -%}The form has a CAPTCHA, which only you can solve. Tap Finish it myself: Sarthi fills the form in a window on this computer, and you solve the CAPTCHA and press Submit.
 {%- elif 'Workday' in d -%}Workday needs your own account with this employer: apply there yourself.
 {%- elif 'no Easy Apply' in d or 'its link could not be read' in d -%}This job applies on the company's own site: apply there yourself.
@@ -75,4 +75,47 @@
 
 {% macro empty(title, text) %}
 <div class="card empty">{{ icon('empty') }}<h2>{{ title }}</h2><p>{{ text }}</p></div>
+{% endmacro %}
+
+{# A count in the sidebar; ``hot``: work waiting for the user. #}
+{% macro badge(n, hot=False) %}{% if n %}<b class="count{% if hot %} hot{% endif %}"{% if hot %} title="Waiting for you"{% endif %}>{{ '{:,}'.format(n) }}</b>{% endif %}{% endmacro %}
+
+{# A section's own pages, as a list of links (the sidebar, and the strip on small screens). #}
+{% macro page_links(section, cls='subnav') %}
+<ul class="{{ cls }}">
+  {% for p in section.pages %}<li><a href="{{ p.href }}"{% if p.current %} aria-current="page"{% endif %}><span>{{ p.title }}</span>{{ badge(p.count, p.hot) }}</a></li>{% endfor %}
+</ul>
+{% endmacro %}
+
+{# The page's title, what it is for, and (from ``call``) its own buttons. #}
+{% macro head(title, lede='') %}
+<header class="page-head">
+  <div>
+    <h1>{{ title }}</h1>
+    {% if lede %}<p class="lede">{{ lede }}</p>{% endif %}
+  </div>
+  {% if caller is defined %}<div class="head-actions">{{ caller() }}</div>{% endif %}
+</header>
+{% endmacro %}
+
+{# A select inside the filter bar. ``options``: (value, label) pairs. #}
+{% macro choose(name, title, options, selected, first='') %}
+<label class="filter"><span>{{ title }}</span>
+  <select name="{{ name }}">{% if first %}<option value="">{{ first }}</option>{% endif %}
+    {% for value, text in options %}<option value="{{ value }}" {% if selected == value %}selected{% endif %}>{{ text }}</option>{% endfor %}
+  </select></label>
+{% endmacro %}
+
+{# Search, site and sort for one list page; ``action``: the page's own address. #}
+{% macro list_filters(action, filters, sites, sorts) %}
+<form class="filters card" method="get" action="{{ action }}" role="search">
+  <label class="filter grow"><span>Role or company</span>
+    <span class="search-box">{{ icon('search') }}<input type="search" name="q" maxlength="80" value="{{ filters.query }}" placeholder="Search roles or companies"></span></label>
+  {{ choose('site', 'Site', sites, filters.site, 'All sites') }}
+  {{ choose('sort', 'Sort', sorts.items(), filters.sort) }}
+  <div class="filter-actions">
+    <button type="submit" class="button">Search</button>
+    {% if filters.query or filters.site %}<a class="button quiet" href="{{ action }}">Clear</a>{% endif %}
+  </div>
+</form>
 {% endmacro %}

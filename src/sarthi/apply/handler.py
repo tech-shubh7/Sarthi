@@ -201,6 +201,11 @@ class Applier:
         if not self.allow_board_automation and is_job_board(url):
             self._hand_over(job_id, url, BOARD_MANUAL)
             return True
+        if self.applications.firewall_blocked_since(site_of(url), self._clock() - DAY):
+            # The site's firewall refused Sarthi's browser in the last day: no resume and letter are written
+            # (paid AI) for a form that cannot be reached; the job goes straight to "apply yourself".
+            self._hand_over(job_id, url, adapters.blocked_reason(url))
+            return True
         return False
 
     async def handle_apply(self, task: TaskRecord) -> None:  # noqa: PLR0911  (each way an application can stop)

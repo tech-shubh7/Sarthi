@@ -85,7 +85,9 @@ class Settings(BaseSettings):
         description="Free public job feeds (no key).",
     )
     feeds_every_minutes: int = Field(default=60, ge=15)
-    freehire: bool = Field(default=True, description="Search Freehire (~90 hiring systems) for your roles.")
+    freehire: bool = Field(
+        default=True, description="Search Freehire (~430 job sites and hiring systems) for your roles."
+    )
     catalog: bool = Field(
         default=True,
         description="Search ATS-Scrapers' daily snapshot of ~192k company boards (~100 MB a day).",

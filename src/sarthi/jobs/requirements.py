@@ -59,6 +59,15 @@ _BARE_RANGE = re.compile(
 _NOT_EXPERIENCE = re.compile(
     r"\b(?:contract|duration|tenure|period|warranty|bond|age|term|validity|notice)\b", re.I
 )
+# Experience requirements in German, Spanish, Portuguese, French and Dutch postings.
+# Examples include "mindestens 5 Jahre Berufserfahrung",
+# "3 años de experiencia", "2 anos de experiência", "5 ans d'expérience", "3 jaar werkervaring".
+_OTHER_LANGUAGES = re.compile(
+    rf"\b(\d{{1,2}})\s*\+?\s*(?:{_DASH}\s*\d{{1,2}}\s*)?\+?\s*(?:jahren?|años|anos|ans|jaar)\b"
+    r"(?:\s+[\w-]+){0,3}?\s+(?:berufserfahrung|erfahrung|de\s+experiencia|de\s+experiência|"
+    r"d['\u2019]\s*exp[ée]rience|(?:werk)?ervaring)",
+    re.IGNORECASE,
+)
 _MAX_PLAUSIBLE_YEARS = 30
 _DASH_LOST_BELOW = 10  # "Experience: 37 Years": a "3-7" whose dash a feed dropped, not thirty-seven years
 _DASH_LOST_SPAN = 6
@@ -93,6 +102,7 @@ def min_years_required(text: str) -> int | None:
     years += [int(m.group(1)) for m in _HANDS_ON.finditer(text)]
     years += [int(m.group(2)) for m in _SKILL_LINE.finditer(text) if not _NOT_EXPERIENCE.search(m.group(1))]
     years += [int(m.group(1)) for m in _BARE_RANGE.finditer(text)]
+    years += [int(m.group(1)) for m in _OTHER_LANGUAGES.finditer(text)]
     if 0 in years:
         return None  # "0-2 years": freshers are welcome, so there is no minimum to fall short of
     plausible = [n for n in years if 0 < n <= _MAX_PLAUSIBLE_YEARS]

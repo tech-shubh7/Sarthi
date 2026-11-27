@@ -1,0 +1,26 @@
+{% extends "sources/_layout.html" %}
+{% from "_macros.html" import icon, pager, share %}
+{% block lede %}The sites the jobs came from, and how many each one brought.{% endblock %}
+{% block page %}
+{% if sites %}
+<section class="card table-card section" aria-labelledby="sites-title">
+<h2 class="card-title table-title" id="sites-title">{{ icon('search') }}Sites the jobs came from</h2>
+<table class="table">
+  <thead><tr><th>Site</th><th>Found through</th><th>Jobs</th><th>Share</th><th>Last {{ recent_days }} days</th><th>Companies</th><th>Last new job</th></tr></thead>
+  <tbody>
+  {% for s in sites %}
+    <tr>
+      <td data-label="Site"><b>{{ s.row.site }}</b>{% if s.career %}<span class="job-sub">Company career pages</span>{% endif %}</td>
+      <td data-label="Through" class="faint">{{ s.reader or 'no longer read' }}</td>
+      <td data-label="Jobs" class="num">{{ '{:,}'.format(s.row.jobs) }}</td>
+      <td data-label="Share">{{ share(s.row.jobs, site_jobs, 'teal' if s.career else '') }}</td>
+      <td data-label="Recent" class="num">{{ '{:,}'.format(s.row.jobs_since) }}</td>
+      <td data-label="Companies" class="num">{{ '{:,}'.format(s.row.companies) }}</td>
+      <td data-label="Last new" class="faint">{{ ago(s.row.last_found_at) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</section>
+{% endif %}
+{% endblock %}

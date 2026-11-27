@@ -1,0 +1,19 @@
+{% extends "applications/_list.html" %}
+{% from "applications/_parts.html" import post with context %}
+{% block step %}
+  {% if r.questions %}
+  <p class="why">{{ r.questions }} unanswered {{ 'question' if r.questions == 1 else 'questions' }} from the employer.</p>
+  <a class="button small" href="/activity/questions?job={{ r.job_id }}#job-{{ r.job_id }}">Answer questions</a>
+  {% elif r.job_id in pending %}
+  <p class="why">Waiting for your Submit.</p>
+  <div class="row-actions">
+    {{ post(r, 'submit', 'Submit application') }}{{ post(r, 'cancel', 'Cancel', 'quiet') }}
+    {% if pending[r.job_id].screenshot %}<a class="button small ghost" href="/applications/{{ r.job_id }}/form.png" target="_blank" rel="noopener">View full form</a>{% endif %}
+  </div>
+  {% elif can_edit %}
+  <p class="why">The previous browser tab is closed.</p>
+  {{ post(r, 'refill', 'Fill it again') }}
+  {% else %}
+  <p class="why">Start Sarthi to fill this form again.</p>
+  {% endif %}
+{% endblock %}

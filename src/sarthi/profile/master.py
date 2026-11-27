@@ -114,7 +114,7 @@ class MasterResume(BaseModel):
 # ---- contact details, read locally ---------------------------------------------------------------------
 
 _EMAIL = re.compile(r"[\w.+-]{1,64}@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
-_PHONE = re.compile(r"(?<![\w.])\+?\d[\d\s().-]{8,16}\d(?![\w.])")
+_PHONE = re.compile(r"(?<![\w.(])(?:\+?\d|\(\d)[\d\s().-]{8,16}\d(?![\w.])")  # "(512) 555-0147" keeps "("
 _PROFILE_SITES = (
     r"linkedin\.com/in/|github\.com/|gitlab\.com/|leetcode\.com/|kaggle\.com/|medium\.com/|(?:x|twitter)\.com/"
     r"|behance\.net/|dribbble\.com/|stackoverflow\.com/users/|huggingface\.co/|dev\.to/|codeforces\.com/"
@@ -127,7 +127,8 @@ _LINK = re.compile(
 # A bare personal site in the header ("priya.dev", "www.asharao.in"): only there, where it is a contact.
 _SITE = re.compile(
     r"(?<![@\w.])(?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*"
-    r"\.(?:dev|io|me|com|in|ai|app|site|xyz|tech|page|net|org|co|uk)(?:/[\w./%~-]*)?(?![\w@])"
+    r"\.(?:dev|io|me|com|in|ai|app|site|xyz|tech|page|net|org|co|uk|design|studio|art|portfolio|online"
+    r"|website|nl|de|eu|ca|au|nz|ie|fr|es|it|ch|se|be|at|dk|no|fi|pl|sg|ae)(?:/[\w./%~-]*)?(?![\w@])"
 )  # lowercase only: "ASP.NET" or "B.Tech" in a headline is not a website
 MAX_LINKS = 8
 
@@ -154,8 +155,15 @@ def links_from(text: str) -> list[str]:
     return list(links.values())[:MAX_LINKS]
 
 
-_NAME_LINE = re.compile(r"^[A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*){1,3}$")
-_NOT_A_NAME = re.compile(r"(?i)\b(?:resume|curriculum|vitae|cv|profile|engineer|developer|contact)\b")
+# Letters of any script ("Siobhán O'Connell-Barrett", "Nguyễn Thị Minh Anh", "عمر الحداد").
+_CURLY_APOSTROPHE = chr(0x2019)  # "O" + it + "Connell"
+_NAME_WORD = rf"[^\W\d_](?:[^\W\d_]|[.'{_CURLY_APOSTROPHE}-])*"
+_NAME_LINE = re.compile(rf"^{_NAME_WORD}(?:\s+{_NAME_WORD}){{1,4}}$")
+_NOT_A_NAME = re.compile(
+    r"(?i)\b(?:resume|curriculum|vitae|cv|profile|engineer|developer|contact|analyst|designer|manager|nurse"
+    r"|teacher|accountant|executive|consultant|specialist|scientist|architect|officer|assistant|associate"
+    r"|director|coordinator|lead|intern|summary|experience|education|skills)\b"
+)
 _MIN_PHONE_DIGITS = 10
 _MAX_PHONE_DIGITS = 15
 

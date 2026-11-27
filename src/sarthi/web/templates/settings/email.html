@@ -1,3 +1,7 @@
+{% extends "settings/_layout.html" %}
+{% from "_macros.html" import icon, job_link, empty %}
+{% block lede %}Let Sarthi read replies to your applications. It only reads: nothing is ever sent.{% endblock %}
+{% block page %}
 {% if mail %}
 {% macro mail_field(name, label, hint='', kind='text', placeholder='') %}
 <div class="field{% if errors.get(name) %} has-error{% endif %}">
@@ -51,3 +55,4 @@
   </div>
 </form>
 {% endif %}
+{% endblock %}

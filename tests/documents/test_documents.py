@@ -482,7 +482,7 @@ def test_ats_reports_what_is_missing() -> None:
         ("Asha Rao", "Acme Labs", "Asha_Rao_Acme_Labs"),
         ("", "../../etc", "etc"),
         ("", "", "Sarthi"),
-        ("Åsa Ö", "Zürich AG", "sa_Z_rich_AG"),
+        ("Åsa Ö", "Zürich AG", "Asa_O_Zurich"),
     ],
 )
 def test_file_stem_is_safe(name: str, company: str, stem: str) -> None:

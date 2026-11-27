@@ -15,6 +15,7 @@ class ApplicationView(StrEnum):
     ALL = "all"
     INPUT = "input"
     CAPTCHA = "captcha"
+    LOGIN = "login"  # handed over only because the user is not logged in to the site
     MANUAL = "manual"
     SUBMITTED = "submitted"
     VERIFY = "verify"
@@ -39,14 +40,16 @@ class ApplicationFilters:
     query: str = ""
     site: str = ""
     sort: ApplicationSort = ApplicationSort.NEWEST
+    by_site: bool = False  # rows of one site together (the login page groups them by site)
 
-    def parameters(self) -> dict[str, str]:
+    def parameters(self) -> dict[str, str | int]:
         """Return bound SQLite parameters, with literal text search."""
         return {
             "stage": self.stage,
             "q": self.query.strip()[:80],
             "site": self.site.strip()[:200],
             "sort": self.sort,
+            "by_site": int(self.by_site),
             "unconfirmed": f"{UNCONFIRMED_PREFIX}%",
         }
 
@@ -68,13 +71,19 @@ class ApplicationItem:
     questions: int
     resume: bool
     letter: bool
+    queue_status: str
 
 
 _BOARD = """
 WITH questions AS (
     SELECT job_id, count(*) AS count FROM pending_question GROUP BY job_id
 ), active AS (
-    SELECT t.key AS job_id, max(coalesce(t.started_at, t.run_after)) AS updated_at
+    SELECT t.key AS job_id, max(coalesce(t.started_at, t.run_after)) AS updated_at,
+           CASE
+               WHEN max(t.status = 'running') THEN 'running'
+               WHEN max(t.last_error IS NOT NULL) THEN 'retry'
+               ELSE 'pending'
+           END AS queue_status
     FROM task t
     WHERE t.status IN ('pending', 'running') AND (
         t.type IN ('form_check', 'apply', 'submit')
@@ -91,7 +100,7 @@ WITH questions AS (
            coalesce(json_extract(j.posting, '$.apply_url'), j.canonical_url) AS url,
            coalesce(a.site, '') AS site, coalesce(a.updated_at, t.updated_at, j.first_seen_at) AS updated_at,
            coalesce(a.status, '') AS status, coalesce(a.detail, '') AS detail,
-           coalesce(q.count, 0) AS questions,
+           coalesce(q.count, 0) AS questions, coalesce(t.queue_status, '') AS queue_status,
            CASE
                WHEN a.status IN ('submitted', 'applied_by_user') THEN 'submitted'
                WHEN a.status = 'needs_human' AND (
@@ -104,6 +113,11 @@ WITH questions AS (
                    lower(a.detail) LIKE '%posting is closed%'
                    OR lower(a.detail) LIKE '%no longer accepting applications%'
                ) THEN 'stopped'
+               -- the same wording ApplicationStore.waiting_for_login fills again after a login
+               WHEN a.status = 'needs_human' AND (
+                   a.detail LIKE '%logged-in account%' OR a.detail LIKE '%signed out%'
+                   OR a.detail LIKE '%needs you to log in%'
+               ) THEN 'login'
                WHEN a.status = 'needs_human' AND lower(a.detail) LIKE '%captcha%' THEN 'captcha'
                WHEN a.status = 'needs_human' THEN 'manual'
                ELSE 'stopped'
@@ -137,10 +151,25 @@ class ApplicationDashboard:
         )
         return {ApplicationView(row[0]): int(row[1]) for row in rows}
 
-    def sites(self) -> list[str]:
-        """Every site name available to the site filter."""
-        rows = self._conn.execute("SELECT DISTINCT site FROM application WHERE site <> '' ORDER BY site")
+    def sites(self, stage: ApplicationView = ApplicationView.ALL) -> list[str]:
+        """The site names in ``stage`` (every stage for ALL), for its site filter."""
+        rows = self._conn.execute(
+            _BOARD  # noqa: S608 (static SQL)
+            + "SELECT DISTINCT site FROM board WHERE site <> '' AND (:stage = 'all' OR stage = :stage)"
+            " ORDER BY site",
+            {"stage": stage, "unconfirmed": f"{UNCONFIRMED_PREFIX}%"},
+        )
         return [str(row[0]) for row in rows]
+
+    def count_by_site(self, filters: ApplicationFilters) -> dict[str, int]:
+        """How many rows match the filters on each site, most first."""
+        sql = (
+            _BOARD  # noqa: S608 (static SQL)
+            + "SELECT b.site, count(*) FROM board b "
+            + _FILTER
+            + " GROUP BY b.site ORDER BY count(*) DESC, b.site"
+        )
+        return {str(row[0]): int(row[1]) for row in self._conn.execute(sql, filters.parameters())}
 
     def count_filtered(self, filters: ApplicationFilters) -> int:
         """Count rows matching the selected filters before pagination."""
@@ -159,7 +188,11 @@ class ApplicationDashboard:
             """
             + _FILTER
             + """
-            ORDER BY CASE WHEN :sort = 'company' THEN b.company END COLLATE NOCASE,
+            ORDER BY CASE WHEN :by_site THEN (
+                         SELECT count(*) FROM board s WHERE s.site = b.site AND s.stage = b.stage
+                     ) END DESC,
+                     CASE WHEN :by_site THEN b.site END,
+                     CASE WHEN :sort = 'company' THEN b.company END COLLATE NOCASE,
                      CASE WHEN :sort = 'role' THEN b.title END COLLATE NOCASE,
                      CASE WHEN :sort = 'oldest' THEN b.updated_at END ASC,
                      b.updated_at DESC, b.job_id
@@ -171,7 +204,7 @@ class ApplicationDashboard:
             ApplicationItem(
                 r["job_id"], r["title"], r["company"], r["url"], r["site"], r["updated_at"],
                 r["reply_kind"], ApplicationView(r["stage"]), r["status"], r["detail"], r["questions"],
-                bool(r["resume_file"]), bool(r["letter_file"]),
+                bool(r["resume_file"]), bool(r["letter_file"]), r["queue_status"],
             )
             for r in rows
         ]  # fmt: skip

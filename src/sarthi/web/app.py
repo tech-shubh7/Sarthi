@@ -37,12 +37,25 @@ from sarthi.db.notices import NoticeStore
 from sarthi.web.actions import DashboardActions
 from sarthi.web.application_view import (
     APPLICATION_SORTS,
-    APPLICATION_TABS,
+    BY_VIEW,
+    PAGES,
+    ApplicationPage,
     application_sort,
-    application_view,
+    blockers,
+    login_groups,
+    page_for,
+    summary,
 )
 from sarthi.web.mail_form import PRESETS, mail_from_form, mail_values
-from sarthi.web.sections import ACTIVITY_SECTIONS, MATCH_SORTS, SETTINGS_SECTIONS, SOURCE_SECTIONS
+from sarthi.web.navigation import crumbs, sidebar
+from sarthi.web.sections import (
+    ACTIVITY_SECTIONS,
+    MATCH_SORTS,
+    SETTINGS_SECTIONS,
+    SOURCE_SECTIONS,
+    TIMELINE_SORTS,
+    notice_kind,
+)
 from sarthi.web.settings_form import REMOTE_CHOICES, form_values, profile_from_form
 from sarthi.web.sources_view import SiteMap, sources_view
 
@@ -64,7 +77,7 @@ MINUTES_PER_HOUR, HOURS_SHOWN = 60, 48
 MAX_RESUME_BYTES = 5_000_000
 PAGE_SIZE = 25
 JOB_ACTIONS = ("apply", "skip", "later")
-BACK_TO = {"/matches", "/", "/applications", *(f"/applications/{view}" for view in ApplicationView)}
+BACK_TO = {"/matches", "/", "/applications", "/settings/logins", *(p.href for p in PAGES)}
 KEPT_PARAMS = ("show", "q", "page", "site", "sort")  # what a page's address may carry back after a change
 ANSWER = "a."  # a question's answer field on the Activity page: "a." + the form field's key
 NOTICES_SHOWN = 50
@@ -186,13 +199,25 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
 
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
-    templates.env.globals.update(asset=asset, version=__version__)
+    templates.env.globals.update(asset=asset, version=__version__, notice_kind=notice_kind)
 
-    def page(request: Request, name: str, nav: str, status: int = 200, **context: Any) -> HTMLResponse:
+    def page(  # noqa: PLR0913 (the page, where it sits in the sidebar, and its own values)
+        request: Request,
+        name: str,
+        nav: str,
+        sub: str = "",
+        *,
+        status: int = 200,
+        crumb: str = "",
+        **context: Any,
+    ) -> HTMLResponse:
+        """``name`` rendered as page ``sub`` of sidebar section ``nav`` (``crumb``: a page not in it)."""
         now = clock()
         start = now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
         overview = queries.overview(start)
         inbox_counts = inbox.counts(now - timedelta(days=MATCH_DAYS))
+        counts = application_board.counts()
+        sections = sidebar(nav, sub, counts, inbox_counts)
         done = DONE.get(request.query_params.get("done", ""), "")
         context.setdefault("screen", actions.screen_link() if actions is not None else None)
         return templates.TemplateResponse(
@@ -200,6 +225,11 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
             name,
             {
                 "nav": nav,
+                "sections": sections,
+                "current_section": next((s for s in sections if s.current), None),
+                "crumbs": crumbs(sections, crumb),
+                "blockers": blockers(counts, inbox_counts),
+                "application_counts": counts,
                 "ov": overview,
                 "inbox": inbox_counts,
                 "ago": lambda iso: ago(iso, now),
@@ -235,7 +265,7 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
 
     @app.get("/", response_class=HTMLResponse)
     async def overview(request: Request) -> HTMLResponse:
-        return page(request, "overview.html", "overview", application_counts=application_board.counts())
+        return page(request, "overview.html", "overview")
 
     @app.get("/matches", response_class=HTMLResponse)
     async def matches(
@@ -268,49 +298,75 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
             link_page=lambda n: link(page=n),
         )  # fmt: skip
 
-    @app.get("/applications", response_class=HTMLResponse)
-    @app.get("/applications/{section}", response_class=HTMLResponse)
-    async def applications(  # noqa: PLR0913 (individual query parameters)
+    def list_view(found: ApplicationPage, q: str, site: str, sort: str, asked: int) -> dict[str, Any]:
+        """One Applications list page: its rows after search, site and sort, and its pages."""
+        login = found.view is ApplicationView.LOGIN
+        filters = ApplicationFilters(
+            found.view, q.strip()[:80], site.strip()[:200], application_sort(sort), login
+        )
+        total = application_board.count_filtered(filters)
+        number, pages = _page(asked, total)
+        rows = application_board.rows(filters, PAGE_SIZE, (number - 1) * PAGE_SIZE)
+        params = {"q": filters.query, "site": filters.site, "sort": filters.sort}
+        kept = {key: value for key, value in params.items() if value}
+        view: dict[str, Any] = {
+            "app_page": found, "rows": rows, "filters": filters, "sorts": APPLICATION_SORTS,
+            "sites": [(name, name) for name in application_board.sites(found.view)], "stages": BY_VIEW,
+            "pending": actions.pending() if actions is not None else {},
+            "page": number, "pages": pages, "total": total, "size": PAGE_SIZE,
+            "link_page": lambda n: f"{found.href}?" + urlencode({**kept, "page": n}),
+        }  # fmt: skip
+        if login:
+            offered = actions.login_sites() if actions is not None else []
+            view["groups"] = login_groups(rows, application_board.count_by_site(filters), offered)
+            view["controls"] = actions.controls() if actions is not None else None
+        return view
+
+    def moved(request: Request, path: str, drop: str = "") -> RedirectResponse:
+        """An old address: the page it is now, with the same search and filters."""
+        query = [(k, v) for k, v in request.query_params.multi_items() if k != drop]
+        return RedirectResponse(path + (f"?{urlencode(query)}" if query else ""), status_code=302)
+
+    @app.get("/applications", response_class=HTMLResponse, response_model=None)
+    async def applications(request: Request, show: str = "") -> Response:
+        if show:  # the address before each state had its own page
+            return moved(request, (page_for(show) or PAGES[-1]).href, drop="show")
+        waiting, moving = summary(application_board.counts())
+        return page(request, "applications/summary.html", "applications", waiting=waiting, moving=moving)
+
+    @app.get("/applications/{slug}", response_class=HTMLResponse, response_model=None)
+    async def application_list(  # noqa: PLR0913 (individual query parameters)
         request: Request,
+        slug: str,
         *,
-        section: str = "",
-        show: str = "all",
         q: str = "",
         site: str = "",
         sort: str = "newest",
         page_no: int = Query(1, alias="page"),
-    ) -> HTMLResponse:
-        if section and section not in APPLICATION_TABS:
+    ) -> Response:
+        found = page_for(slug)
+        if found is None:
             raise HTTPException(404, "No such application view.")
-        selected = application_view(section or show)
-        q, site = q.strip()[:80], site.strip()[:200]
-        filters = ApplicationFilters(selected, q, site, application_sort(sort))
-        counts = application_board.counts()
-        counts[ApplicationView.ALL] = sum(counts.values())
-        total = application_board.count_filtered(filters)
-        number, pages = _page(page_no, total)
-        params = {"q": q, "site": site, "sort": filters.sort}
-        rows = application_board.rows(filters, PAGE_SIZE, (number - 1) * PAGE_SIZE)
+        if found.slug != slug:
+            return moved(request, found.href)
         return page(
-            request, "applications.html", "applications", rows=rows, selected=selected, tabs=APPLICATION_TABS,
-            counts=counts, pending=actions.pending() if actions is not None else {}, filters=filters,
-            sites=application_board.sites(), sorts=APPLICATION_SORTS,
-            page=number, pages=pages, total=total, size=PAGE_SIZE,
-            link_page=lambda n: f"/applications/{selected}?" + urlencode({**params, "page": n}),
+            request, f"applications/{found.slug}.html", "applications", found.slug, crumb=found.title,
+            **list_view(found, q, site, sort, page_no),
         )  # fmt: skip
 
-    @app.get("/sources", response_class=HTMLResponse)
+    @app.get("/sources", response_model=None)
+    async def sources_home(request: Request) -> Response:
+        return moved(request, "/sources/readers")
+
     @app.get("/sources/{section}", response_class=HTMLResponse)
-    async def sources(
-        request: Request, section: str = "readers", page_no: int = Query(1, alias="page")
-    ) -> HTMLResponse:
+    async def sources(request: Request, section: str, page_no: int = Query(1, alias="page")) -> HTMLResponse:
         if section not in SOURCE_SECTIONS:
             raise HTTPException(404, "No such sources section.")
         total = queries.count_career_pages(list(site_map.career))
         number, pages = _page(page_no, total)
         view = sources_view(queries, clock(), PAGE_SIZE, (number - 1) * PAGE_SIZE, site_map)
         return page(
-            request, "sources.html", "sources", section=section, sections=SOURCE_SECTIONS,
+            request, f"sources/{section}.html", "sources", section, section=section,
             page=number, pages=pages, total=total, size=PAGE_SIZE,
             link_page=lambda n: f"/sources/companies?page={n}", **view,
         )  # fmt: skip
@@ -328,11 +384,11 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         mail = actions.mail() if actions is not None else None
         return page(
             request,
-            "settings.html",
+            f"settings/{section}.html",
             "settings",
+            section,
             status=400 if errors else 200,
             section=section,
-            sections=SETTINGS_SECTIONS,
             values=values if values is not None else form_values(profile),
             errors=errors or {},
             has_profile=profile is not None,
@@ -345,9 +401,12 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
             mail_presets=PRESETS,
         )
 
-    @app.get("/settings", response_class=HTMLResponse)
+    @app.get("/settings", response_model=None)
+    async def settings_home(request: Request) -> Response:
+        return moved(request, "/settings/profile")
+
     @app.get("/settings/{section}", response_class=HTMLResponse)
-    async def settings(request: Request, section: str = "profile") -> HTMLResponse:
+    async def settings(request: Request, section: str) -> HTMLResponse:
         if section not in SETTINGS_SECTIONS:
             raise HTTPException(404, "No such settings section.")
         return settings_page(request, section=section)
@@ -416,9 +475,9 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         act, _ = await checked_form(request)
         batch = act.queue_matches()
         if batch.scheduled:
-            return back("/applications/queued", "matching_queued")
+            return back("/applications/in-progress", "matching_queued")
         if batch.manual:
-            return back("/applications/manual", "matching_manual")
+            return back("/applications/apply-yourself", "matching_manual")
         return back("/matches?show=alert", "matching_empty")
 
     @app.post("/jobs/{job_id}/{action}", response_model=None)
@@ -465,23 +524,25 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         kind = request.query_params.get("kind", "")[:40]
         oldest = request.query_params.get("sort") == "oldest"
         return page(
-            request, "activity.html", "activity", status=400 if errors else 200,
-            section=section, sections=ACTIVITY_SECTIONS,
+            request, f"activity/{section}.html", "activity", section, status=400 if errors else 200,
+            section=section,
             groups=inbox.questions(job_id) if section == "questions" else [],
             auto=inbox.auto_waiting() if section == "auto-apply" else [],
             notices=notices.recent(NOTICES_SHOWN, kind=kind, oldest=oldest) if section == "timeline" else [],
-            kinds=notices.kinds() if section == "timeline" else [], kind=kind, oldest=oldest,
+            kinds=[(k, notice_kind(k)) for k in notices.kinds()] if section == "timeline" else [], kind=kind,
+            sort="oldest" if oldest else "newest", timeline_sorts=TIMELINE_SORTS.items(),
             errors=errors or {}, values=values or {},
         )  # fmt: skip
 
-    @app.get("/activity", response_class=HTMLResponse)
+    @app.get("/activity", response_model=None)
+    async def activity_home(request: Request, job: str | None = None) -> Response:
+        return moved(request, "/activity/questions" if job else "/activity/timeline")
+
     @app.get("/activity/{section}", response_class=HTMLResponse)
-    async def activity(request: Request, section: str = "timeline", job: str | None = None) -> HTMLResponse:
+    async def activity(request: Request, section: str, job: str | None = None) -> HTMLResponse:
         if section not in ACTIVITY_SECTIONS:
             raise HTTPException(404, "No such activity section.")
-        return activity_page(
-            request, "questions" if request.url.path == "/activity" and job else section, job_id=job
-        )
+        return activity_page(request, section, job_id=job)
 
     @app.post("/questions/{job_id}", response_model=None)
     async def answer_questions(request: Request, job_id: str) -> Response:
@@ -512,10 +573,11 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
 
     @app.post("/settings/login/{site}", response_model=None)
     async def site_login(request: Request, site: str) -> Response:
-        act, _ = await checked_form(request)
+        act, form = await checked_form(request)
         if site not in dict(act.login_sites()):
             raise HTTPException(404, "No such site.")
-        return back("/settings/logins", "login" if act.site_login(site) else "busy")
+        back_to = _own_page(str(form.get("next", "")), "/settings/logins")
+        return back(back_to, "login" if act.site_login(site) else "busy")
 
     @app.get("/applications/{job_id}/form.png", response_model=None)
     async def form_picture(job_id: str) -> Response:

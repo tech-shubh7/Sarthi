@@ -1,5 +1,8 @@
+{% extends "settings/_layout.html" %}
+{% from "_macros.html" import icon, job_link, empty %}
+{% block lede %}Get alerts on your phone and answer them there (optional).{% endblock %}
+{% block page %}
 <section class="card card-pad section" id="telegram">
-  <h2 class="card-title">{{ icon('telegram') }}Telegram</h2>
   {% if ov.telegram_connected %}
   <p>Connected. Job alerts and updates go to your paired chat.</p>
   {% elif ov.pair_link %}
@@ -8,3 +11,4 @@
   <p>Waiting for a Telegram connection.</p>
   {% endif %}
 </section>
+{% endblock %}

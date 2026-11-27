@@ -302,6 +302,10 @@ def dead_end(url: str, fields: list[FormField], buttons: list[Button], text: str
         raise FillError(
             "the page came up empty (the site may block automated browsers): apply there yourself"
         )
+    if not fields and adapters.BLOCKED_PAGE.search(text):
+        # A firewall's page (Indeed's "Request Blocked", Cloudflare's checks): checked before the "Sign in"
+        # link in its header, which once made it read as "signed out" and sent the user to log in again.
+        raise FillError(adapters.blocked_reason(url))
     if one_click and not fields and any(LOGGED_OUT.search(b.text) for b in buttons):
         raise LoginWallError(f"{urlparse(url).hostname or 'the site'} shows you as signed out")
     # A guest's way in, and nothing else: "Upload your resume, we'll auto-fill your details" (a new account

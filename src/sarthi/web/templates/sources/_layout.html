@@ -1,0 +1,10 @@
+{# The layout of every Sources page: its title and what it is for, then the page. #}
+{% extends "base.html" %}
+{% from "_macros.html" import head, empty %}
+{% block main %}
+{{ head(crumbs[-1][0], self.lede()) }}
+{% block page %}{% endblock %}
+{% if not rows and not sites %}
+{{ empty('No source read yet', 'Sources are read as soon as Sarthi runs (sarthi run).') }}
+{% endif %}
+{% endblock %}

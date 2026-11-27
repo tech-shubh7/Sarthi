@@ -1,0 +1,7 @@
+{# The layout of every Activity page: its title and what it is for, then the page. #}
+{% extends "base.html" %}
+{% from "_macros.html" import head %}
+{% block main %}
+{{ head(crumbs[-1][0], self.lede()) }}
+{% block page %}{% endblock %}
+{% endblock %}

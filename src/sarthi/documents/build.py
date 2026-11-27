@@ -320,11 +320,12 @@ def plain_letter(master: MasterResume, role: str, company: str, job_text: str = 
     each said once and in the person's own words.
     """
     latest = master.experience[0] if master.experience else None
-    opening = f"I'd like to apply for the {_short_role(role)} role at {company}."
+    company = letter_company(company)
+    opening = f"I'd like to apply for the {_short_role(role)} role" + (f" at {company}." if company else ".")
     if latest:
-        opening += f" I'm currently a {latest.title} at {latest.company}."
+        opening += f" I'm currently {_article(latest.title)} {latest.title} at {latest.company}."
     every = master.all_skills()
-    asked = [s for s in every if _mentioned(s, job_text)][:4]
+    asked = [_in_sentence(s) for s in every if _mentioned(s, job_text)][:4]
     middle = f"Your posting asks for {_and_list(asked)}, which is the work I do." if len(asked) >= 2 else ""  # noqa: PLR2004
     for i, (employer, bullet) in enumerate(_relevant_lines(master, job_text)):
         lead = f"At {employer} I" if i == 0 else "I also"
@@ -332,8 +333,28 @@ def plain_letter(master: MasterResume, role: str, company: str, job_text: str = 
     if not middle and master.projects and master.projects[0].description:
         project = master.projects[0]
         middle = f"Outside work I built {project.name}, which {_lower_rest(project.description)}."
-    closing = f"I'd be glad to talk about how I could help the team at {company}. Thank you for your time."
+    closing = (
+        f"I'd be glad to talk about how I could help the team{f' at {company}' if company else ''}. "
+        "Thank you for your time."
+    )
     return [p.strip() for p in (opening, middle, closing) if p.strip()]
+
+
+def _article(title: str) -> str:
+    """The article a title is said with: "an Audit Manager", "a Senior Nurse", "an HR Lead", "a UX Lead"."""
+    first = title.split(maxsplit=1)[0] if title.split() else ""
+    spoken_vowel = first[:1].lower() in "aeio" or (first[:1].lower() == "u" and not first.isupper())
+    if first.isupper() and len(first) > 1:  # an acronym is read letter by letter: "an HR", "an MBA"
+        spoken_vowel = first[0] in "AEFHILMNORSX"
+    return "an" if spoken_vowel else "a"
+
+
+def _in_sentence(skill: str) -> str:
+    """A skill as written inside a sentence: "Statutory audit" -> "statutory audit"; names stay."""
+    words = skill.split()
+    if len(words) > 1 and words[0][1:].islower() and all(w.islower() for w in words[1:]):
+        return skill[0].lower() + skill[1:]
+    return skill
 
 
 def _lower_rest(description: str) -> str:
@@ -344,21 +365,47 @@ def _lower_rest(description: str) -> str:
 
 
 _LEGAL_SUFFIX = re.compile(
-    r"[\s,]+(?:private\s+limited|pvt\.?\s*ltd\.?|limited|ltd\.?|inc\.?|llc|llp|gmbh|corp\.?|co\.)\s*$",
+    r"[\s,]+(?:private\s+limited|pvt\.?\s*ltd\.?|limited|ltd\.?|inc\.?|l\.?l\.?c\.?|l\.?l\.?p\.?"
+    r"|gmbh(?:\s*&\s*co\.?\s*kg)?|corp\.?|co\.|ag|se|kg|plc|pty|b\.\s?v\.?|bv|n\.\s?v\.?|nv|s\.\s?a\.?|sas"
+    r"|s\.\s?r\.\s?l\.?|srl|sdn\.?\s*bhd\.?|fz-?llc|fz-?co|fze|dmcc|wll|w\.l\.l\.?|k\.k\.)\s*$",
     re.IGNORECASE,
+)
+# Posting placeholders for a company that is not named ("Confidential", a recruiter's client): no name at all.
+_NO_COMPANY = re.compile(
+    r"(?i)^(?:|confidential(?:\s+company)?|company\s+(?:name\s+)?confidential|undisclosed(?:\s+company)?"
+    r"|not\s+disclosed|hidden|anonymous|private(?:\s+company)?|n/?a|unknown|our\s+client|client(?:\s+company)?"
+    r"|(?:an?\s+)?(?:leading|reputed|well[- ]known|fast[- ]growing|established)\s+(?:[\w&-]+\s+){0,4}"
+    r"(?:company|firm|organi[sz]ation|group|client|mnc|brand|business|startup)"
+    r"|stealth(?:\s+startup)?)$"
 )
 ACRONYM_CHARS = 3  # VY, AI, IBM stay in capitals
 SHOUTED_CHARS = 4  # a name in capitals longer than this is calmed (an acronym on its own is left)
 
 
+def named_company(name: str) -> bool:
+    """False when the posting gives no real company name ("", "Confidential", "A leading audit firm")."""
+    return _NO_COMPANY.match(name.strip(" .,-|")) is None
+
+
 def letter_company(name: str) -> str:
-    """The company as a person would write it in a greeting: "VY SYSTEMS PRIVATE LIMITED" -> "VY Systems"."""
+    """The company as a person would write it in a greeting: "VY SYSTEMS PRIVATE LIMITED" -> "VY Systems".
+
+    "" when the posting names no company ("Confidential").
+    """
+    if not named_company(name):
+        return ""
     short = name.strip()
-    while (trimmed := _LEGAL_SUFFIX.sub("", short)) != short and trimmed:
+    while (trimmed := _LEGAL_SUFFIX.sub("", short).rstrip(" ,")) != short and trimmed:
         short = trimmed
     if short.isupper() and len(short) > SHOUTED_CHARS:
         short = " ".join(w if len(w) <= ACRONYM_CHARS else w.capitalize() for w in short.split())
-    return short or name
+    return short or name.strip()
+
+
+def greeting_for(company: str) -> str:
+    """The letter's greeting: the company's hiring team, or "Dear Hiring Manager," when none is named."""
+    short = letter_company(company)
+    return f"Dear {short} hiring team," if short else "Dear Hiring Manager,"
 
 
 def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
@@ -379,7 +426,7 @@ def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
     built from the resume used. A plain letter carries the problems, so the caller can ask again.
     """
     sign_off = f"Best regards,\n{master.name}" if master.name else "Best regards,"
-    greeting = f"Dear {letter_company(company)} hiring team,"
+    greeting = greeting_for(company)
     plain = plain_letter(master, role, company, job_text)
     if answer is None:
         return Letter(greeting, plain, sign_off, from_ai=False)
@@ -390,6 +437,8 @@ def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
     style = [s for _, _, found in checked for s in found]
     if len(paragraphs) < len([p for p in answer.paragraphs if _tidy(p)]):
         style.append("a paragraph was repeated: write each paragraph once")
+    if not strict:  # asked again about these once; on the last try a true letter is not thrown away for them
+        style += letter_problems(paragraphs, master, job_text, company)
     if strict:
         kept = [p for p, bad_facts, bad_style in checked if not bad_facts and not bad_style]
         if len(kept) >= MIN_LETTER_PARAGRAPHS:
@@ -398,6 +447,51 @@ def cover_letter(  # noqa: PLR0913  (all the letter's inputs)
     if paragraphs and not facts:
         return Letter(greeting, paragraphs, sign_off, from_ai=True, problems=style)
     return Letter(greeting, plain, sign_off, from_ai=False, problems=facts + style)
+
+
+MIN_LETTER_WORDS = 150
+LETTER_ECHO_WORDS = 6  # a letter may say "non-invasive ventilation and high-flow oxygen"; not a sentence
+PASTED_WORDS = 12  # this many words in a row from one resume line: a pasted bullet, not a sentence
+
+
+def _runs(text: str, n: int) -> set[str]:
+    words = re.findall(r"[a-z0-9+#%.]+", text.lower())
+    return {" ".join(words[i : i + n]) for i in range(len(words) - n + 1)}
+
+
+def letter_problems(paragraphs: list[str], master: MasterResume, job_text: str, company: str) -> list[str]:
+    """What makes a true letter read badly (empty when nothing).
+
+    Too short, pasted resume bullets, the posting's sentences, or a placeholder ("Confidential") named as
+    the employer.
+    """
+    body = "\n".join(paragraphs)
+    problems: list[str] = []
+    words = len(body.split())
+    if words < MIN_LETTER_WORDS:
+        problems.append(f"the letter is {words} words: write 180-250 words in 3 paragraphs")
+    runs = _runs(body, PASTED_WORDS)
+    lines = [b for job in master.experience for b in job.bullets] + [master.summary]
+    pasted = [line for line in lines if line and runs & _runs(line, PASTED_WORDS)]
+    problems += [
+        f'pastes the resume line "{_short_quote(line)}": say what it shows in a sentence of your own'
+        for line in pasted[:3]
+    ]
+    if job_text:
+        echo = echo_problems(body, job_text, LETTER_ECHO_WORDS)
+        problems += [f"{p}: say it in your own words" for p in echo]
+    if (
+        not named_company(company)
+        and company.strip()
+        and re.search(rf"(?i)\b{re.escape(company.strip())}\b", body)
+    ):
+        problems.append(f'names "{company.strip()}" as the employer: the posting names no company')
+    return problems
+
+
+def _short_quote(text: str, words: int = 8) -> str:
+    cut = text.split()
+    return " ".join(cut[:words]) + ("..." if len(cut) > words else "")
 
 
 def _distinct(paragraphs: list[str]) -> list[str]:

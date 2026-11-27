@@ -50,6 +50,14 @@ _NOISE = re.compile(
     re.I,
 )
 _SITE = re.compile(r"(?:https?://)?[\w.-]+\.[a-z]{2,}(?:/\S*)?", re.I)
+# Job seekers post in the hiring thread too (against its rules); seen live 2026-11-27, scored as jobs.
+_SEEKER = re.compile(
+    r"^\W*(?:(?:hi|hello|hey)\b[\s,!.-]*(?:everyone|all|hn|there)?[\s,!.-]*)?(?:i'?m|i\s+am|my\s+name\s+is)\b"
+    r"|\b(?:i'?m|i\s+am)\s+(?:currently\s+|actively\s+)?(?:looking|seeking|open)\s+(?:for|to)\b"
+    r"|\bopen\s+to\s+work\b|\bavailable\s+for\s+hire\b",
+    re.I,
+)
+_EMPLOYER = re.compile(r"\bhiring\b|\bwe(?:'re|\s+are)\b|\bour\s+team\b|\bjoin\s+us\b", re.I)
 _SHORT_PART_CHARS = 50
 _SHORT_PART_WORDS = 6
 _MIN_PARTS = 2
@@ -70,6 +78,8 @@ def parse_comment(raw: str) -> dict[str, Any] | None:
     if not plain:
         return None
     header = plain.split("\n", 1)[0]
+    if _SEEKER.search(header) and not _EMPLOYER.search(header):
+        return None  # a person offering themselves ("I'm Asha, a full-stack engineer..."), not a job
     parts = [p.strip() for p in header.split("|") if p.strip()]
     if len(parts) < _MIN_PARTS and not _ROLE.search(header):
         return None

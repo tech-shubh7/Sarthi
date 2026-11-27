@@ -1,0 +1,45 @@
+{% extends "sources/_layout.html" %}
+{% from "_macros.html" import icon, pager, share %}
+{% block lede %}Which job sources Sarthi reads, and whether each one is working.{% endblock %}
+{% block page %}
+{% if rows or sites %}
+<section class="stats" aria-label="Sources at a glance">
+  <div class="card stat teal"><span class="stat-label">Source readers working</span><b class="stat-n">{{ rows|selectattr('failures', 'eq', 0)|list|length }}</b><span class="stat-sub">of {{ rows|length }} read</span></div>
+  <div class="card stat saffron"><span class="stat-label">Struggling or failing</span><b class="stat-n">{{ rows|selectattr('failures', 'gt', 0)|list|length }}</b><span class="stat-sub">{{ rows|selectattr('failures', 'ge', 3)|list|length }} failing</span></div>
+  <div class="card stat indigo"><span class="stat-label">Sites with jobs</span><b class="stat-n">{{ sites|length }}</b><span class="stat-sub">{{ '{:,}'.format(site_jobs) }} jobs in all</span></div>
+  <div class="card stat"><span class="stat-label">Company pages with results</span><b class="stat-n">{{ '{:,}'.format(total) }}</b><span class="stat-sub">on {{ systems|length }} hiring system{{ '' if systems|length == 1 else 's' }}</span></div>
+</section>
+{% endif %}
+
+{% if supported_systems %}
+<section class="card card-pad section" aria-labelledby="coverage-title">
+  <h2 class="card-title" id="coverage-title">{{ icon('sources') }}Catalog coverage</h2>
+  <p>The ATS-Scrapers snapshot searches about 192,000 company career pages by role, location and posting date when enabled. This installation supports {{ supported_systems|length }} hiring systems.</p>
+  <details><summary>Supported hiring systems</summary>
+    <ul class="chips">{% for name in supported_systems %}<li class="chip">{{ name }}</li>{% endfor %}</ul>
+  </details>
+  {% if not catalog %}<p class="hint">No catalog check is recorded yet.</p>{% endif %}
+</section>
+{% endif %}
+
+{% if rows %}
+<section class="card table-card section" aria-labelledby="sources-title">
+<h2 class="card-title table-title" id="sources-title">{{ icon('sources') }}Sources Sarthi reads</h2>
+<table class="table">
+  <thead><tr><th>Source</th><th>Health</th><th>Jobs found</th><th>Last worked</th><th>Last checked</th><th>Last problem</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td data-label="Source"><b>{{ r.name.split(':')[-1] }}</b><span class="job-sub">{{ r.name.split(':')[0] if ':' in r.name else '' }}</span></td>
+      <td data-label="Health">{% if not r.last_checked_at %}<span class="pill info">Not read yet</span>{% elif r.failures == 0 %}<span class="pill ok">Working</span>{% elif r.failures < 3 %}<span class="pill warn">{{ r.failures }} failure{{ '' if r.failures == 1 else 's' }}</span>{% else %}<span class="pill bad">Failing · {{ r.failures }} in a row</span>{% endif %}</td>
+      <td data-label="Jobs" class="num">{{ '{:,}'.format(reader_jobs.get(r.name, 0)) }}</td>
+      <td data-label="Worked" class="faint">{{ ago(r.last_ok_at) or 'never' }}</td>
+      <td data-label="Checked" class="faint">{{ ago(r.last_checked_at) or 'never' }}{% if r.running %}<span class="job-sub">Reading now</span>{% elif r.queued_at %}<span class="job-sub">Next read queued {{ ago(r.queued_at) }}</span>{% endif %}</td>
+      <td data-label="Problem" class="err">{{ (r.last_error or '')[:160] }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</section>
+{% endif %}
+{% endblock %}

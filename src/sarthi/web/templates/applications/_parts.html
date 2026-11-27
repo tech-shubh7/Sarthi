@@ -1,0 +1,24 @@
+{# Pieces every Applications page uses (import "with context": they need the page's csrf and address). #}
+
+{# A button that posts one decision about a job, then comes back to this page. #}
+{% macro post(r, action, caption, style='') %}
+<form method="post" action="/applications/{{ r.job_id }}/{{ action }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="next" value="{{ here }}">
+  <button class="button small {{ style }}" type="submit">{{ caption }}</button>
+</form>
+{% endmacro %}
+
+{# The job on the employer's site, in a new tab. #}
+{% macro open_job(r, caption) %}<a class="button small quiet" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ caption }}</a>{% endmacro %}
+
+{# "I applied": the user sent it on the site. #}
+{% macro applied(r) %}{% if can_edit %}{{ post(r, 'applied', 'I applied', 'ghost') }}{% endif %}{% endmacro %}
+
+{# The resume and cover letter Sarthi made for this job. #}
+{% macro docs(r) %}
+{% if r.resume or r.letter %}<div class="row-actions docs" aria-label="Application documents">
+  {% if r.resume %}<a class="button small ghost" href="/applications/{{ r.job_id }}/resume.pdf" target="_blank" rel="noopener noreferrer">Resume</a>{% endif %}
+  {% if r.letter %}<a class="button small ghost" href="/applications/{{ r.job_id }}/cover-letter.pdf" target="_blank" rel="noopener noreferrer">Cover letter</a>{% endif %}
+</div>{% endif %}
+{% endmacro %}

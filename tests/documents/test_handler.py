@@ -1,13 +1,14 @@
 """The documents task end to end with a fake AI, and their delivery on Telegram."""
 
 import sqlite3
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
-from sarthi.ai.client import AiUnavailableError
+from sarthi.ai.client import AiUnavailableError, BudgetExhaustedError
 from sarthi.ai.documents import ClaimCheck, CoverAnswer, ResumeChange, ResumeChanges
 from sarthi.chat.telegram.bot import TelegramBot
 from sarthi.db.chat import ChatStore
@@ -22,6 +23,7 @@ from sarthi.profile.master import MasterResume
 from sarthi.profile.models import Preferences, Profile
 from sarthi.queue import names
 from sarthi.queue.tasks import RetryableError, TaskQueue
+from sarthi.queue.worker import Worker
 from tests.chat.test_bot import OWNER, pair
 from tests.chat.test_catchup import FileApi
 from tests.conftest import FakeClock
@@ -207,6 +209,35 @@ async def test_master_is_read_once_per_uploaded_resume(
     assert ai.asked.count("master_resume") == 1
     await first.make(job_id, profile(RESUME_TEXT + "\nAwards\n- Hackathon winner"))
     assert ai.asked.count("master_resume") == 2
+
+
+@pytest.mark.parametrize("prompt_name", ["master_resume", "tailor_changes", "cover_letter", "check_claims"])
+async def test_documents_wait_for_paid_budget_without_using_an_attempt(
+    job_store: JobStore,
+    documents: DocumentStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+    clock: FakeClock,
+    prompt_name: str,
+) -> None:
+    class CappedAi(FakeAi):
+        async def structured(self, prompt: Any, schema: Any, **data: Any) -> Any:
+            if prompt.name == prompt_name:
+                raise BudgetExhaustedError(timedelta(hours=3).total_seconds())
+            return await super().structured(prompt, schema, **data)
+
+    job_id = saved(job_store)
+    make = maker(job_store, documents, queue, tmp_path, CappedAi(good_answers()), profile())
+    queue.enqueue(names.DOCUMENTS, job_id, {"apply": True})
+    task = queue.claim()
+    assert task and task.attempts == 1
+    await Worker(queue, {names.DOCUMENTS: make.handle})._run_one(task)
+    assert queue.claim() is None
+    assert documents.get(job_id) is None
+
+    clock.advance(timedelta(hours=3).total_seconds())
+    retried = queue.claim()
+    assert retried and retried.key == job_id and retried.attempts == 1
 
 
 async def test_a_busy_ai_is_waited_for_until_the_last_try(
@@ -416,6 +447,50 @@ async def test_a_letter_with_unsupported_claims_is_not_used(
         "I am applying for the Python Backend Engineer role at Gamma AI." in text
         or "role at Gamma AI" in text
     )
+
+
+class ReviewerInSequence(FakeAi):
+    """The claim reviewer answers differently on each call (``reviews`` in order)."""
+
+    def __init__(self, answers: dict[str, BaseModel | None], reviews: list[list[str]]) -> None:
+        super().__init__(answers)
+        self.reviews = reviews
+
+    async def structured(self, prompt: Any, schema: Any, **data: Any) -> Any:
+        if prompt.name == "check_claims":
+            self.asked.append(prompt.name)
+            return ClaimCheck(unsupported=self.reviews.pop(0))
+        return await super().structured(prompt, schema, **data)
+
+
+async def test_a_true_first_letter_is_kept_when_the_second_try_fails(
+    job_store: JobStore, documents: DocumentStore, queue: TaskQueue, tmp_path: Path
+) -> None:
+    # first try: true but too short (asked again); second try: the reviewer objects to something it cannot
+    # point at in the letter. The true first letter is sent, not the plain one.
+    ai = ReviewerInSequence(good_answers(), [[], ["a wider scope - not in the resume"]])
+    job_id = saved(job_store)
+    report = await maker(job_store, documents, queue, tmp_path, ai, profile()).make(job_id, profile())
+    assert ai.asked.count("cover_letter") == 2
+    assert report["letter_by_ai"] is True
+    text = (tmp_path / "documents" / job_id / "cover_letter.txt").read_text()
+    assert "At Acme Labs I built 12 FastAPI services." in text
+
+
+async def test_a_letter_cut_short_by_the_reviewer_gives_way_to_the_true_first_one(
+    job_store: JobStore, documents: DocumentStore, queue: TaskQueue, tmp_path: Path
+) -> None:
+    paragraphs = [
+        "I am applying for the Backend Engineer role.",
+        "At Acme Labs I built 12 FastAPI services.",
+        "I would like to talk about the role.",
+    ]
+    answers = good_answers() | {"cover_letter": CoverAnswer(paragraphs=paragraphs)}
+    ai = ReviewerInSequence(answers, [[], ["I would like to talk - a wish, flagged by a strict reviewer"]])
+    job_id = saved(job_store)
+    await maker(job_store, documents, queue, tmp_path, ai, profile()).make(job_id, profile())
+    text = (tmp_path / "documents" / job_id / "cover_letter.txt").read_text()
+    assert all(p in text for p in paragraphs)
 
 
 async def test_all_caps_names_are_shown_normally(

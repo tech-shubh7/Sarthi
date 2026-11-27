@@ -1,7 +1,7 @@
-"""Freehire: one keyless search over a catalogue fed by ~90 hiring systems (Workday, Oracle, iCIMS, ...).
+"""Freehire is a keyless catalogue of jobs from boards and employer sites.
 
-It covers thousands of companies Sarthi has no reader for. Port of JobRadar's ``sources/boards/freehire.py``
-(MIT), with its India-only filters replaced by the user's roles, countries and remote preference. One search
+Its source listing includes roughly 430 job sites and hiring systems. This client adapts JobRadar's
+Freehire connector (MIT) to the user's roles, countries, and remote preference, with one search
 per role. A filter the API ignored (``meta.ignored_params``) fails the read, since a dropped filter returns
 the whole catalogue and looks like a result. Closed postings and old postings made to look new
 (``reality.fake_freshness``) are dropped.
@@ -38,6 +38,20 @@ def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def link(job: dict[str, Any]) -> str:
+    """Where the posting is read: its own page, else Freehire's link to it.
+
+    Since about 2026-11 the public API leaves ``url`` empty for most postings and sends ``apply_url``
+    (``https://freehire.me/api/v1/go/<slug>``, which forwards to the employer's page): measured 100 of 100
+    in one search. Reading ``url`` alone dropped nearly every Freehire job.
+    """
+    for key in ("url", "apply_url"):
+        value = job.get(key)
+        if isinstance(value, str) and value.strip().lower().startswith(("https://", "http://")):
+            return value.strip()
+    return ""
+
+
 def why_not(job: dict[str, Any]) -> str | None:
     """Why a posting is not worth a look; None when it is."""
     if job.get("closed_at"):
@@ -56,7 +70,7 @@ def to_posting(job: dict[str, Any]) -> JobPosting:
     data: dict[str, Any] = {
         "source": "freehire",
         "source_job_id": str(job.get("public_slug") or job.get("external_id") or "") or None,
-        "url": job.get("url"),
+        "url": link(job),
         "title": job.get("title"),
         "company": job.get("company"),
         "location_text": str(job.get("location") or "")[:300],
@@ -109,8 +123,9 @@ class FreehireSource:
                 raise RetryableError(f"{self.name}: answer in an unexpected shape")
             if meta.get("ignored_params"):
                 raise RetryableError(f"{self.name}: filters ignored by the API: {meta['ignored_params']}")
-            jobs.extend(j for j in data if isinstance(j, dict) and j.get("url"))
-            if len(data) < PAGE or len(jobs) >= int(meta.get("total") or 0):
+            jobs.extend(j for j in data if isinstance(j, dict) and link(j))
+            total = str(meta.get("total", ""))
+            if len(data) < PAGE or (total.isdecimal() and (page + 1) * PAGE >= int(total)):
                 break
         return jobs
 
@@ -120,7 +135,7 @@ class FreehireSource:
         async with web.client(self._transport) as http:
             for role in query.roles:
                 for job in await self._search(http, role, query):
-                    found.setdefault(str(job["url"]), job)
+                    found.setdefault(link(job), job)
         postings: list[JobPosting] = []
         for job in found.values():
             if why_not(job) is not None:

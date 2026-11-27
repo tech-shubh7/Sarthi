@@ -1,9 +1,11 @@
+{% extends "settings/_layout.html" %}
+{% from "_macros.html" import icon, job_link, empty %}
+{% block lede %}How Sarthi tells you about matches, and whether it may apply by itself.{% endblock %}
+{% block page %}
 {% if controls %}
 <form class="card section" id="automation" method="post" action="/settings/alerts">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <div class="form-section">
-    <h3>Alerts and auto-apply</h3>
-    <p class="help">How Sarthi tells you about matches, and whether it may apply by itself.</p>
     <div class="field check">
       <label><input type="checkbox" name="paused" {% if controls.paused %}checked{% endif %}>
         <span>Pause instant alerts<br><span class="faint">Matches still wait for you in the daily digest and /today.</span></span></label>
@@ -25,3 +27,4 @@
   <div class="form-actions"><button class="button" type="submit">Save</button></div>
 </form>
 {% endif %}
+{% endblock %}

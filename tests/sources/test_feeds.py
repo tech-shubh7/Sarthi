@@ -367,6 +367,31 @@ def test_hn_non_job_comments_are_ignored(comment: str) -> None:
     assert parse_comment(comment) is None
 
 
+@pytest.mark.parametrize(
+    "comment",
+    [
+        # Shapes seen live in the thread on 2026-11-27 (names invented): people offering themselves, scored as jobs.
+        "I'm Asha Rao, a Full-Stack &amp; AI Engineer currently working with a YC-backed startup.<p>Resume: ...",
+        "Hi HN, I am a Software Engineer focused on full-stack development and AI-powered applications.",
+        "Hello everyone! My name is Tomás, senior React developer, open to work.",
+        "Backend engineer | Lisbon | I'm currently looking for a remote role",
+    ],
+)
+def test_hn_job_seekers_are_not_jobs(comment: str) -> None:
+    assert parse_comment(comment) is None
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        "I'm the CTO at Acme and we're hiring a Backend Engineer | Remote (EU)",
+        "Acme | Senior Engineer | Berlin | I'm happy to answer questions",
+    ],
+)
+def test_hn_employers_writing_in_the_first_person_are_kept(comment: str) -> None:
+    assert parse_comment(comment) is not None
+
+
 def test_hn_apply_link_only_when_it_looks_like_a_jobs_page() -> None:
     fields = parse_comment(
         'Acme | Engineer | Remote<p><a href="https://acme.io/careers/1">apply</a> '
@@ -471,13 +496,31 @@ async def test_freehire_searches_each_role_with_the_users_filters() -> None:
     assert (params["countries"], params["work_mode"], params["open_within_days"]) == ("in", "remote", "3")
 
 
+async def test_freehire_jobs_without_their_own_link_use_freehires_link() -> None:
+    # The live API answered url "" and apply_url ".../go/<slug>" for 100 of 100 jobs (2026-11-27): all were
+    # dropped before.
+    go = "https://freehire.me/api/v1/go/job-1?src=web"
+    mock, _ = freehire(
+        {
+            "Dev": [
+                freehire_job(1, url="", apply_url=go),
+                freehire_job(2, url=None, apply_url="javascript:alert(1)"),  # no usable link at all
+                freehire_job(3),
+            ]
+        }
+    )
+    jobs = await FreehireSource(transport=mock).fetch(SearchQuery(roles=("Dev",)))
+    assert sorted(str(j.url) for j in jobs) == ["https://boards.example.com/job/3", go]
+
+
 async def test_freehire_ignored_filter_fails_the_read() -> None:
     mock, _ = freehire({"Dev": [freehire_job(1)]}, meta={"total": 1, "ignored_params": ["countries"]})
     with pytest.raises(RetryableError, match="ignored"):
         await FreehireSource(transport=mock).fetch(SearchQuery(roles=("Dev",), countries=("IN",)))
 
 
-async def test_freehire_pages_until_short_page() -> None:
+@pytest.mark.parametrize("meta", [{"total": 10_000}, {}, {"total": "unknown"}])
+async def test_freehire_pages_until_short_page(meta: dict[str, Any]) -> None:
     calls: list[str] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
@@ -485,7 +528,7 @@ async def test_freehire_pages_until_short_page() -> None:
         calls.append(str(offset))
         size = 100 if offset < 200 else 5
         data = [freehire_job(offset + i) for i in range(size)]
-        return httpx.Response(200, json={"data": data, "meta": {"total": 10_000}})
+        return httpx.Response(200, json={"data": data, "meta": meta})
 
     jobs = await FreehireSource(transport=transport(handle)).fetch(SearchQuery(roles=("Dev",)))
     assert calls == ["0", "100", "200"]

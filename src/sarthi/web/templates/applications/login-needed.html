@@ -1,0 +1,44 @@
+{% extends "applications/_list.html" %}
+{% from "_macros.html" import pager, empty, job_link %}
+{% from "applications/_parts.html" import open_job, applied, docs with context %}
+{% block rows %}
+{% if groups %}
+{% for g in groups %}
+<section class="card table-card section login-group" aria-labelledby="site-{{ loop.index }}">
+  <header class="group-head">
+    <div>
+      <h2 id="site-{{ loop.index }}">{{ g.site or 'Site not recorded' }}</h2>
+      <p class="job-sub"><b class="num">{{ g.count }}</b> {{ 'job is' if g.count == 1 else 'jobs are' }} waiting for this login.
+        {% if g.login and controls and controls.board_automation %}After you log in, Sarthi fills {{ 'it' if g.count == 1 else 'them' }} again by itself.
+        {% elif g.login %}After you log in, open each job and apply on the site.
+        {% else %}Sarthi has no login window for this site: open each job and apply there yourself.{% endif %}</p>
+    </div>
+    {% if g.login and can_edit %}
+    <form method="post" action="/settings/login/{{ g.login[0] }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      <button class="button" type="submit">Log in to {{ g.login[1] }}</button>
+    </form>
+    {% endif %}
+  </header>
+  <table class="table">
+    <thead><tr><th>Role</th><th>Or apply yourself</th><th>Updated</th></tr></thead>
+    <tbody>
+    {% for r in g.rows %}
+      <tr id="job-{{ r.job_id }}">
+        <td>{{ job_link(r.title, r.url) }}<span class="job-sub">{{ r.company }}</span>{{ docs(r) }}</td>
+        <td data-label="Or apply"><div class="row-actions">{{ open_job(r, 'Open & apply') }}{{ applied(r) }}</div></td>
+        <td data-label="Updated" class="faint">{{ ago(r.updated_at) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+<div class="card table-card">{{ pager(page, pages, total, size, link_page) }}</div>
+{% elif filters.query or filters.site %}
+{{ empty('Nothing matches your search', 'Clear the search to see every site waiting for a login.') }}
+{% else %}
+{{ empty(app_page.empty, 'When a site shows you as signed out, it appears here with a button to log in.') }}
+{% endif %}
+{% endblock %}

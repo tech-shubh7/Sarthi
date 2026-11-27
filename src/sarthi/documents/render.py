@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import unicodedata
 from datetime import date
 from importlib import resources
 from pathlib import Path
@@ -103,7 +104,20 @@ def pdf_text(pdf: bytes) -> tuple[str, int]:
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().lower()
+    """Compared as a reader sees it: "WEISSENFELS" is "Weißenfels" printed in capitals."""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text)).strip().casefold()
+
+
+_RIGHT_TO_LEFT = re.compile(r"[֐-ࣿיִ-﷿ﹰ-ﻼ]+")
+
+
+def _readable_part(value: str) -> str:
+    """The part of ``value`` a PDF text layer gives back in reading order.
+
+    Arabic or Hebrew words come out in visual order from PDF readers, so a name written in both scripts is
+    checked by its Latin part ("Omar Al-Haddad").
+    """
+    return re.sub(r"\s+", " ", _RIGHT_TO_LEFT.sub(" ", value)).strip()
 
 
 def ats_problems(pdf: bytes, master: MasterResume, *, own_design: bool = False) -> list[str]:
@@ -126,7 +140,8 @@ def ats_problems(pdf: bytes, master: MasterResume, *, own_design: bool = False) 
         expected += [("employer", job.company), ("title", job.title), ("date", job.start), ("date", job.end)]
     expected += [("school", s.school) for s in master.education]
     for kind, value in expected:
-        if value and _norm(value) not in seen:
+        readable = _readable_part(value)
+        if readable and _norm(readable) not in seen:
             problems.append(f"{kind} “{value}” cannot be read back from the PDF")
     return problems
 

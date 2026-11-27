@@ -33,7 +33,9 @@ BANNED_PHRASES: tuple[str, ...] = (
     "significantly", "dramatically", "stakeholder alignment", "data-driven", "actionable insights",
     "move the needle", "perfect fit", "strong track record", "game-changing", "world-class",
     # hedging that undersells the candidate (seen in real letters)
-    "the closest thing i have", "although i have not", "i hope to",
+    "the closest thing i have", "although i have not", "i hope to", "the closest match", "closest thing to",
+    # filler seen in letters for non-tech jobs
+    "as outlined in", "outlined in the job description", "i welcome the opportunity",
 )  # fmt: skip
 _BANNED_PATTERNS: tuple[tuple[str, str], ...] = (
     ("align with", r"\balign(?:s|ed|ing)?\s+with\b"),
@@ -94,19 +96,22 @@ ECHO_WORDS = 5
 _WORDS = re.compile(r"[a-z0-9+#.]+")
 
 
-def echo_problems(text: str, job_text: str) -> list[str]:
-    """Runs of five or more words copied from the job posting (ai-job-search's "echo trap").
+def echo_problems(text: str, job_text: str, words_in_a_row: int = ECHO_WORDS, *, own: str = "") -> list[str]:
+    """Runs of five (or ``words_in_a_row``) or more words copied from the job posting ("echo trap").
 
     A resume line that repeats the posting's sentences reads as pasted. Hard keywords ("Python",
-    "retrieval-augmented generation") are shorter than five words and stay allowed.
+    "retrieval-augmented generation") are shorter than five words and stay allowed, and so is a run made
+    only of words the person's own line ``own`` already says ("General Mathematics and Mathematical
+    Methods" put in the posting's order).
     """
     if not job_text:
         return []
     posting = " " + " ".join(_WORDS.findall(job_text.lower())) + " "
     words = _WORDS.findall((text or "").lower())
-    for i in range(len(words) - ECHO_WORDS + 1):
-        run = " ".join(words[i : i + ECHO_WORDS])
-        if f" {run} " in posting:
+    own_words = set(_WORDS.findall(own.lower()))
+    for i in range(len(words) - words_in_a_row + 1):
+        run = " ".join(words[i : i + words_in_a_row])
+        if f" {run} " in posting and not (own_words and set(words[i : i + words_in_a_row]) <= own_words):
             return [f'copies the job posting ("{run}")']
     return []
 
@@ -152,7 +157,9 @@ def opening_problems(new: str, old: str) -> list[str]:
 
 _TITLE = re.compile(
     r"\b(?:[A-Z][\w+/.-]*\s){0,3}(?:Engineer|Developer|Scientist|Analyst|Architect|Manager|Lead|Designer|"
-    r"Consultant|Specialist|Researcher)s?\b"
+    r"Consultant|Specialist|Researcher|Leader|Coordinator|Director|Officer|Executive|Supervisor|Head|"
+    r"Nurse|Teacher|Accountant|Controller|Auditor|Representative|Associate|Administrator|Advisor|Adviser|"
+    r"Partner|Strategist|Planner|Technician|Practitioner|Matron|Principal)s?\b"
 )
 
 

@@ -39,7 +39,7 @@ into one more form. Sarthi does that part, and leaves the decisions to you.
 
 | | |
 |---|---|
-| 🔎 **Finds jobs** | LinkedIn and Indeed (plus Naukri, Seek and others by country), free remote-job feeds, Hacker News "Who is hiring", company career pages on Greenhouse, Lever, Ashby, Workday and ~90 more hiring systems, and optional Adzuna/Jooble keys. |
+| 🔎 **Finds jobs** | LinkedIn and Indeed (plus Naukri, Bayt and others by country), Freehire's search over ~430 job sites and hiring systems (SEEK, Reed, USAJOBS, Workday, ...), free remote-job feeds, Hacker News "Who is hiring", a daily snapshot of ~192,000 company career pages and national job portals, and optional Adzuna/Jooble keys. |
 | 🎯 **Matches honestly** | Hard rules first (country, visa, years, seniority, scams), then an AI checks each must-have against your resume. Wrong-role jobs are hidden, not shown at 70%. |
 | 📲 **Alerts you on Telegram** | Strong matches come straight away (at most a few an hour), the rest in a daily digest. Tap Apply, Skip or Later. |
 | 📄 **Tailors your documents** | Your own resume, in your own design, with each line reworded toward the job (same length, same links and contact details), and a short cover letter, both checked so they never claim anything your resume does not say. |

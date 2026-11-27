@@ -1,0 +1,7 @@
+{% extends "applications/_list.html" %}
+{% from "_macros.html" import reason %}
+{% from "applications/_parts.html" import open_job, applied with context %}
+{% block step %}
+  {% if r.detail %}<p class="why">{{ reason(r.detail) }}</p>{% endif %}
+  <div class="row-actions">{{ open_job(r, 'Open & apply') }}{{ applied(r) }}</div>
+{% endblock %}

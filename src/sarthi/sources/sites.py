@@ -1,9 +1,9 @@
 """Which source reads which site, and which sites are companies' own career pages (for the Sources page).
 
 Sarthi reads a few sources, and most of them reach many sites: the job-board search covers LinkedIn, Indeed
-and a country's own board (Naukri for India); Freehire covers ~90 hiring systems; ATS-Scrapers' snapshot
-covers ~192,000 company career pages. The composition root hands these to the dashboard, which may not
-import the sources itself.
+and a country's own board (Naukri for India); Freehire covers ~430 job sites and hiring systems; ATS-Scrapers'
+snapshot covers roughly 192,000 company career pages. The composition root hands this mapping to the
+dashboard.
 """
 
 from __future__ import annotations

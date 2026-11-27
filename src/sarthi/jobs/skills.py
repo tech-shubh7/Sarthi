@@ -100,11 +100,22 @@ def _pattern(spellings: Iterable[str]) -> re.Pattern[str]:
     return re.compile(rf"(?<![\w.#+])(?:{alternatives})(?![\w#+])", re.I)
 
 
+# Skills whose names are everyday English words ("the rest of their time", "a swift reply", "excel at"),
+# or whose stack spelling is broader than the skill ("iOS" is not Swift): matched only as written.
+_AS_WRITTEN: dict[str, re.Pattern[str]] = {
+    "REST": re.compile(r"(?<![\w.#+])(?:REST(?:ful)?|(?i:rest(?:ful)?\s+apis?|restful))(?![\w#+])"),
+    "Swift": re.compile(r"(?<![\w.#+])Swift(?![\w#+])"),
+    "Rust": re.compile(r"(?<![\w.#+])Rust(?![\w#+])"),
+    "Spark": re.compile(r"(?<![\w.#+])(?:Spark|(?i:pyspark|apache spark))(?![\w#+])"),
+    "Excel": re.compile(r"(?<![\w.#+])(?:Excel|(?i:ms excel|microsoft excel))(?![\w#+])"),
+    "Express.js": re.compile(r"(?<![\w.#+])(?:Express(?:\.js)?|(?i:express\.js|expressjs))(?![\w#+])"),
+}
 _KNOWN: dict[str, re.Pattern[str]] = {
     **{name: _pattern((name, *extra)) for name, extra in VOCABULARY.items()},
     **{
         name: re.compile(rf"(?<![\w.#+])(?:{spellings})(?![\w#+])", re.I) for name, spellings in TECHS.items()
     },
+    **_AS_WRITTEN,
 }
 
 

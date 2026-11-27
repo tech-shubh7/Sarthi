@@ -1,0 +1,3 @@
+{% extends "applications/_list.html" %}
+{% block step_title %}Where it is{% endblock %}
+{% block step %}{% set at = stages[r.stage] %}<a class="pill stage{% if at.blocked %} warn{% endif %}" href="{{ at.href }}">{{ at.title }}</a>{% endblock %}

@@ -165,6 +165,26 @@ _GREENHOUSE_FRAME = (
     'iframe[src*="greenhouse.io/embed/job_board"]'
 )
 LEVER_VERIFY_ERROR = re.compile(r"there was an error verifying your application", re.I)
+# A firewall's answer to an automated browser (seen on Indeed: "Request Blocked ... Cloudflare"). Read only on
+# a page with no form fields. Sarthi does not try to get past it: the job goes to "apply yourself".
+BLOCKED_PAGE = re.compile(
+    r"\brequest blocked\b|\byou have been blocked\b|sorry, you have been blocked"
+    r"|attention required!? \|? ?cloudflare"
+    r"|access denied.{0,80}(?:permission|not authori[sz]ed)"
+    r"|\bunusual traffic from your (?:computer|network)\b"
+    r"|performing security verification",
+    re.IGNORECASE | re.DOTALL,
+)
+BLOCKED_DETAIL = "blocks automated browsers"
+
+
+def blocked_reason(url: str) -> str:
+    """The hand-over text for a site whose firewall refused Sarthi's browser (never "signed out")."""
+    return (
+        f"{host_of(url) or 'the site'} {BLOCKED_DETAIL} (its firewall refused the page): apply there yourself"
+    )
+
+
 # A closed posting's own words (the liveness idea of JobRadar, MIT: only a definite answer counts). Read only
 # on a page where no form was found, so a description that mentions a filled position changes nothing.
 CLOSED_TEXT = re.compile(

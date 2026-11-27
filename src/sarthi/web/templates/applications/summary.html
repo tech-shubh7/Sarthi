@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "_macros.html" import head, icon %}
+{% block title %}Applications · Sarthi{% endblock %}
+{% macro state(c) %}
+<li><a class="card state-card{% if c.page.blocked and c.count %} blocked{% elif c.count %} moving{% endif %}" href="{{ c.page.href }}">
+  <span class="state-title">{{ c.page.title }}</span>
+  <b class="state-n">{{ '{:,}'.format(c.count) }}</b>
+  <span class="state-sub">{{ c.page.todo }}</span>
+</a></li>
+{% endmacro %}
+{% block main %}
+{% call head('Applications', 'Where every application stands. What waits for you comes first: open a card to act on it.') %}
+<a class="button quiet" href="/applications/all">{{ icon('search') }}Search all applications</a>
+{% endcall %}
+<section class="section" aria-labelledby="waiting-title">
+  <h2 class="group-title" id="waiting-title">Waiting for you</h2>
+  <ul class="state-grid">{% for c in waiting %}{{ state(c) }}{% endfor %}</ul>
+</section>
+<section class="section" aria-labelledby="moving-title">
+  <h2 class="group-title" id="moving-title">Moving along</h2>
+  <ul class="state-grid">{% for c in moving %}{{ state(c) }}{% endfor %}</ul>
+</section>
+{% endblock %}

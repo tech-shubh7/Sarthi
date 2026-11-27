@@ -116,6 +116,10 @@ _OTHER_FAMILIES: dict[str, str] = {
     "testing": r"\bqa\b|\bquality (?:assurance|analyst|engineer(?:ing)?)\b|\bsdet\b|\btester\b|\bin test\b"
     r"|\b(?:software|automation|manual|performance)\s+test(?:ing)?\b|\btest(?:ing)?\s+(?:engineer|analyst|lead)\b",
     "embedded or hardware": r"\bembedded\b|\bfirmware\b|\bvlsi\b|\bfpga\b|\basic\b|\bhardware\b|\bpcb\b",
+    # "Accounts Executive" (plural) is bookkeeping in Singapore, Malaysia and India, not sales ("Account
+    # Executive"): seen live as instant alerts for a salesperson, 2026-11-27.
+    "accounting": r"\baccounts\s+(?:executive|assistant|officer|clerk|payable|receivable|associate)\b"
+    r"|\baccountant\b|\bbookkeep|\baccounting\s+(?:executive|assistant|officer|clerk|manager|specialist)\b",
 }
 
 

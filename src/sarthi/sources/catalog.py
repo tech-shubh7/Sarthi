@@ -23,6 +23,7 @@ from typing import Any
 
 import duckdb
 import httpx
+from ats_scrapers.models import ATSType
 from ats_scrapers.models import Job as AtsJob
 from pydantic import ValidationError
 
@@ -50,6 +51,8 @@ MIN_LOOK_BACK = timedelta(days=2)  # the snapshot is refreshed about daily; repo
 INTERRUPT_WAIT_S = 10.0  # how long a stopped scan gets to end
 QUERY_TIMEOUT_S = 600.0  # a slow connection still finishes; a stuck one is stopped (and retried later)
 EXTENSIONS_ENV = "SARTHI_DUCKDB_EXTENSIONS"
+_KNOWN_SYSTEMS = frozenset(str(system) for system in ATSType)
+_SYSTEM_NAME = re.compile(r"[a-z][a-z0-9_-]{0,39}", re.IGNORECASE)
 _ROLE_STYLE = re.compile(r"(back|front|full)[ -]+(end|stack)")
 _TITLE = r"regexp_replace(lower(title), '(back|front|full)[ -]+(end|stack)', '\1\2', 'g')"
 COLUMNS = (
@@ -94,14 +97,24 @@ def _like(text: str) -> str:
 
 def row_to_posting(row: dict[str, Any]) -> JobPosting | None:
     """One snapshot row as a posting, through the same converter as a company-board read; None if unusable."""
+    data = {k: v for k, v in row.items() if v is not None}
+    # The snapshot names hiring systems newer than the installed ats-scrapers (PandaPé, CareerPlug, isolved,
+    # HiringThing and onlyfy). Their rows share these columns, so the converter treats them as custom.
+    system = str(data.get("ats_type") or "")
+    if system and system not in _KNOWN_SYSTEMS:
+        data["ats_type"] = ATSType.CUSTOM.value
     try:
-        job = AtsJob.model_validate({k: v for k, v in row.items() if v is not None})
+        job = AtsJob.model_validate(data)
         if job.posted_at is not None and job.posted_at.tzinfo is None:
             job = job.model_copy(update={"posted_at": job.posted_at.replace(tzinfo=UTC)})
-        # model_copy skips validation; safe: a plain bool. No description was read (see the module notes).
-        return to_posting(job).model_copy(update={"description_complete": False})
+        posting = to_posting(job)
     except (ValidationError, ValueError):
-        return None  # e.g. a hiring system newer than the installed ats-scrapers
+        return None
+    # model_copy skips validation; safe: a plain bool and a short known-good name. No description was read.
+    update: dict[str, Any] = {"description_complete": False}
+    if system not in _KNOWN_SYSTEMS and _SYSTEM_NAME.fullmatch(system):
+        update["source"] = system
+    return posting.model_copy(update=update)
 
 
 class CatalogSource:

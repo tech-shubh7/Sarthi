@@ -1,0 +1,4 @@
+{% extends "applications/_list.html" %}
+{% from "_macros.html" import reason, status_pill %}
+{% block step_title %}Why it stopped{% endblock %}
+{% block step %}{% if r.detail %}<p class="why">{{ reason(r.detail) }}</p>{% else %}{{ status_pill(r.status) }}{% endif %}{% endblock %}

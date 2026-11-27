@@ -633,14 +633,21 @@ SITE_NAMES = {
 }
 _LOGIN_PATH = re.compile(r"log-?in|sign-?in|auth|sso|account|register", re.IGNORECASE)
 _SIGNED_IN = {
-    "linkedin": re.compile(r"linkedin\.com/(?:feed|jobs|in|mynetwork)/"),
-    "naukri": re.compile(r"naukri\.com/(?:mnjuser|homepage|myapply)"),
+    "linkedin": re.compile(r"^/(?:feed|jobs|in|mynetwork)(?:/|$)"),
+    "naukri": re.compile(r"^/(?:mnjuser|homepage|myapply)(?:/|$)"),
 }
 LOGIN_WAIT_S = 600
 # A page only a signed-in user sees; a signed-out visit is sent to the login page instead.
 SIGNED_IN_CHECK = {
     "linkedin": "https://www.linkedin.com/feed/",
     "naukri": "https://www.naukri.com/mnjuser/homepage",
+    # Account pages that send a signed-out visitor to the login page. The login pages themselves look the
+    # same signed in or out, so checking them said "not logged in" to a signed-in Indeed user (2026-11-27).
+    "indeed": "https://profile.indeed.com/",
+    "shine": "https://www.shine.com/myshine/home/",
+    "instahyre": "https://www.instahyre.com/candidate/opportunities/",
+    "hirist": "https://www.hirist.tech/my-profile",
+    "foundit": "https://www.foundit.in/seeker/dashboard",
 }
 LOGIN_CHECK_S = 30
 
@@ -686,7 +693,9 @@ async def signed_in(site: str, profile_dir: Path) -> bool:
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             target = SIGNED_IN_CHECK.get(site, LOGIN_PAGES[site])
-            await page.goto(target, wait_until="domcontentloaded", timeout=LOGIN_CHECK_S * 1000)
+            response = await page.goto(target, wait_until="domcontentloaded", timeout=LOGIN_CHECK_S * 1000)
+            if response is None or not response.ok:
+                return False
             await page.wait_for_timeout(2000)  # a client-side redirect to the login page
             return await _signed_in(page, site)
         except PlaywrightError:
@@ -702,18 +711,23 @@ async def _signed_in(page: Page, site: str) -> bool:
     LinkedIn and Naukri have known addresses for that; elsewhere: the site's own pages again, away from any
     login or sign-up address, with no password field on screen.
     """
-    if site in _SIGNED_IN:
-        return _SIGNED_IN[site].search(page.url) is not None
     try:
-        host = (urlparse(page.url).hostname or "").lower()
-        wanted = (urlparse(LOGIN_PAGES[site]).hostname or "").lower().split(".")[-2]
-        if wanted not in host or _LOGIN_PATH.search(urlparse(page.url).path):
+        url = urlparse(page.url)
+        host = (url.hostname or "").lower()
+        login_host = urlparse(LOGIN_PAGES[site]).hostname or ""
+        # These configured sites all have a single-label public suffix.
+        domain = ".".join(login_host.split(".")[-2:])
+        if host != domain and not host.endswith("." + domain):
+            return False
+        if allowed := _SIGNED_IN.get(site):
+            return allowed.match(url.path) is not None
+        if _LOGIN_PATH.search(url.path):
             return False
         return not await page.evaluate(
             "() => Array.from(document.querySelectorAll('input[type=password]'))"
             ".some((e) => e.getClientRects().length > 0)"
         )
-    except PlaywrightError:
+    except (PlaywrightError, ValueError):
         return False
 
 

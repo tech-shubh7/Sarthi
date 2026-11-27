@@ -21,7 +21,7 @@ _ISO_CODES = frozenset(_ISO_NAMES)
 _Place = tuple[re.Pattern[str], str, str, str]
 _Hit = tuple[str, str, int]
 
-# ISO code: (name, aliases). Aliases listed in CASE_SENSITIVE only match in that exact case (US, UK, UAE).
+# ISO code: (name, aliases, including the country's own name: "Deutschland", "Brasil", "日本"). Aliases listed in CASE_SENSITIVE only match in that exact case (US, UK, UAE).
 COUNTRIES = {
     "BD": ("Bangladesh", []),
     "IN": ("India", []),
@@ -32,11 +32,11 @@ COUNTRIES = {
     "SG": ("Singapore", []),
     "ID": ("Indonesia", []),
     "TH": ("Thailand", []),
-    "VN": ("Vietnam", ["Viet Nam"]),
+    "VN": ("Vietnam", ["Viet Nam", "Việt Nam"]),
     "PH": ("Philippines", []),
-    "JP": ("Japan", []),
+    "JP": ("Japan", ["日本"]),
     "KR": ("South Korea", ["Korea", "Republic of Korea"]),
-    "CN": ("China", []),
+    "CN": ("China", ["中国"]),
     "HK": ("Hong Kong", []),
     "TW": ("Taiwan", []),
     "AU": ("Australia", []),
@@ -67,22 +67,22 @@ COUNTRIES = {
         ["UK", "Great Britain", "Britain", "England", "Scotland", "Wales", "Northern Ireland"],
     ),
     "IE": ("Ireland", []),
-    "DE": ("Germany", []),
+    "DE": ("Germany", ["Deutschland"]),
     "FR": ("France", []),
-    "ES": ("Spain", []),
+    "ES": ("Spain", ["España"]),
     "PT": ("Portugal", []),
-    "IT": ("Italy", []),
-    "NL": ("Netherlands", ["Holland"]),
+    "IT": ("Italy", ["Italia"]),
+    "NL": ("Netherlands", ["Holland", "Nederland"]),
     "BE": ("Belgium", []),
     "LU": ("Luxembourg", []),
-    "CH": ("Switzerland", []),
-    "AT": ("Austria", []),
-    "SE": ("Sweden", []),
-    "NO": ("Norway", []),
-    "DK": ("Denmark", []),
+    "CH": ("Switzerland", ["Schweiz", "Suisse", "Svizzera"]),
+    "AT": ("Austria", ["Österreich"]),
+    "SE": ("Sweden", ["Sverige"]),
+    "NO": ("Norway", ["Norge"]),
+    "DK": ("Denmark", ["Danmark"]),
     "FI": ("Finland", []),
     "IS": ("Iceland", []),
-    "PL": ("Poland", []),
+    "PL": ("Poland", ["Polska"]),
     "CZ": ("Czech Republic", ["Czechia"]),
     "SK": ("Slovakia", []),
     "HU": ("Hungary", []),
@@ -100,16 +100,16 @@ COUNTRIES = {
     "MT": ("Malta", []),
     "US": ("United States", ["USA", "US", "U.S.", "U.S.A.", "America"]),
     "CA": ("Canada", []),
-    "MX": ("Mexico", []),
-    "BR": ("Brazil", []),
+    "MX": ("Mexico", ["México"]),
+    "BR": ("Brazil", ["Brasil"]),
     "AR": ("Argentina", []),
     "CL": ("Chile", []),
     "CO": ("Colombia", []),
-    "PE": ("Peru", []),
+    "PE": ("Peru", ["Perú"]),
     "UY": ("Uruguay", []),
     "CR": ("Costa Rica", []),
     "PA": ("Panama", []),
-    "RU": ("Russia", []),
+    "RU": ("Russia", ["Россия"]),
 }
 CASE_SENSITIVE = {"UK", "US", "UAE", "USA", "KSA", "U.S.", "U.S.A."}
 
@@ -830,10 +830,18 @@ def title_countries(title: str) -> set[str]:
 
 _LEVELLED = r"\b(?:engineer|developer|sde|swe|programmer|analyst|scientist|consultant)\s*[-\u2013(]?\s*"
 _NOT_YEARS = r"(?!\s*(?:[-\u2013+]|to\b|\(|years?\b|yrs?\b))"  # "Engineer 5-8 yrs" is years, not level 5
+# "Staff" is a level above senior only in tech titles ("Staff Engineer", "Software Engineer, Staff"). Elsewhere it
+# names the ordinary post: a "Staff Nurse" or "Staff Accountant" is the entry grade, "Kitchen Staff" the workers.
+_TECH_WORD = (
+    r"\b(?:engineer|engineering|developer|software|data|scientist|designer|product|ml|machine learning|ai|"
+    r"security|frontend|front-end|backend|back-end|full[- ]?stack|sre|site reliability|infrastructure|platform|"
+    r"architect|research|researcher|technical|ux|mobile|ios|android|cloud|devops|systems|analytics)\b"
+)
+_STAFF_LEVEL = rf"\bstaff\b(?=.*{_TECH_WORD})|{_TECH_WORD}.*\bstaff\b"
 _SENIORITY = [
     ("manager", r"\b(?:manager|head of|director|(?:a|s|e)?vp\b|vice[- ]president)"),
     ("principal", r"\b(?:principal|architect|distinguished)\b"),
-    ("lead", r"\b(?:lead|leader|staff|team lead|tech lead)\b"),
+    ("lead", r"\b(?:lead|leader|team lead|tech lead)\b|" + _STAFF_LEVEL),
     (
         "senior",
         r"\b(?:senior|sr\.?)(?=\W|$)|"

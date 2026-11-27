@@ -127,6 +127,44 @@ def test_clearance_is_for_the_jobs_own_country() -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "country"),
+    [
+        ("Saudi nationals only.", "SA"),
+        ("UAE National Only", "AE"),
+        ("This role is only for Qatari nationals.", "QA"),
+        ("Kuwaiti nationals are required for this position.", "KW"),
+    ],
+)
+def test_gulf_nationals_only_is_a_citizenship_rule(text: str, country: str) -> None:
+    dubai = make_profile(home_country="AE", countries=["SA", "QA", "KW"])
+    eligible, blockers, _ = _rules(text, dubai, country_codes=[country])
+    assert eligible is (country == "AE")
+    if country != "AE":
+        assert blockers and "Only for citizens or residents" in blockers[0]
+    assert _rules("UAE nationals are preferred.", dubai, country_codes=["AE"])[0]  # a wish, not a rule
+
+
+@pytest.mark.parametrize(
+    ("listed", "language"),
+    [
+        ("Português", "Portuguese"),
+        ("Español (C1)", "Spanish"),
+        ("हिन्दी", "Hindi"),
+        ("தமிழ்", "Tamil"),
+        ("日本語", "Japanese"),
+        ("العربية", "Arabic"),
+        ("Русский B2", "Russian"),
+        ("Bahasa Indonesia", "Indonesian"),
+    ],
+)
+def test_languages_written_in_their_own_name_count(listed: str, language: str) -> None:
+    # Before: a Brazilian listing "Português" was ruled out of every job asking for Portuguese.
+    profile = make_profile(home_country="BR", languages=[listed])
+    eligible, blockers, _ = _rules(f"Fluent {language} required.", profile, country_codes=["BR"])
+    assert eligible, blockers
+
+
+@pytest.mark.parametrize(
     "description",
     [
         "Join our citizen developer team building low-code tools.",

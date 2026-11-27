@@ -1,9 +1,9 @@
-{% from "_macros.html" import icon %}<!doctype html>
+{% from "_macros.html" import icon, badge, page_links %}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Sarthi{% endblock %}</title>
+<title>{% block title %}{% for name, _ in crumbs|reverse %}{{ name }} · {% endfor %}Sarthi{% endblock %}</title>
 <link rel="preload" href="{{ asset('fonts/InterVariable.woff2') }}" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ asset('app.css') }}">
 <link rel="icon" href="{{ asset('brand/favicon.ico') }}" sizes="any">
@@ -15,16 +15,15 @@
 <div class="shell">
 <aside class="side">
   <a class="brand" href="/" aria-label="Sarthi home"><img src="{{ asset('brand/sarthi-wordmark.svg') }}" alt="Sarthi" width="156" height="49"></a>
-  <nav aria-label="Pages">
-    <p class="nav-label">Your search</p>
-    <div class="nav">
-      <a href="/" {% if nav == 'overview' %}aria-current="page"{% endif %}>{{ icon('overview') }}<span>Overview</span></a>
-      <a href="/activity" {% if nav == 'activity' %}aria-current="page"{% endif %}>{{ icon('check') }}<span>Activity</span>{% if inbox.total %}<b class="count hot" title="Waiting for you">{{ inbox.total }}</b>{% endif %}</a>
-      <a href="/matches" {% if nav == 'matches' %}aria-current="page"{% endif %}>{{ icon('matches') }}<span>Matches</span>{% if inbox.strong %}<b class="count hot" title="Strong matches you have not answered">{{ inbox.strong }}</b>{% endif %}</a>
-      <a href="/applications" {% if nav == 'applications' %}aria-current="page"{% endif %}>{{ icon('applications') }}<span>Applications</span>{% if ov.applications.values()|sum %}<b class="count">{{ ov.applications.values()|sum }}</b>{% endif %}</a>
-      <a href="/sources" {% if nav == 'sources' %}aria-current="page"{% endif %}>{{ icon('sources') }}<span>Sources</span></a>
-      <a href="/settings" {% if nav == 'settings' %}aria-current="page"{% endif %}>{{ icon('settings') }}<span>Settings</span></a>
-    </div>
+  <nav aria-label="Pages" class="side-nav">
+    <ul class="nav">
+      {% for s in sections %}
+      <li class="nav-group{% if s.current %} in{% endif %}">
+        <a class="nav-top" href="{{ s.href }}"{% if s.current and not s.current_page %} aria-current="page"{% endif %}>{{ icon(s.icon) }}<span>{{ s.title }}</span>{{ badge(s.count, s.hot) }}</a>
+        {% if s.open %}{{ page_links(s) }}{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
   </nav>
   <div class="side-foot">
     {% if can_edit %}
@@ -37,6 +36,14 @@
 </aside>
 <div class="content">
 <main>
+{% if current_section and current_section.pages %}
+<nav class="page-strip" aria-label="{{ current_section.title }} pages">{{ page_links(current_section, 'strip') }}</nav>
+{% endif %}
+{% if crumbs|length > 1 %}
+<nav class="crumbs" aria-label="Breadcrumb"><ol>
+  {% for name, href in crumbs %}<li>{% if loop.last %}<span aria-current="page">{{ name }}</span>{% else %}<a href="{{ href }}">{{ name }}</a>{% endif %}</li>{% endfor %}
+</ol></nav>
+{% endif %}
 {% if done %}<p class="notice" role="status">{{ icon('check') }}{{ done }}</p>{% endif %}
 {% if screen %}<p class="notice" role="status">A browser window is open for you. Open it here (works for 10 minutes): <a class="screen-link" href="{{ screen }}" target="_blank" rel="noopener noreferrer">{{ screen }}</a></p>{% endif %}
 {% block main %}{% endblock %}

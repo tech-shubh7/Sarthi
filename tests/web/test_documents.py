@@ -59,7 +59,7 @@ def test_each_application_links_and_serves_its_own_documents(
     without = applied(conn, job_store, clock, "https://jobs.example/2")
     made(conn, with_docs, *write_docs(data_dir, with_docs))
 
-    page = client.get("/applications").text
+    page = client.get("/applications/submitted").text
     assert f'href="/applications/{with_docs}/resume.pdf" target="_blank" rel="noopener noreferrer"' in page
     assert f'href="/applications/{with_docs}/cover-letter.pdf"' in page
     assert f"/applications/{without}/resume.pdf" not in page

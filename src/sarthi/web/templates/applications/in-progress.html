@@ -1,0 +1,11 @@
+{% extends "applications/_list.html" %}
+{% block step_title %}Status{% endblock %}
+{% block step %}
+{% if r.queue_status == 'running' %}
+<span class="pill info">Processing</span>
+{% elif r.queue_status == 'retry' %}
+<span class="pill info">Waiting to retry</span>
+{% else %}
+<span class="pill info">Queued</span>
+{% endif %}
+{% endblock %}

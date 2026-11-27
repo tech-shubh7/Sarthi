@@ -158,6 +158,17 @@ class ApplicationStore:
         ).fetchone()
         return int(row[0])
 
+    def firewall_blocked_since(self, site: str, since: datetime) -> bool:
+        """True when ``site``'s firewall refused Sarthi's browser since ``since`` (its jobs are not tried)."""
+        if not site:
+            return False
+        row = self._conn.execute(
+            "SELECT 1 FROM application WHERE site = ? AND status = 'needs_human' AND updated_at >= ?"
+            " AND (detail LIKE '%blocks automated browsers%' OR detail LIKE '%firewall%') LIMIT 1",
+            (site, to_iso(since)),
+        ).fetchone()
+        return row is not None
+
     def waiting_for_login(self, host: str) -> list[str]:
         """Jobs on ``host`` (or a subdomain) handed to the user only because they were not logged in there."""
         pattern = "%." + host.replace("!", "!!").replace("%", "!%").replace("_", "!_")

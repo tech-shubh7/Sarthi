@@ -1,0 +1,4 @@
+{% extends "applications/_list.html" %}
+{% from "_macros.html" import status_pill %}
+{% block step_title %}Status{% endblock %}
+{% block step %}{{ status_pill(r.status) }}{% endblock %}

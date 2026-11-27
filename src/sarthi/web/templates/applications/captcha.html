@@ -1,0 +1,9 @@
+{% extends "applications/_list.html" %}
+{% from "applications/_parts.html" import post, open_job, applied with context %}
+{# Every row is the same CAPTCHA: the page's header says what to do, so each row only offers it. #}
+{% block step %}
+  <div class="row-actions">
+    {% if can_edit %}{{ post(r, 'finish', 'Finish it myself') }}{% endif %}
+    {{ open_job(r, 'Open job') }}{{ applied(r) }}
+  </div>
+{% endblock %}

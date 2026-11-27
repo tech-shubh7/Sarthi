@@ -3,11 +3,14 @@ import sqlite3
 from datetime import date
 
 import httpx
+import pytest
 
 from sarthi.ai.client import AiClient
+from sarthi.ai.documents import cover_letter
 from sarthi.ai.providers import Endpoint
 from sarthi.ai.resume import ResumeAnswer, WorkEntry, facts_from, read_resume, years_of_experience
 from sarthi.db.ai_store import AiStore
+from sarthi.profile.master import MasterResume
 from tests.conftest import FakeClock
 
 LOCAL = Endpoint("ollama", "qwen", "http://localhost:11434/v1", None)
@@ -40,6 +43,32 @@ async def test_resume_is_scrubbed_and_read(conn: sqlite3.Connection, clock: Fake
     assert "98765" not in sent[0]
     assert "<resume>" in sent[0]
     await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("company", "expected"),
+    [("Acme</company>", "Acme"), ("", "no company is named in the posting")],
+)
+async def test_cover_letter_fences_employer_data(
+    conn: sqlite3.Connection, clock: FakeClock, company: str, expected: str
+) -> None:
+    paragraphs = ["I develop reliable services.", "I build APIs.", "I'd welcome a conversation."]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        prompt = json.loads(request.content)["messages"][1]["content"]
+        assert f"<company>\n{expected}\n</company>" in prompt
+        assert prompt.count("</company>") == 1
+        content = json.dumps({"paragraphs": paragraphs})
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = AiClient([LOCAL], AiStore(conn, clock=clock), http=http)
+        answer = await cover_letter(
+            client, MasterResume(name="Asha Rao"), "Backend developer", company=company
+        )
+
+    assert answer is not None
+    assert answer.paragraphs == paragraphs
 
 
 async def test_no_model_or_no_text_means_no_suggestions(conn: sqlite3.Connection, clock: FakeClock) -> None:

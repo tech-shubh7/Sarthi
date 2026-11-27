@@ -1,7 +1,11 @@
+{% extends "settings/_layout.html" %}
+{% from "_macros.html" import icon, job_link, empty %}
+{% block lede %}Log in to job sites once, so Sarthi can apply there with your own session.{% endblock %}
+{% block page %}
+{% if application_counts.get('login') %}<p class="notice warn" role="status">{{ application_counts['login'] }} {{ 'job waits' if application_counts['login'] == 1 else 'jobs wait' }} for a login.&nbsp;<a href="/applications/login-needed">See which sites</a></p>{% endif %}
 {% if login_sites %}
 <section class="card section" id="logins" aria-label="Job site logins">
   <div class="form-section">
-    <h3>Job site logins</h3>
     <p class="help">{% if controls.board_automation %}Sign in so Sarthi can use your saved session.{% else %}Job-site submissions use the site’s own browser form.{% endif %} The site's login page opens on this computer (in Docker, a link shows at the top of the page); you log in on the site itself, then close the window, and Sarthi checks the login. It never sees your password.</p>
     <div class="logins">
       {% for key, name in login_sites %}
@@ -11,3 +15,4 @@
   </div>
 </section>
 {% endif %}
+{% endblock %}

@@ -56,7 +56,7 @@ Everything is a task in the SQLite queue, so a crash loses nothing and each step
 | LinkedIn, Indeed, Naukri, Glassdoor, Google Jobs, ZipRecruiter, Seek, Bayt, BDJobs | **JobSpy** | Library |
 | Adzuna, Jooble, Wellfound, Dice, Hiring Cafe, The Muse, TrueUp, Handshake, CareerBuilder… | **JobDrop** | Library (extras only) |
 | Remotive, Jobicy, Himalayas, Arbeitnow, Working Nomads, RemoteOK, WeWorkRemotely | **StillOpen** `scan.py` (Python, zero-token) | Copy connectors |
-| Freehire (one search = ~90 job systems) | **JobRadar** `sources/boards/freehire.py` | Copy, replace its India-only filters with user prefs |
+| Freehire (one search = ~430 sources: 183 hiring systems, 177 job boards and national portals) | **JobRadar** `sources/boards/freehire.py` | Copy, replace its India-only filters with user prefs |
 | Hacker News "Who is hiring", any careers page | **ApplyPilot** `hackernews.py`, `smartextract.py` | Copy |
 | Telegram job channels (live) | **JobRadar** `sources/telegram.py` | Copy |
 | India mass-hiring pages (TCS, Infosys, Wipro, Cognizant) | **JobRadar** `sources/pages/watcher.py` | Copy |
@@ -69,7 +69,7 @@ baseline, alert-priority `match` tasks). ATS-Scrapers is installed **without** i
 downloads a stealth Chromium binary; without it ~93 of 99 hiring systems work and Meta/Tesla boards are unavailable.
 `sources/feeds.py` (StillOpen connectors: Remotive, RemoteOK, We Work Remotely, Himalayas, Jobicy, Arbeitnow, Working
 Nomads; one request each, no key), `sources/hackernews.py` ("Who is hiring?" threads via the Algolia HN API),
-`sources/freehire.py` (JobRadar port: one search per role over ~90 hiring systems, filtered by the user's countries and
+`sources/freehire.py` (JobRadar port: one search per role over ~430 sources (hiring systems, job boards, national portals), filtered by the user's countries and
 remote preference). A remote job is "open worldwide" only when its location names no restriction; a time zone or a
 city Sarthi cannot place is shown as "check it includes you" instead of being read as anywhere.
 

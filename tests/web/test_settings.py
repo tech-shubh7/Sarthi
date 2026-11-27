@@ -375,10 +375,10 @@ def test_a_filled_form_can_be_submitted_or_cancelled_here(
     ApplicationStore(conn, clock=clock).record(job_id, ApplicationStatus.FILLED, site="jobs.lever.co")
     (tmp_path / "screenshots").mkdir()
     (tmp_path / "screenshots" / f"{job_id}.png").write_bytes(b"\x89PNG fake")
-    page = client.get("/applications").text
+    page = client.get("/applications/needs-you").text
     assert "Waiting for your Submit" in page and f"/applications/{job_id}/submit" in page
     assert client.get(f"/applications/{job_id}/form.png").content == b"\x89PNG fake"
-    good = token(client, "/applications")
+    good = token(client)
     response = client.post(
         f"/applications/{job_id}/submit", data={"csrf": good}, headers=HERE, follow_redirects=False
     )
@@ -433,14 +433,14 @@ def test_apply_yourself_says_why_and_takes_i_applied(
 
     job_id = job_store.save(make_job(title="Backend Engineer", company="Beta")).job_id
     ApplicationStore(conn, clock=clock).record(
-        job_id, ApplicationStatus.NEEDS_HUMAN, site="in.indeed.com",
-        detail="in.indeed.com needs your own logged-in account to apply.",
+        job_id, ApplicationStatus.NEEDS_HUMAN, site="acme.wd5.myworkdayjobs.com",
+        detail="Workday forms need your own Workday account for this employer.",
     )  # fmt: skip
-    page = client.get("/applications").text
-    assert "Apply yourself" in page and "Needs you" not in page
-    assert "This site needs you signed in" in page
+    page = client.get("/applications/apply-yourself").text
+    assert "Backend Engineer" in page and "Workday needs your own account" in page
     assert "Open &amp; apply" in page and f"/applications/{job_id}/applied" in page
-    good = token(client, "/applications")
+    assert "Backend Engineer" not in client.get("/applications/needs-you").text
+    good = token(client)
     response = client.post(
         f"/applications/{job_id}/applied", data={"csrf": good, "next": "/applications?page=1"}, headers=HERE,
         follow_redirects=False,
@@ -457,9 +457,9 @@ def test_a_filled_form_lost_in_a_restart_offers_to_fill_it_again(
     job_id = job_store.save(make_job(title="Backend Engineer", company="Gamma")).job_id
     ApplicationStore(conn, clock=clock).record(job_id, ApplicationStatus.FILLED, site="jobs.lever.co")
     actions.waiting = {}  # its filled page is gone
-    page = client.get("/applications").text
+    page = client.get("/applications/needs-you").text
     assert "previous browser tab is closed" in page and f"/applications/{job_id}/refill" in page
-    good = token(client, "/applications")
+    good = token(client)
     response = client.post(
         f"/applications/{job_id}/refill", data={"csrf": good}, headers=HERE, follow_redirects=False
     )
@@ -489,9 +489,9 @@ def test_a_captcha_form_offers_to_finish_it_on_this_computer(
         other, ApplicationStatus.NEEDS_HUMAN, site="y.example", detail="Workday forms need your own account."
     )
     page = client.get("/applications/captcha").text
-    assert "Continue filled form" in page and "only you can solve" in page
+    assert "Finish it myself" in page and "Sarthi never solves CAPTCHAs" in page
     assert f"/applications/{job_id}/finish" in page and f"/applications/{other}/finish" not in page
-    good = token(client, "/applications")
+    good = token(client)
     response = client.post(
         f"/applications/{job_id}/finish", data={"csrf": good, "next": "/applications?page=1"}, headers=HERE,
         follow_redirects=False,
@@ -531,7 +531,7 @@ def test_bulk_apply_routes_to_the_in_progress_view(client: TestClient) -> None:
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/applications/queued?done=matching_queued"
+    assert response.headers["location"] == "/applications/in-progress?done=matching_queued"
 
 
 def test_invalid_automation_settings_do_not_pause_alerts(client: TestClient, actions: FakeActions) -> None:

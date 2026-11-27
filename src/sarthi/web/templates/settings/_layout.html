@@ -1,0 +1,10 @@
+{# The layout of every Settings page: its title, what it is for, problems with the form, then the page. #}
+{% extends "base.html" %}
+{% from "_macros.html" import head %}
+{% block main %}
+{{ head(crumbs[-1][0], self.lede()) }}
+{% if errors.get('form') %}<p class="notice bad" role="alert">{{ errors['form'] }}</p>{% endif %}
+{% if errors and not errors.get('form') %}<p class="notice bad" role="alert">Check the highlighted fields.</p>{% endif %}
+{% if not can_edit and section in ('automation', 'logins', 'email') %}<p class="muted section">Start Sarthi to edit these settings.</p>{% endif %}
+{% block page %}{% endblock %}
+{% endblock %}

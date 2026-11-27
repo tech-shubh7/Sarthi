@@ -1,0 +1,33 @@
+{# The layout of every Applications list page; each page fills in its "step" cell (and may replace "rows"). #}
+{% extends "base.html" %}
+{% from "_macros.html" import head, list_filters, pager, empty, reply, job_link %}
+{% from "applications/_parts.html" import docs with context %}
+{% block main %}
+{{ head(app_page.title, app_page.lede) }}
+{{ list_filters(app_page.href, filters, sites, sorts) }}
+{% block rows %}
+{% if rows %}
+<div class="card table-card">
+<table class="table">
+  <thead><tr><th>Role</th><th>{% block step_title %}What to do{% endblock %}</th>{% if app_page.replies %}<th>Reply</th>{% endif %}<th>Site</th><th>Updated</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr id="job-{{ r.job_id }}">
+      <td>{{ job_link(r.title, r.url) }}<span class="job-sub">{{ r.company }}</span>{{ docs(r) }}</td>
+      <td data-label="{{ self.step_title() }}">{% block step scoped %}{% endblock %}</td>
+      {% if app_page.replies %}<td data-label="Reply">{{ reply(r.reply_kind) or '' }}</td>{% endif %}
+      <td data-label="Site">{% if r.site %}<span class="chip">{{ r.site }}</span>{% endif %}</td>
+      <td data-label="Updated" class="faint">{{ ago(r.updated_at) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{{ pager(page, pages, total, size, link_page) }}
+</div>
+{% elif filters.query or filters.site %}
+{{ empty('Nothing matches your search', 'Clear the search to see every one on this page.') }}
+{% else %}
+{{ empty(app_page.empty, 'Sarthi shows a job here the moment it needs you.' if app_page.blocked else 'This page updates as applications move along.') }}
+{% endif %}
+{% endblock %}
+{% endblock %}

@@ -50,7 +50,8 @@ _GENERIC_TITLE_WORDS = frozenset(
         "fresher",
     ]
 )
-_TOKEN = re.compile(r"[a-z0-9][a-z0-9+#.]*[a-z0-9+#]|[a-z0-9]")
+# Unicode letters keep accented words and titles in scripts such as Japanese and Cyrillic intact.
+_TOKEN = re.compile(r"[^\W_](?:[\w+#.]*[\w+#])?")
 _MIN_STEM_LENGTH = 3
 _MIN_BULLET_TERM_LENGTH = 3
 _MAX_KEYWORD_LENGTH = 40
@@ -128,8 +129,29 @@ _TITLE_SYNONYMS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
         (r"\b(?:developer|programmer|dev)s?\b", "engineer"),
         (r"\bnode(?:\.?js)?\b", "node.js"),
         (r"\bsw\b", "software"),
+        # Common job terms in Portuguese, Spanish, German, French and Dutch, with phrases first.
+        (r"\b(?:suporte|atendimento|sucesso)\s+(?:ao|do|a|de)\s+clientes?\b", "customer support"),
+        (r"\b(?:soporte|atenci[oó]n|servicio)\s+al\s+cliente\b", "customer support"),
+        (r"\b(?:support|service)\s+client(?:s|èle)?\b", "customer support"),
+        (r"\b(?:kundenservice|kundensupport|kundenbetreuung|klantenservice)\b", "customer support"),
+        (r"\b(?:suporte|soporte)\b", "support"),
+        (r"\b(?:clientes?|kunden)\b", "customer"),
+        (r"\banalista\b", "analyst"),
+        (r"\bespecialista\b", "specialist"),
+        (r"\b(?:engenheir[oa]|ingenier[oa]|ingenieur(?:in)?|ingénieur)\b", "engineer"),
+        (r"\b(?:desenvolvedor(?:a)?|desarrollador(?:a)?|entwickler(?:in)?|développeur)\b", "engineer"),
+        (r"\b(?:enfermeir[oa]|enfermer[oa]|krankenpfleger(?:in)?|pflegefachkraft|infirmi[eè]re?|"
+         r"verpleegkundige)\b", "nurse"),
+        (r"\b(?:professora|profesora|lehrer(?:in)?|leraar|lerares|leerkracht(?:en)?|docent(?:e|en)?|"
+         r"enseignante?)\b", "teacher"),
+        (r"\b(?:contador(?:a)?|buchhalter(?:in)?|comptable|boekhouder)\b", "accountant"),
+        (r"\b(?:vendas|ventas|vertrieb)\b", "sales"),
+        (r"\b(?:gerente|leiter(?:in)?)\b", "manager"),
     )
-)
+)  # fmt: skip
+# "Customer Support" for "Customer Support Specialist": the role without a job noun.
+_CORE_IN_ORDER_CREDIT = 0.9
+_MIN_CORE_WORDS = 2
 
 
 def title_words(text: str) -> list[str]:
@@ -194,6 +216,15 @@ def _title_share(job: JobPosting, ctx: _Context) -> tuple[float, tuple[str, ...]
         # All words but not in order ("Product Security Engineer" for "product engineer"): partial credit.
         if share == 1 and len(title) > 1 and f" {' '.join(title)} " not in sequence:
             share = _PARTIAL_ORDER_CREDIT
+        # Every word of the target but its job noun or level, in order ("Customer Support" posted for a
+        # "Customer Support Specialist"). Require at least two such words to give this credit.
+        core = [w for w in title if w not in _GENERIC_TITLE_WORDS]
+        if (
+            share < _CORE_IN_ORDER_CREDIT
+            and len(core) >= _MIN_CORE_WORDS
+            and f" {' '.join(core)} " in sequence
+        ):
+            share = _CORE_IN_ORDER_CREDIT
         if share > best:
             best, best_title = share, title
     return best, best_title

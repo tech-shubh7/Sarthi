@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
 
-from sarthi.ai.client import AiClient
+from sarthi.ai.client import AiClient, BudgetExhaustedError
 from sarthi.ai.documents import ResumeChange, read_master, tailor_changes, unsupported_claims
 from sarthi.ai.documents import cover_letter as ai_cover_letter
 from sarthi.clock import Clock, utcnow
@@ -25,10 +26,12 @@ from sarthi.db.documents import DocumentRecord, DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
 from sarthi.documents.build import (
+    MIN_LETTER_WORDS,
     Built,
     Letter,
     cover_letter,
     edits,
+    letter_company,
     plain_letter,
     tailored_resume,
     without_claims,
@@ -112,9 +115,24 @@ def _path(change: ResumeChange) -> str:
     return change.path.replace(" ", "")
 
 
+# Letters with no accent to strip: written out as they are said ("Weißenfels" -> "Weissenfels").
+_LATIN = str.maketrans(
+    {"ß": "ss", "ẞ": "SS", "Æ": "AE", "æ": "ae", "Ø": "O", "ø": "o", "Đ": "D", "đ": "d", "Ł": "L", "ł": "l",
+     "Œ": "OE", "œ": "oe", "Þ": "Th", "þ": "th", chr(0x131): "i"}  # the last is the dotless i
+)  # fmt: skip
+
+
+def _ascii(text: str) -> str:
+    """``text`` in plain letters: "Jörg Weißenfels" -> "Jorg Weissenfels"; other scripts are left out."""
+    decomposed = unicodedata.normalize("NFKD", text.translate(_LATIN))
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
 def file_stem(name: str, company: str) -> str:
     """A file name part like "Asha_Rao_Acme": safe on every file system, readable for recruiters."""
-    parts = [re.sub(r"[^A-Za-z0-9]+", "_", part).strip("_") for part in (name, company)]
+    parts = [
+        re.sub(r"[^A-Za-z0-9]+", "_", _ascii(part)).strip("_") for part in (name, letter_company(company))
+    ]
     return "_".join(p for p in parts if p)[:80] or "Sarthi"
 
 
@@ -198,6 +216,8 @@ class DocumentMaker:
             return
         try:
             report = await self.make(task.key, profile, tries=Tries(task.attempts))
+        except BudgetExhaustedError as error:
+            raise DeferError(error.retry_after) from error
         except PermanentError as error:
             self._ready(task, {"error": str(error)})
             return
@@ -392,13 +412,17 @@ class DocumentMaker:
         """A letter that passes the code checks and the claim reviewer.
 
         The first answer's problems (a number or skill the resume lacks, a cliché, a claim the reviewer cannot
-        find) go back to the AI once; from that second answer the true paragraphs are kept. The plain letter
-        is the last resort.
+        find) go back to the AI once; from that second answer the true paragraphs are kept. When that fails,
+        a first answer that was true (code and reviewer found no untrue claim, only wording to improve) is
+        sent rather than the plain letter, which is the last resort.
         """
         problems: list[str] = []
         letter = Letter("", [], "", from_ai=False)
+        true_first: Letter | None = None
         for strict in (False, True):
-            answer = await ai_cover_letter(self.ai, master, job_text, problems[:10] or None)
+            answer = await ai_cover_letter(
+                self.ai, master, job_text, problems[:10] or None, company=letter_company(company)
+            )
             self._busy(answer, tries)
             letter = cover_letter(
                 master,
@@ -420,12 +444,18 @@ class DocumentMaker:
                 if not claims:
                     return letter
                 trimmed = without_claims(letter, claims)
-                if trimmed is not None:
+                short = trimmed is not None and len(" ".join(trimmed.paragraphs).split()) < MIN_LETTER_WORDS
+                if trimmed is not None and not (short and true_first is not None):
                     return trimmed
                 break
             problems = letter.problems + [f"unsupported claim: {c}" for c in claims]
             if not problems:
                 return letter
+            cliched = any(p.startswith(("uses ", "contains ")) for p in letter.problems)
+            if not claims and not cliched:  # true, its wording could be better: kept if the second try fails
+                true_first = Letter(letter.greeting, letter.paragraphs, letter.sign_off, from_ai=True)
+        if true_first is not None:
+            return true_first
         return Letter(
             letter.greeting, plain_letter(master, role, company, job_text), letter.sign_off, from_ai=False
         )

@@ -1,0 +1,28 @@
+{% extends "activity/_layout.html" %}
+{% from "_macros.html" import empty, choose %}
+{% block lede %}Everything Sarthi did for you: documents made, forms filled, applications sent, replies and follow-ups.{% endblock %}
+{% block page %}
+<form class="filters card" action="/activity/timeline" method="get" aria-label="Filter activity">
+  {{ choose('kind', 'Category', kinds, kind, 'All categories') }}
+  {{ choose('sort', 'Sort', timeline_sorts, sort) }}
+  <div class="filter-actions"><button class="button" type="submit">Filter</button>{% if kind %}<a class="button quiet" href="/activity/timeline">Clear</a>{% endif %}</div>
+</form>
+{% if notices %}
+<ol class="card activity" aria-label="Recent activity">
+  {% for n in notices %}
+  <li class="activity-item">
+    <p class="activity-head"><span class="pill info">{{ notice_kind(n.kind) }}</span>{% if n.title %} <b>{{ n.title }}</b> · {{ n.company }}{% endif %} <span class="faint">{{ ago(n.at) }}</span></p>
+    <p class="activity-text">{{ n.text }}</p>
+    {% if n.kind == 'documents' and n.job_id and 'ready' in n.text %}
+    <div class="row-actions docs">
+      <a class="button small ghost" href="/applications/{{ n.job_id }}/resume.pdf" target="_blank" rel="noopener noreferrer">Resume</a>
+      <a class="button small ghost" href="/applications/{{ n.job_id }}/cover-letter.pdf" target="_blank" rel="noopener noreferrer">Cover letter</a>
+    </div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+{{ empty('Nothing yet', 'Documents made, forms filled, applications sent, replies from employers and follow-up drafts show here.') }}
+{% endif %}
+{% endblock %}

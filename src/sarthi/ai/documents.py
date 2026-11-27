@@ -13,7 +13,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints
 
-from sarthi.ai.client import AiClient, AiError
+from sarthi.ai.client import AiClient, AiError, BudgetExhaustedError
 from sarthi.ai.privacy import scrub
 from sarthi.ai.prompts import Prompt
 from sarthi.jobs.skills import skills_in
@@ -80,6 +80,8 @@ async def read_master(client: AiClient, resume_text: str) -> MasterResume | None
         return await client.structured(
             READ_PROMPT, MasterResume, urgent=False, resume=scrub(resume_text[:RESUME_CHARS])
         )
+    except BudgetExhaustedError:
+        raise
     except AiError as error:
         log.info("resume not split into sections: %s", error)
         return None
@@ -201,6 +203,8 @@ def sections_text(master: MasterResume, *, lengths: bool = False) -> str:
     lines.append("\nSkills: " + ", ".join(master.all_skills()))
     for school in master.education:
         lines.append(f"Education: {school.degree}, {school.school} ({school.start} - {school.end})")
+    for extra in master.extras:
+        lines.append(f"{extra.heading}: {'; '.join(extra.items)}")
     return "\n".join(lines)
 
 
@@ -261,22 +265,27 @@ class ResumeChanges(BaseModel):
 # the headline never changed, and bullet lengths kept.
 TAILOR_CHANGES_PROMPT = Prompt(
     name="tailor_changes",
-    version="3",
+    version="4",
     instructions="""
 Tailor the candidate's resume in <resume_sections> to the job in <job_posting> by listing targeted changes.
-Code applies a change only when it passes every rule below; a change that breaks one is thrown away.
+The candidate may work in any field (nursing, teaching, accounting, sales, engineering, design, software):
+use that field's own words. Code applies a change only when it passes every rule below; a change that
+breaks one is thrown away.
 
 TRUTH RULES (one line at a time):
-1. A re-worded line may use ONLY the facts of that same line. Never add a tool, language, framework,
-   technology, number, company, product, team size, scope or result that the line itself does not state,
-   even when another line, the skills list or the job mentions it. Example: "Built payment APIs in
+1. A re-worded bullet may use ONLY the facts of that same bullet. Never add a tool, system, method,
+   qualification, number, company, product, team size, scope or result that the bullet itself does not
+   state, even when another line, the skills list or the job mentions it. Example: "Built payment APIs in
    Node.js" must not become "Built payment APIs in Python and Node.js" (Python is not in that line).
 2. Using the job's word for what the line already says is the point: "LLM workflows with retrieval" may
-   say "RAG pipeline"; "nightly scripts that load sales data" may say "ETL jobs". Claiming adjacent work or
-   a wider scope is not allowed. <job_keywords> "lack" skills must never appear.
+   say "RAG pipeline"; "discharge planning with physiotherapists, occupational therapists and social
+   workers" may say "multidisciplinary discharge planning"; "hotel and restaurant accounts" may say
+   "HORECA accounts". Claiming adjacent work or a wider scope is not allowed. <job_keywords> "lack"
+   skills must never appear.
 3. Keep every number exactly as written. Do not raise seniority ("worked on" is not "led").
-4. Keep each line about its length (the character count shown, within 15%) and start bullets with an
-   active past-tense verb, like the original.
+4. Keep each line about its length (the character count shown, within 15%). Start each bullet with an
+   active verb in the ORIGINAL's tense: a current duty written in the present ("Manage", "Teach") stays
+   in the present; finished work stays in the past.
 5. Never drop, merge or add a bullet, role, project, skill, certification, link or date. Never change
    names, companies, titles, dates, schools or the headline.
 6. Do not copy the posting's sentences (no run of 5+ words from it); use its hard keywords in the
@@ -285,8 +294,12 @@ TRUTH RULES (one line at a time):
 7. A line that already reads well for this job stays as it is: do not list it.
 
 CHANGES you can make (copy each path exactly as shown in <resume_sections>):
-- "summary", action "replace": the same facts (no fact from elsewhere on the resume), the job's focus
-  first. Call the candidate only by a title the resume gives them, never the job's title.
+- "summary", action "replace": the summary is what a recruiter reads in the first six seconds. Re-write
+  it so its first sentence names what this job needs most that the candidate really has. Besides its own
+  facts it may name a qualification written elsewhere on this resume when the job asks for it (a
+  registration, licence, certification, degree or a title they held), stated as the resume states it.
+  No skill, tool, number or result from other lines. Keep its length (within 15%). Call the
+  candidate only by a title the resume gives them, never the job's title. No "I", no "seeking".
 - "experience[i].bullets[j]" or "projects[i].bullets[j]", action "replace": re-word one bullet.
 - "experience[i].bullets" or "projects[i].bullets", action "reorder": "value" is ALL that entry's ORIGINAL
   bullets copied exactly, most relevant to this job first.
@@ -298,7 +311,9 @@ Every "replace" MUST copy the line's current text exactly into "original" (it is
    (most jobs: 3 to 6 bullets). Keep the bullet's verb strength: "worked on" stays "worked on". Use
    each job term in one or two lines, where it says the most; never inside a product's or feature's
    name ("the Policy AI assistant" stays as named), and never as a label stuck on ("a GenAI pipeline").
-3. Each role's bullets and each skills line re-ordered toward the job.
+3. Each role's bullets and each skills line re-ordered toward the job: a recruiter reads the first two
+   bullets of a role. Put first the bullets that show the job's must-haves, and among those the ones with
+   a measured result (a target hit, a figure saved or grown) before routine duties.
 When <problems_to_fix> lists changes of your last answer that were thrown away, give each one again
 corrected (or leave it out), plus your other changes.
 """,
@@ -327,6 +342,8 @@ def change_sections(master: MasterResume) -> str:
         lines.append(f"skills[{i}].items ({group.label or 'skills'}): {', '.join(group.items)}")
     for school in master.education:
         lines.append(f"Education (never changed): {school.degree}, {school.school}")
+    for extra in master.extras:
+        lines.append(f"{extra.heading} (never changed): {'; '.join(extra.items)}")
     return "\n".join(lines)
 
 
@@ -358,6 +375,8 @@ async def tailor_changes(  # noqa: PLR0913  (the prompt's inputs)
             job_posting=job_text[:JOB_CHARS],
             problems_to_fix=feedback,
         )
+    except BudgetExhaustedError:
+        raise
     except AiError as error:
         log.info("resume changes not made: %s", error)
         return None
@@ -380,26 +399,32 @@ class CoverAnswer(BaseModel):
 
 COVER_PROMPT = Prompt(
     name="cover_letter",
-    version="4",
+    version="5",
     instructions="""
-Write the body of a short cover letter (3 paragraphs, 170-240 words in total) in the candidate's own voice,
-to the company in <job_posting>, using only facts in <resume_sections>. It should read like a capable person
-wrote it themselves for this one job: first person, warm but direct, sentences of different lengths, no
-template phrases.
+Write the body of a short cover letter (3 paragraphs, 180-250 words in total) in the candidate's own voice,
+to the employer in <company>, using only facts in <resume_sections>. The candidate may work in any field
+(nursing, teaching, accounting, sales, engineering, design, software): write the way a capable person in
+that field writes. First person, warm but direct, sentences of different lengths, no template phrases.
 
-1. Name the role and open with the one thing from the resume that fits this job best, said plainly.
-2. Pick one or two specific needs the job posting states and, for each, what the candidate built that
-   answers it (from the resume). Keep every number exactly as written; add no new numbers, tools or results.
-   Each claim must come from ONE resume line: never combine details of different bullets, projects or jobs,
-   and never give the candidate a title they did not hold.
-3. One or two sentences: what they would like to work on there (from the posting) and a plain request for a
-   conversation.
+1. First sentence: the role by name and the one thing from the resume that fits this job best, said
+   plainly (their current title and what they do every day is often best).
+2. Pick two or three needs the job posting states and, for each, what the candidate did that answers it
+   (from the resume). Tell it as a sentence of your own, not a pasted resume bullet: never copy a resume
+   line whole. Keep every number exactly as written; add no new numbers, tools, systems or results. Each
+   claim must come from ONE resume line: never combine details of different bullets, projects or jobs, and
+   never give the candidate a title they did not hold. A registration, licence or certification the job
+   requires may be named when the resume states it.
+3. One or two sentences: the part of this job they would most like to take on, in your own words, and a
+   plain request for a conversation.
 
-No greeting, no signature, no subject line, no praise of the company ("industry leader", "renowned"). No em
-dashes. Never use: passionate, thrilled, excited to apply, leverage, align with, demonstrate, resonate,
-synergy, I believe, I am confident, furthermore, additionally, moreover, dynamic, innovative, esteemed,
-I am writing to. Never hedge or apologise for the fit ("the closest thing I have", "although I have not",
-"I hope", "I may not"): state what the candidate built and let it speak.
+If <company> says no company is named, do not name or guess one: write "your team" or "the role".
+Do not copy the posting's sentences (no run of six or more of its words). No greeting, no signature, no
+subject line, no praise of the company ("industry leader", "renowned"). No em dashes. Never use:
+passionate, thrilled, excited to apply, leverage, align with, demonstrate, resonate, synergy, I believe,
+I am confident, furthermore, additionally, moreover, dynamic, innovative, esteemed, I am writing to,
+"as outlined in", "the job description", "I welcome the opportunity". Never hedge or apologise for the fit
+("the closest thing I have", "although I have not", "I hope", "I may not"): state what the candidate did
+and let it speak.
 
 Return JSON: {"paragraphs": ["<paragraph 1>", "<paragraph 2>", "<paragraph 3>"]}
 """,
@@ -408,9 +433,17 @@ Return JSON: {"paragraphs": ["<paragraph 1>", "<paragraph 2>", "<paragraph 3>"]}
 
 
 async def cover_letter(
-    client: AiClient, master: MasterResume, job_text: str, problems: list[str] | None = None
+    client: AiClient,
+    master: MasterResume,
+    job_text: str,
+    problems: list[str] | None = None,
+    *,
+    company: str = "",
 ) -> CoverAnswer | None:
-    """The letter body, or None when no model answered."""
+    """The letter body, or None when no model answered.
+
+    ``company`` is the employer as the greeting names it; "" when the posting names none.
+    """
     if not client.available:
         return None
     feedback = "\n".join(f"- {p}" for p in problems or []) or "none"
@@ -418,10 +451,13 @@ async def cover_letter(
         return await client.structured(
             COVER_PROMPT,
             CoverAnswer,
+            company=company or "no company is named in the posting",
             resume_sections=scrub(sections_text(master)),
             job_posting=job_text[:JOB_CHARS],
             problems_to_fix=feedback,
         )
+    except BudgetExhaustedError:
+        raise
     except AiError as error:
         log.info("cover letter not written: %s", error)
         return None
@@ -442,12 +478,18 @@ class ClaimCheck(BaseModel):
 
 CLAIMS_PROMPT = Prompt(
     name="check_claims",
-    version="1",
+    version="2",
     instructions="""
 You are a strict fact checker. <user_answer> was written about the candidate in <resume_sections>.
 List every claim in it that is NOT directly supported by a single line of the resume: a detail moved from
 one bullet, project or job to another, two separate facts combined into one, a job title the candidate did
-not hold, or anything not in the resume at all. Opinions and the job's own requirements are not claims.
+not hold, a tool, system, number or result the resume does not state, or anything not in the resume at all.
+
+These are NOT claims (never list them): the candidate's wishes or plans ("I would like to...", "the part
+I would most like to take on"); opinions; anything said about the employer, the role or the job's
+requirements; a plain paraphrase of one resume line in other everyday words ("teach" said as "guide
+students through", "act as nurse in charge" said as "take charge of the ward"); "daily" or "every day" for
+a duty the resume lists as current; years of experience worked out from the resume's own dates.
 
 Return JSON: {"unsupported": ["<short quote of the claim> - <why>", ...]} ([] when everything is supported).
 """,
@@ -463,6 +505,8 @@ async def unsupported_claims(client: AiClient, master: MasterResume, text: str) 
         answer = await client.structured(
             CLAIMS_PROMPT, ClaimCheck, resume_sections=scrub(sections_text(master)), user_answer=text[:4000]
         )
+    except BudgetExhaustedError:
+        raise
     except AiError as error:
         log.info("claims not checked: %s", error)
         return None

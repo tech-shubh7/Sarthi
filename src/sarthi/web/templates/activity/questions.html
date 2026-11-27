@@ -1,7 +1,10 @@
+{% extends "activity/_layout.html" %}
+{% from "_macros.html" import icon, job_link, empty %}
+{% block lede %}Questions from employers' forms that only you can answer.{% endblock %}
+{% block page %}
 <section class="section" aria-label="Questions for you" id="questions">
-  <h2 class="card-title">{{ icon('applications') }}Questions for you{% if groups %} · {{ groups|length }}{% endif %}</h2>
   {% if groups %}
-  <p class="help">Only you can answer these. Each answer is saved for later forms (an answer about one employer stays with that job). When a job's questions are all answered, Sarthi fills its form and it waits on <a href="/applications/input">Applications</a> for your Submit.</p>
+  <p class="help">Only you can answer these. Each answer is saved for later forms (an answer about one employer stays with that job). When a job's questions are all answered, Sarthi fills its form and it waits on <a href="/applications/needs-you">Needs you</a> for your Submit.</p>
   {% for g in groups %}
   {% set problems = errors.get(g.job_id, {}) %}
   <form class="card section" method="post" action="/questions/{{ g.job_id }}" id="job-{{ g.job_id }}">
@@ -44,6 +47,7 @@
   </form>
   {% endfor %}
   {% else %}
-  <p class="muted">No questions waiting.</p>
+  {{ empty('No questions waiting', 'When an employer asks something only you can answer, it shows here.') }}
   {% endif %}
 </section>
+{% endblock %}

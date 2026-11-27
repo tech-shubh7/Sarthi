@@ -68,7 +68,7 @@ def test_pages_show_matches_applications_replies_and_sources(
     assert matches.index("AI Backend Engineer") < matches.index("Data Analyst")  # best first
     assert "Applying" in matches
     assert "Data Analyst" not in client.get("/matches?show=alert").text
-    applications = client.get("/applications").text
+    applications = client.get("/applications/submitted").text
     assert "Submitted" in applications
     assert "Interview" in applications
     sources = client.get("/sources").text

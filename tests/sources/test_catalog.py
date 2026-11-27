@@ -95,7 +95,9 @@ async def test_the_users_roles_in_their_countries_and_recent_only(snapshot: Any,
     jobs = await CatalogSource(
         path, "https://m.example/manifest.json", transport=transport, clock=clock
     ).fetch(QUERY)
-    assert sorted(j.source_job_id or "" for j in jobs) == ["1", "4", "7"]
+    assert sorted(j.source_job_id or "" for j in jobs) == ["1", "4", "6", "7"]
+    # A hiring system newer than the installed ats-scrapers is still read, under its own name.
+    assert next(j for j in jobs if j.source_job_id == "6").source == "hiring_system_from_the_future"
     first = next(j for j in jobs if j.source_job_id == "1")
     assert first.source == "greenhouse"
     assert first.country_codes == frozenset({"IN"})
@@ -165,6 +167,26 @@ def test_unusable_rows_are_skipped() -> None:
     assert (
         row_to_posting({"url": "not a url", "title": "x", "company": "y", "ats_type": "greenhouse"}) is None
     )
+    assert row_to_posting({"url": "not a url", "title": "x", "company": "y", "ats_type": "pandape"}) is None
+
+
+@pytest.mark.parametrize("system", ["pandape", "careerplug", "isolved_hire", "hiringthing", "onlyfy"])
+def test_systems_the_snapshot_has_but_this_install_does_not_are_read(system: str) -> None:
+    # These five held ~430k of the snapshot's 8.8M jobs on 2026-11-27, and every row was dropped.
+    posting = row_to_posting(
+        {
+            "url": "https://jobs.example.org/1",
+            "title": "Registered Nurse",
+            "company": "Fictional Clinic",
+            "ats_type": system,
+            "ats_id": "1",
+            "country_iso": "BR",
+        }
+    )
+    assert posting is not None
+    assert posting.source == system
+    assert posting.country_codes == frozenset({"BR"})
+    assert not posting.description_complete
 
 
 async def test_changed_roles_refresh_the_same_snapshot(snapshot: Any, clock: FakeClock) -> None:
@@ -184,3 +206,9 @@ async def test_catalog_includes_spelling_variants_of_the_same_roles(snapshot: An
     source = CatalogSource(path, "https://m.example/m.json", transport=transport, clock=clock)
     search = SearchQuery(roles=("Backend Engineer", "Full-stack Developer"), countries=("IN",))
     assert sorted(j.source_job_id or "" for j in await source.fetch(search)) == ["1", "2"]
+
+
+def test_invalid_snapshot_source_name_keeps_the_custom_category() -> None:
+    posting = row_to_posting(row(1, "Backend Engineer", ats_type="invalid\nname", days_ago=None))
+    assert posting is not None
+    assert posting.source == "custom"

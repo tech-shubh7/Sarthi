@@ -1,0 +1,35 @@
+{% extends "sources/_layout.html" %}
+{% from "_macros.html" import icon, pager, share %}
+{% block lede %}Jobs found on companies' own career pages, by hiring system.{% endblock %}
+{% block page %}
+{% if rows or sites %}
+<section class="card table-card section" id="career-pages" aria-labelledby="career-title">
+<h2 class="card-title table-title" id="career-title">{{ icon('matches') }}Company career pages</h2>
+<p class="table-note">Jobs found on companies' own career pages, by hiring system: {{ '{:,}'.format(career_jobs) }} job{{ '' if career_jobs == 1 else 's' }} at {{ '{:,}'.format(total) }} compan{{ 'y' if total == 1 else 'ies' }}.
+{% if catalog and catalog.failures %} The company-page snapshot (ATS-Scrapers) has failed {{ catalog.failures }} time{{ '' if catalog.failures == 1 else 's' }} in a row{% if catalog.last_ok_at %} and last worked {{ ago(catalog.last_ok_at) }}{% endif %}: no new career-page jobs arrive from it until it works again.{% endif %}</p>
+{% if systems %}
+<ul class="chips" aria-label="Hiring systems">
+  {% for s in systems %}<li class="chip">{{ s.site }} · {{ s.companies }} compan{{ 'y' if s.companies == 1 else 'ies' }} · {{ s.jobs }} job{{ '' if s.jobs == 1 else 's' }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% if career %}
+<table class="table">
+  <thead><tr><th>Company</th><th>Hiring system</th><th>Jobs</th><th>Last new job</th></tr></thead>
+  <tbody>
+  {% for c in career %}
+    <tr>
+      <td data-label="Company"><b>{{ c.company }}</b></td>
+      <td data-label="System" class="faint">{{ c.system }}</td>
+      <td data-label="Jobs" class="num">{{ '{:,}'.format(c.jobs) }}</td>
+      <td data-label="Last new" class="faint">{{ ago(c.last_found_at) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{{ pager(page, pages, total, size, link_page) }}
+{% else %}
+<p class="table-note faint">No job from a company's own career page yet.</p>
+{% endif %}
+</section>
+{% endif %}
+{% endblock %}

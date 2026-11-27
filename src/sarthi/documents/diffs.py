@@ -158,6 +158,7 @@ _GLUE = frozenset(
     ]
 )
 MAX_NEW_WORDS = 2
+MAX_JOB_WORDS = 1  # of those, taken from the job posting: "multidisciplinary" yes, "tracheostomy weaning" no
 _WORD = re.compile(r"[a-z]{4,}")
 _TOKEN = re.compile(r"[A-Za-z][\w.+#/-]*[\w+#]|[A-Za-z]")
 _SENTENCE_GAP = re.compile(r"[.!?;:]\s*$")
@@ -206,23 +207,43 @@ def _names(text: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def line_problems(new: str, old: str, vocabulary: Iterable[str] = ()) -> list[str]:
+def _acronym_of(name: str, old: str) -> bool:
+    """``name`` is the initials of words ``old`` writes out: "NIV" for "non-invasive ventilation"."""
+    letters = name.casefold()
+    if not (2 <= len(letters) <= 6 and name.isupper() and letters.isalpha()):  # noqa: PLR2004
+        return False
+    words = [w for w in re.split(r"[\s/-]+", old.casefold()) if w and w[0].isalpha()]
+    initials = "".join(w[0] for w in words)
+    return letters in initials and any(
+        "".join(w[0] for w in words[i : i + len(letters)]) == letters
+        and all(len(w) > 1 for w in words[i : i + len(letters)])
+        for i in range(len(words) - len(letters) + 1)
+    )
+
+
+def line_problems(  # noqa: PLR0912  (one check per kind of claim)
+    new: str, old: str, vocabulary: Iterable[str] = (), *, known: str = "", job_text: str = ""
+) -> list[str]:
     """What ``new`` claims that its own original line ``old`` does not (empty when it adds nothing).
 
     Numbers, skills and tools, names (companies, products, technologies), results, team and scope must all
-    come from ``old``; the job's term for something ``old`` already says is allowed.
+    come from ``old``; the job's term for something ``old`` already says is allowed, and so is an acronym
+    of words ``old`` writes out. ``known`` is more text whose facts the line may use (the whole resume, for
+    the summary); what ``old`` itself says (its numbers, a share of the work) must still be kept. With
+    ``job_text``, at most ``MAX_JOB_WORDS`` new words may come from the posting.
     """
-    problems = [f'adds the number "{n}"' for n in new_numbers(new, old)]
+    facts = f"{old}\n{known}" if known else old
+    problems = [f'adds the number "{n}"' for n in new_numbers(new, facts)]
     problems += [f'drops the number "{n}"' for n in new_numbers(old, new)]
     vocabulary = list(vocabulary)
     for skill in skills_in(new, vocabulary):
-        if not same_skill(skill, old) and not _in_line(skill, old) and not _evidenced(skill, old):
+        if not same_skill(skill, facts) and not _in_line(skill, facts) and not _evidenced(skill, facts):
             problems.append(f'adds "{skill}", which its original line does not name')
     named = {p.split('"')[1].casefold() for p in problems if '"' in p}
     for name in _names(new):
-        if name.casefold() in named or _in_line(name, old) or _evidenced(name, old):
+        if name.casefold() in named or _in_line(name, facts) or _evidenced(name, facts):
             continue
-        if any(same_skill(skill, name) for skill in skills_in(old, vocabulary)):
+        if _acronym_of(name, facts) or any(same_skill(skill, name) for skill in skills_in(facts, vocabulary)):
             continue
         problems.append(f'adds "{name}", which its original line does not name')
         named.add(name.casefold())
@@ -230,28 +251,107 @@ def line_problems(new: str, old: str, vocabulary: Iterable[str] = ()) -> list[st
         found = term.search(new)
         if (
             found
-            and not term.search(old)
-            and not evidence.search(old)
+            and not term.search(facts)
+            and not evidence.search(facts)
             and found.group(0).casefold() not in named
         ):
             problems.append(f'calls it "{found.group(0)}", which its original line does not describe')
             named.add(found.group(0).casefold())
+    problems += [  # "Ran A/B tests" -> "Ran landing page tests" loses the keyword a recruiter searches for
+        f'drops "{name}", which the original line names'
+        for name in _names(old)
+        if name.casefold() not in new.casefold() and not same_skill(name, new)  # "AI" lives on in "GenAI"
+    ]
     share = _SHARE.search(old)
     if share and not _SHARE.search(new):
         problems.append(
             f'drops "{share.group(0).lower()}": the original line claims a share of the work, not all of it'
         )
     result = _RESULT.search(new)
-    if result and not _RESULT.search(old):
+    if result and not _RESULT.search(facts):
         problems.append(f'adds a result ("{result.group(0)}") the original line does not state')
     for claim in dict.fromkeys(m.group(0).casefold() for m in _SCOPE.finditer(new)):
-        if not re.search(rf"\b{re.escape(claim)}\b", old, re.I):
+        if not re.search(rf"\b{re.escape(claim)}\b", facts, re.I):
             problems.append(f'adds "{claim}", a claim the original line does not make')
-    problems += verb_upgrade(new, old)
-    fresh = _new_words(new, old, named)
+    problems += verb_upgrade(new, facts)
+    problems += tense_problems(new, old)
+    problems += count_problems(new, old)
+    fresh = _new_words(new, facts, named)
     if len(fresh) > MAX_NEW_WORDS:
         problems.append(f"brings details its original line does not state ({', '.join(fresh[:5])})")
+    elif job_text:  # the posting's own nouns are where untrue details come from: "tracheostomy weaning"
+        asked = {_stem(w) for w in _WORD.findall(job_text.casefold())}
+        borrowed = [w for w in fresh if _stem(w) in asked]
+        if len(borrowed) > MAX_JOB_WORDS:
+            problems.append(
+                f"takes details from the job posting its original line does not state ({', '.join(borrowed)})"
+            )
     return problems
+
+
+_COUNTED = re.compile(r"[\w%$+/'.-]+")
+_COUNT_WINDOW = 12
+_YEAR = re.compile(r"(?:19|20)\d\d")
+
+
+def _pairs(text: str) -> list[tuple[str, str]]:
+    """Each word as written (with its punctuation) and bare."""
+    return [(raw, raw.strip(".,;:'")) for raw in _COUNTED.findall(text.casefold()) if raw.strip(".,;:'")]
+
+
+def _tokens(text: str) -> list[str]:
+    return [bare for _, bare in _pairs(text)]
+
+
+def count_problems(new: str, old: str) -> list[str]:
+    """A number now counting something else (empty when every number counts what it did).
+
+    "Won 23 new accounts, including two hotel groups" must not become "Won 23 new hotel accounts" (not all
+    23 were hotels). The two words after each number in ``new`` must be words ``old`` uses after that
+    number, up to its next number or the end of its sentence.
+    """
+    old_raw = [raw for raw, _ in _pairs(old)]
+    old_words, new_words = _tokens(old), _tokens(new)
+    problems: list[str] = []
+    for i, word in enumerate(new_words):
+        if not any(c.isdigit() for c in word) or word not in old_words or _YEAR.fullmatch(word):
+            continue  # a year dates the work; it counts nothing
+        start = old_words.index(word) + 1
+        window: set[str] = set()
+        for raw, token in zip(old_raw[start:], old_words[start:], strict=False):
+            if any(c.isdigit() for c in token) or len(window) >= _COUNT_WINDOW:
+                break
+            window.add(_stem(token))
+            if raw.endswith((".", ";")):
+                break
+        after = [w for w in new_words[i + 1 : i + 3] if w.isalpha() and len(w) > 2 and w not in _GLUE]  # noqa: PLR2004
+        added = [w for w in after if _stem(w) not in window and w not in {"and", "the", "per", "of"}]
+        if added and window:
+            problems.append(f'changes what "{word}" counts ("{word} {" ".join(new_words[i + 1 : i + 3])}")')
+    return problems
+
+
+# A line about current duties is written in the present ("Run discharge planning"); a tailored copy that
+# turns it into the past ("Ran discharge planning") mixes tenses within one role.
+_PRESENT_VERB = re.compile(
+    r"^(?:act|manage|lead|run|own|mentor|coach|teach|coordinate|supervise|review|administer|handle|"
+    r"negotiate|track|design|build|maintain|support|work|plan|write|deliver|oversee|train|sell|prepare|"
+    r"develop|create|analy[sz]e|differentiate|assess|monitor|report|organi[sz]e|direct|advise|serve|care)s?$",
+    re.I,
+)
+
+
+def tense_problems(new: str, old: str) -> list[str]:
+    """A present-tense opening verb turned into the past (or the other way round)."""
+    old_first = (re.findall(r"[A-Za-z]+", old) or [""])[0]
+    new_first = (re.findall(r"[A-Za-z]+", new) or [""])[0]
+    if (
+        _PRESENT_VERB.match(old_first)
+        and not _PRESENT_VERB.match(new_first)
+        and new_first.lower().endswith(("ed", "an", "ote", "ught", "ilt", "ld"))
+    ):
+        return [f'turns "{old_first}" (present tense, a current duty) into "{new_first}": keep the tense']
+    return []
 
 
 def _stem(word: str) -> str:
@@ -343,16 +443,37 @@ class _Context:
     vocabulary: list[str]
     job_text: str
     resume_text: str
+    facts: str = ""  # everything the resume states (no contact details), for the summary
+
+
+def resume_facts(master: MasterResume) -> str:
+    """The person's qualifications the summary may name: titles held, degrees, registrations, licences.
+
+    A recruiter looks for "NMC registered" or "CA" in the first lines. Bullet details and skills are not
+    included: "Python" on the skills list does not make the summary's Node.js services Python ones.
+    """
+    parts = [master.headline]
+    parts += [f"{job.title}, {job.company}" for job in master.experience]
+    parts += [f"{s.degree}, {s.school}, {', '.join(s.details)}" for s in master.education]
+    parts += [item for extra in master.extras for item in (extra.heading, *extra.items)]
+    return "\n".join(p for p in parts if p)
 
 
 def _reword(new: str, old: str, where: str, ctx: _Context, *, summary: bool = False) -> list[str]:
-    """Why ``new`` may not replace ``old`` (empty when it may)."""
-    problems = line_problems(new, old, ctx.vocabulary)
+    """Why ``new`` may not replace ``old`` (empty when it may).
+
+    The summary speaks for the whole resume, so it may name what other lines state (a registration, a
+    certification, a tool or result): every such fact must be written on the resume. A bullet may use only
+    its own facts.
+    """
+    problems = line_problems(
+        new, old, ctx.vocabulary, known=ctx.facts if summary else "", job_text=ctx.job_text
+    )
     if summary:
         problems += title_problems(new, ctx.resume_text)  # never the job's title
     problems += [p for p in style_problems(new) if p not in style_problems(old)]
     if not echo_problems(old, ctx.job_text):
-        problems += echo_problems(new, ctx.job_text)
+        problems += echo_problems(new, ctx.job_text, own=old)
     problems += [p for p in [length_problem(new, old)] if p]
     if not summary:
         problems += opening_problems(new, old)
@@ -399,7 +520,12 @@ def apply_changes(  # noqa: PLR0912, PLR0915  (one gate per kind of change, as i
     own_skills: Iterable[str] = (),
 ) -> Applied:
     """``master`` with every verifiable change made; re-orders are applied after re-wordings, by quote."""
-    ctx = _Context([*master.all_skills(), *own_skills], job_text, resume_text or _known_text(master))
+    ctx = _Context(
+        [*master.all_skills(), *own_skills],
+        job_text,
+        resume_text or _known_text(master),
+        resume_facts(master),
+    )
     sections: dict[str, list[list[str]]] = {
         "experience": [list(job.bullets) for job in master.experience],
         "projects": [list(p.bullets) for p in master.projects],

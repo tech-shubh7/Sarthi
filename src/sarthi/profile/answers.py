@@ -36,15 +36,35 @@ _LAKH = 100_000
 _THOUSAND = 1_000
 _CURRENCY_CODES = (
     "INR|USD|GBP|EUR|AED|CAD|AUD|SGD|JPY|CHF|SEK|NOK|DKK|PLN|NZD|HKD|SAR|QAR|KWD|BHD|OMR|ZAR|BRL|MXN|MYR|IDR|"
-    "PHP|THB|VND|KRW|CNY|TWD|PKR|BDT|LKR|NPR|EGP|NGN|KES|ILS|TRY|CZK|HUF|RON"
+    "PHP|THB|VND|KRW|CNY|TWD|PKR|BDT|LKR|NPR|EGP|NGN|KES|ILS|TRY|CZK|HUF|RON|RUB"
+)
+# Currency signs as people type them: "R$ 8.000", "S$6,000", "¥6,000,000", "RM 5000", "৳50,000".
+_SIGN = r"R\$|US\$|CA\$|C\$|AU\$|A\$|SG\$|S\$|HK\$|NZ\$|[₹$£€¥৳₩₱₺₽₦]|RM|Rp|zł"
+_PERIOD = (
+    r"years?|yr|annum|pa|month|months|mo|monthly|yearly|annually|m|hours?|hr|hourly|weeks?|wk|weekly|"
+    r"days?|daily"
 )
 _SALARY = re.compile(
-    rf"^(?P<cur1>{_CURRENCY_CODES}|[₹$£€]|rs\.?)?\s*(?P<amount>\d+(?:[.,]\d+)*)\s*"
+    rf"^(?P<cur1>{_CURRENCY_CODES}|{_SIGN}|rs\.?)?\s*(?P<amount>\d+(?:[.,]\d+)*)\s*"
     r"(?P<unit>crores?|cr|lakhs?|lacs?|lpa|k|l)?\b\.?\s*"
-    rf"(?:(?P<cur2>{_CURRENCY_CODES})\b|(?P<sym2>[₹$£€]))?\s*"
-    r"(?:/|per|a|an|p\.?)?\s*(?P<period>years?|yr|annum|pa|month|months|mo|monthly|yearly|annually|m)?\.?$",
+    rf"(?:(?P<cur2>{_CURRENCY_CODES})\b|(?P<sym2>{_SIGN}))?\s*"
+    rf"(?:/|per|a|an|p\.?)?\s*(?P<period>{_PERIOD})?\.?$",
     re.IGNORECASE,
 )
+# "por mês", "al mes", "pro Monat", "par mois", "monatlich", "por ano": the same answer in other languages.
+_LOCAL_PERIODS = (
+    (re.compile(r"(?:\b(?:por|al|pro|par|im|a)\s+|/\s*)(?:mês|mes|monat|mois)\b|\b(?:mensal|mensual|monatlich|"
+                r"mensuel(?:le)?)\b", re.I), " per month"),
+    (re.compile(r"(?:\b(?:por|al|pro|par|im)\s+|/\s*)(?:ano|año|jahr|an)\b|\b(?:anual|jährlich|annuel(?:le)?)\b",
+                re.I), " per year"),
+    (re.compile(r"(?:\b(?:por|la|pro|de\s+l')\s*|/\s*)(?:hora|stunde|heure)\b", re.I), " per hour"),
+)  # fmt: skip
+_PERIODS = {
+    **dict.fromkeys(("month", "months", "mo", "monthly", "m"), SalaryPeriod.MONTH),
+    **dict.fromkeys(("hour", "hours", "hr", "hourly"), SalaryPeriod.HOUR),
+    **dict.fromkeys(("week", "weeks", "wk", "weekly"), SalaryPeriod.WEEK),
+    **dict.fromkeys(("day", "days", "daily"), SalaryPeriod.DAY),
+}
 _SKIP_SALARY = re.compile(
     r"^(?:skip|none|no|nil|na|n/a|-|negotiable|not\s+sure|don'?t\s+know|no\s+idea|any|anything|"
     r"no\s+minimum|doesn'?t\s+matter|flexible|open)[\s.!]*$",
@@ -52,7 +72,11 @@ _SKIP_SALARY = re.compile(
 )
 _CRORE = 10_000_000
 _SMALL_INR_IS_LAKHS = 1_000  # "12" from someone in India means 12 lakh a year
-_SYMBOLS = {"₹": "INR", "$": "USD", "£": "GBP", "€": "EUR"}
+_SYMBOLS = {
+    "₹": "INR", "$": "USD", "£": "GBP", "€": "EUR", "r$": "BRL", "us$": "USD", "ca$": "CAD", "c$": "CAD",
+    "au$": "AUD", "a$": "AUD", "sg$": "SGD", "s$": "SGD", "hk$": "HKD", "nz$": "NZD", "¥": "JPY", "৳": "BDT",
+    "₩": "KRW", "₱": "PHP", "₺": "TRY", "₽": "RUB", "₦": "NGN", "rm": "MYR", "rp": "IDR", "zł": "PLN",
+}  # fmt: skip
 _HOME_CURRENCY = {
     "IN": "INR", "US": "USD", "GB": "GBP", "CA": "CAD", "AU": "AUD", "SG": "SGD", "AE": "AED",
     "DE": "EUR", "FR": "EUR", "NL": "EUR", "IE": "EUR", "ES": "EUR", "IT": "EUR", "JP": "JPY",
@@ -211,13 +235,14 @@ def parse_salary(text: str, home_country: str) -> Salary | None:
     12 lakh a year, "120" in USD is 120k). Returns None when the text is not understood.
     """
     match = _SALARY.match(
-        re.sub(r"(?<=\d) (?=\d{3}(?!\d))", "", text.strip())  # "60 000": a space grouping the thousands
+        re.sub(r"(?<=\d) (?=\d{3}(?!\d))", "", local_periods(text.strip()))  # "60 000": thousands grouped
         .strip()
         .replace("\u00a0", " ")
         .replace("₹ ", "₹")
     )  # no-break spaces from phones
     if match is None:
         return None
+    period = _PERIODS.get((match["period"] or "").lower(), SalaryPeriod.YEAR)
     unit = (match["unit"] or "").lower().rstrip("s")
     # "1.5 lakh" is one and a half; a bare "60.000" is sixty thousand as much of Europe writes it.
     amount = _amount(match["amount"]) if not unit else float(match["amount"].replace(",", ""))
@@ -234,15 +259,22 @@ def parse_salary(text: str, home_country: str) -> Salary | None:
     currency = _SYMBOLS.get(raw_currency, raw_currency.upper()) if raw_currency else ""
     if raw_currency == "$" and home_country in _DOLLAR_COUNTRIES:
         currency = _HOME_CURRENCY[home_country]  # "$120k" in Toronto is Canadian dollars
+    if raw_currency == "¥" and home_country == "CN":
+        currency = "CNY"  # the same sign for the yuan
     currency = currency or ("INR" if in_inr else _HOME_CURRENCY.get(home_country, ""))
-    if not unit and amount < _SMALL_INR_IS_LAKHS:
+    # "12" means 12 lakh or 12k a year; "50 per hour" means fifty.
+    if not unit and amount < _SMALL_INR_IS_LAKHS and period in (SalaryPeriod.YEAR, SalaryPeriod.MONTH):
         amount *= _LAKH if currency == "INR" else _THOUSAND
     if len(currency) != 3 or amount <= 0:  # noqa: PLR2004  (ISO 4217 codes have three letters)
         return None
-    monthly = (match["period"] or "").lower() in {"month", "months", "mo", "monthly", "m"}
-    return Salary(
-        currency=currency, period=SalaryPeriod.MONTH if monthly else SalaryPeriod.YEAR, minimum=amount
-    )
+    return Salary(currency=currency, period=period, minimum=amount)
+
+
+def local_periods(text: str) -> str:
+    """Pay periods written in Portuguese, Spanish, German or French, in English ("por mês" -> "per month")."""
+    for pattern, english in _LOCAL_PERIODS:
+        text = pattern.sub(english, text)
+    return text
 
 
 # Verbs include common typos seen in real answers ("expect Fintech" meant "except Fintech").
@@ -417,9 +449,9 @@ def looks_like_instruction(item: str) -> bool:
 
 
 _SALARY_IN_TEXT = re.compile(
-    rf"(?:(?<![a-z])(?:{_CURRENCY_CODES})\s*|[₹$£€]\s*)?\d+(?:[.,]\d+)*\s*"
-    rf"(?:crores?|cr|lakhs?|lacs?|lpa|k|l)?\b\.?\s*(?:(?:{_CURRENCY_CODES})\b|[₹$£€])?\s*"
-    r"(?:(?:/|per|a|an|p\.?)?\s*(?:years?|yr|annum|pa|months?|mo|monthly|yearly|annually|m)\b)?",
+    rf"(?:(?<![a-z])(?:{_CURRENCY_CODES})\s*|(?:{_SIGN})\s*)?\d+(?:[.,]\d+)*\s*"
+    rf"(?:crores?|cr|lakhs?|lacs?|lpa|k|l)?\b\.?\s*(?:(?:{_CURRENCY_CODES})\b|{_SIGN})?\s*"
+    rf"(?:(?:/|per|a|an|p\.?)?\s*(?:{_PERIOD})\b)?",
     re.IGNORECASE,
 )
 
@@ -430,7 +462,7 @@ def find_salary(text: str, home_country: str) -> Salary | None:
     Inside a sentence a number needs a unit or currency ("12 apples" is not a salary). Negative amounts are
     never salaries.
     """
-    text = text.replace("\u00a0", " ").strip()
+    text = local_periods(text.replace("\u00a0", " ").strip())
     if re.search(r"(?<![\w])-\s*\d", text):
         return None
     if whole := parse_salary(text, home_country):
