@@ -1,75 +1,91 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, label, reply, job_link, pager, empty, reason %}
+{% from "_macros.html" import label, reply, job_link, pager, empty, reason %}
 {% block title %}Applications · Sarthi{% endblock %}
-{% macro documents(r) -%}
-{%- if r.resume %}<a class="button small ghost" href="/applications/{{ r.job_id }}/resume.pdf" target="_blank" rel="noopener noreferrer">Resume</a>{% endif -%}
-{%- if r.letter %}<a class="button small ghost" href="/applications/{{ r.job_id }}/cover-letter.pdf" target="_blank" rel="noopener noreferrer">Cover letter</a>{% endif -%}
-{%- endmacro %}
+{% macro post(r, action, caption, style='') %}
+<form method="post" action="/applications/{{ r.job_id }}/{{ action }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="next" value="{{ here }}">
+  <button class="button small {{ style }}" type="submit">{{ caption }}</button>
+</form>
+{% endmacro %}
 {% block main %}
 <header class="page-head">
   <div>
-    <p class="eyebrow">Your search</p>
     <h1>Applications</h1>
-    <p class="lede">Every form Sarthi filled or sent for you, and the latest reply about it.</p>
+    <p class="lede">
+      {% if selected == 'captcha' %}Open the prefilled form, solve the CAPTCHA, and submit it on the site.
+      {% elif selected == 'manual' %}Open the employer’s site and complete the application yourself.
+      {% elif selected == 'input' %}Answer employer questions or approve a form Sarthi filled.
+      {% elif selected == 'verify' %}Check the employer’s site or your email before trying again.
+      {% else %}Follow queued applications, confirmed submissions, and employer replies.{% endif %}
+    </p>
   </div>
+  <a class="button quiet" href="/matches?show=alert">View strong matches</a>
 </header>
 
-{% if waiting %}
-<section class="section" aria-label="Waiting for your Submit">
-  <h2 class="card-title">{{ icon('applications') }}Waiting for your Submit · {{ waiting|length }}</h2>
-  {% for r in waiting %}
-  <article class="card pending">
-    <div>
-      <h3>{{ job_link(r.title, r.url) }}</h3>
-      <span class="job-sub">{{ r.company }} · filled {{ ago(r.updated_at) }}</span>
-      <p class="hint">Check the filled form, then submit. Nothing is sent until you do.</p>
-      <div class="row-actions">
-        <form method="post" action="/applications/{{ r.job_id }}/submit"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button" type="submit">Submit application</button></form>
-        <form method="post" action="/applications/{{ r.job_id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button quiet" type="submit">Cancel</button></form>
-        {% if pending[r.job_id].screenshot %}<a class="button ghost" href="/applications/{{ r.job_id }}/form.png" target="_blank" rel="noopener">View full form</a>{% endif %}
-        {{ documents(r) }}
-      </div>
-    </div>
-    {% if pending[r.job_id].screenshot %}
-    <a class="shot" href="/applications/{{ r.job_id }}/form.png" target="_blank" rel="noopener"><img src="/applications/{{ r.job_id }}/form.png" alt="The filled form for {{ r.title }}" loading="lazy"></a>
-    {% endif %}
-  </article>
+<nav class="view-tabs" aria-label="Application status">
+  {% for value, title in tabs.items() %}
+  <a href="/applications/{{ value }}" {% if selected == value %}aria-current="page"{% endif %}>{{ title }} <b>{{ counts.get(value, 0) }}</b></a>
   {% endfor %}
-</section>
-{% endif %}
+</nav>
+
+<form class="application-filters" method="get" action="/applications/{{ selected }}" role="search">
+  <label>Role or company <input type="search" name="q" maxlength="80" value="{{ filters.query }}"></label>
+  <label>Site <select name="site"><option value="">All sites</option>
+    {% for site in sites %}<option value="{{ site }}" {% if filters.site == site %}selected{% endif %}>{{ site }}</option>{% endfor %}
+  </select></label>
+  <label>Sort <select name="sort">{% for sort, label in sorts.items() %}
+    <option value="{{ sort }}" {% if filters.sort == sort %}selected{% endif %}>{{ label }}</option>
+  {% endfor %}</select></label>
+  <button type="submit" class="button">Apply filters</button>
+  <a class="button quiet" href="/applications/{{ selected }}">Clear</a>
+</form>
 
 {% if rows %}
 <div class="card table-card">
 <table class="table">
-  <thead><tr><th>Role</th><th>Status</th><th>Reply</th><th>Site</th><th>Updated</th></tr></thead>
+  <thead><tr><th>Role</th><th>Next step</th><th>Reply</th><th>Site</th><th>Updated</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr id="job-{{ r.job_id }}">
       <td>{{ job_link(r.title, r.url) }}<span class="job-sub">{{ r.company }}</span>
-        {% if r.resume or r.letter %}<div class="row-actions docs" aria-label="Documents sent">{{ documents(r) }}</div>{% endif %}
+        {% if r.resume or r.letter %}<div class="row-actions docs" aria-label="Application documents">
+          {% if r.resume %}<a class="button small ghost" href="/applications/{{ r.job_id }}/resume.pdf" target="_blank" rel="noopener noreferrer">Resume</a>{% endif %}
+          {% if r.letter %}<a class="button small ghost" href="/applications/{{ r.job_id }}/cover-letter.pdf" target="_blank" rel="noopener noreferrer">Cover letter</a>{% endif %}
+        </div>{% endif %}
       </td>
-      <td data-label="Status">
-        <span class="pill s-{{ r.status }}">{{ label(r.status) }}</span>
-        {% if r.status == 'filled' and r.job_id not in pending and can_edit %}
-        <p class="why">The filled form was closed when Sarthi restarted. Fill it again to check and submit it.</p>
-        <div class="row-actions">
-          <form method="post" action="/applications/{{ r.job_id }}/refill"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small" type="submit">Fill it again</button></form>
-          <a class="button small ghost" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">Open job</a>
-        </div>
-        {% endif %}
-        {% if r.status in ('needs_human', 'failed') and r.detail %}<p class="why">{{ reason(r.detail) }}</p>{% endif %}
-        {% if r.status == 'needs_human' and can_edit %}
-        <div class="row-actions">
-          {% if 'CAPTCHA' in r.detail %}
-          <form method="post" action="/applications/{{ r.job_id }}/finish"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small" type="submit">Finish it myself</button></form>
+      <td data-label="Next step">
+        <span class="pill s-{{ r.status or 'queued' }}">{{ label(r.status) if r.stage == 'submitted' else tabs[r.stage] }}</span>
+        {% if r.stage == 'input' %}
+          {% if r.questions %}
+          <p class="why">{{ r.questions }} unanswered {{ 'question' if r.questions == 1 else 'questions' }} from the employer.</p>
+          <a class="button small" href="/activity/questions?job={{ r.job_id }}#job-{{ r.job_id }}">Answer questions</a>
+          {% elif r.job_id in pending %}
+          <p class="why">Waiting for your Submit.</p>
+          <div class="row-actions">
+            {{ post(r, 'submit', 'Submit application') }}{{ post(r, 'cancel', 'Cancel', 'quiet') }}
+            {% if pending[r.job_id].screenshot %}<a class="button small ghost" href="/applications/{{ r.job_id }}/form.png" target="_blank" rel="noopener">View full form</a>{% endif %}
+          </div>
+          {% elif can_edit %}
+          <p class="why">The previous browser tab is closed.</p>
+          {{ post(r, 'refill', 'Fill it again') }}
           {% endif %}
-          <a class="button small{{ ' ghost' if 'CAPTCHA' in r.detail else '' }}" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">Open &amp; apply</a>
-          <form method="post" action="/applications/{{ r.job_id }}/applied"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}"><button class="button small quiet" type="submit">I applied</button></form>
-        </div>
+        {% elif r.stage in ('captcha', 'manual', 'verify', 'stopped') %}
+          {% if r.detail %}<p class="why">{{ reason(r.detail) }}</p>{% endif %}
+          {% if r.stage != 'stopped' %}
+          <div class="row-actions">
+            {% if r.stage == 'captcha' and can_edit %}
+            {{ post(r, 'finish', 'Continue filled form') }}
+            {% else %}
+            <a class="button small ghost" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{% if r.stage == 'verify' %}Check on site{% elif r.stage == 'captcha' %}Open job{% else %}Open &amp; apply{% endif %}</a>
+            {% endif %}
+            {% if can_edit %}{{ post(r, 'applied', 'I applied', 'quiet') }}{% endif %}
+          </div>
+          {% endif %}
         {% endif %}
       </td>
       <td data-label="Reply">{{ reply(r.reply_kind) or '' }}</td>
-      <td data-label="Site"><span class="chip">{{ r.site or '' }}</span></td>
+      <td data-label="Site">{% if r.site %}<span class="chip">{{ r.site }}</span>{% endif %}</td>
       <td data-label="Updated" class="faint">{{ ago(r.updated_at) }}</td>
     </tr>
   {% endfor %}
@@ -78,6 +94,6 @@
 {{ pager(page, pages, total, size, link_page) }}
 </div>
 {% else %}
-{{ empty('No applications yet', 'Tap Apply on a match, here or in Telegram. It shows up here once the form is filled.') }}
+{{ empty('No applications in this view', 'Applications appear here once Sarthi queues them or records a result.') }}
 {% endif %}
 {% endblock %}

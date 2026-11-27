@@ -132,24 +132,27 @@ def test_sources_page_shows_every_source_site_and_company_career_page(
     save(job_store, "keka", "Vandelay Tech", 1)
 
     page = client.get("/sources").text
-    assert "Sarthi reads 4 sources" in page
+    assert "of 4 read" in page
+    assert "Supported hiring systems" in page
     assert "Not read yet" in page and "Next read queued" in page
     assert "Failing · 4 in a row" in page
-    assert "has failed 4 times in a row" in page  # why company career pages stopped arriving
+    career = client.get("/sources/companies").text
+    assert "has failed 4 times in a row" in career  # why company career pages stopped arriving
+    seen = client.get("/sources/sites").text
     for site in ("linkedin", "naukri", "freehire", "greenhouse", "keka"):
-        assert f"<b>{site}</b>" in page
-    assert "Acme Labs" in page and "Vandelay Tech" in page
-    assert "Initech" not in page  # a job board, not a company's own career page
-    assert "<meter" in page and "style=" not in page  # bars without inline styles (the CSP forbids them)
+        assert f"<b>{site}</b>" in seen
+    assert "Acme Labs" in career and "Vandelay Tech" in career
+    assert "Initech" not in career  # a job board, not a company's own career page
+    assert "<meter" in seen and "style=" not in seen  # bars without inline styles (the CSP forbids them)
     assert '<td data-label="Jobs" class="num">5</td>' in page  # the job-board search: 3 LinkedIn + 2 Naukri
 
 
 def test_career_pages_are_paged(client: TestClient, job_store: JobStore) -> None:
     for n in range(PAGE_SIZE + 3):
         save(job_store, "lever", f"Example Company {n:02d}", 1)
-    first = client.get("/sources").text
+    first = client.get("/sources/companies").text
     assert "Example Company 00" in first and f"Example Company {PAGE_SIZE + 2:02d}" not in first
-    assert 'href="/sources?page=2#career-pages"' in first
-    second = client.get("/sources?page=2").text
+    assert 'href="/sources/companies?page=2"' in first
+    second = client.get("/sources/companies?page=2").text
     assert f"Example Company {PAGE_SIZE + 2:02d}" in second and "Example Company 00" not in second
-    assert client.get("/sources?page=99").text.count("Example Company") == 3  # the last real page
+    assert client.get("/sources/companies?page=99").text.count("Example Company") == 3  # the last real page

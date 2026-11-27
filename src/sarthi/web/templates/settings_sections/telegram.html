@@ -1,0 +1,10 @@
+<section class="card card-pad section" id="telegram">
+  <h2 class="card-title">{{ icon('telegram') }}Telegram</h2>
+  {% if ov.telegram_connected %}
+  <p>Connected. Job alerts and updates go to your paired chat.</p>
+  {% elif ov.pair_link %}
+  <a class="button small" href="{{ ov.pair_link }}" rel="noreferrer">Connect Telegram</a>
+  {% else %}
+  <p>Waiting for a Telegram connection.</p>
+  {% endif %}
+</section>

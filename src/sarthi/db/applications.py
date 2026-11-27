@@ -22,6 +22,9 @@ class ApplicationStatus(StrEnum):
 
 
 SENT = frozenset({ApplicationStatus.SUBMITTED, ApplicationStatus.APPLIED_BY_USER})
+UNCONFIRMED_PREFIX = "Submission unconfirmed: "
+_LEGACY_UNCONFIRMED = "it may have been sent"
+_PRESS_PREFIX = "apply.press_started."
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +39,13 @@ class ApplicationRecord:
     updated_at: str
     submitted_at: str | None
 
+    @property
+    def unconfirmed(self) -> bool:
+        """Whether Submit may already have sent the form."""
+        return self.status is ApplicationStatus.NEEDS_HUMAN and (
+            self.detail.startswith(UNCONFIRMED_PREFIX) or _LEGACY_UNCONFIRMED in self.detail.lower()
+        )
+
 
 class ApplicationStore:
     """SQL for the ``application`` table."""
@@ -45,7 +55,7 @@ class ApplicationStore:
         self._conn = conn
         self._clock = clock
 
-    def record(
+    def record(  # noqa: PLR0913 (application outcome with optional click resolution)
         self,
         job_id: str,
         status: ApplicationStatus,
@@ -53,12 +63,12 @@ class ApplicationStore:
         site: str = "",
         detail: str = "",
         screenshot: str = "",
+        resolve_press: bool = False,
     ) -> None:
         """Insert or update the job's application. The first submission time is kept.
 
-        An application that went out stays out: once ``submitted`` or ``applied_by_user`` nothing but
-        another sent status changes it (a late refill, hand-over or failure must not make it look unsent,
-        or the next Apply tap would send it a second time).
+        Only a confirmed sent status can replace a sent or unconfirmed submission. A late refill,
+        hand-over or failure cannot make either look safe to send again.
         """
         now = to_iso(self._clock())
         sent_at = now if status in SENT else None
@@ -70,10 +80,36 @@ class ApplicationStore:
                 " detail = excluded.detail, screenshot = excluded.screenshot,"
                 " updated_at = excluded.updated_at,"
                 " submitted_at = coalesce(submitted_at, excluded.submitted_at)"
-                " WHERE status NOT IN ('submitted', 'applied_by_user')"  # SENT: a sent row stays sent
+                " WHERE (status NOT IN ('submitted', 'applied_by_user')"
+                " AND NOT (status = 'needs_human' AND (detail LIKE ? OR lower(detail) LIKE ?)))"
                 " OR excluded.status IN ('submitted', 'applied_by_user')",
-                (job_id, status.value, site[:200], detail[:1000], screenshot[:500], now, sent_at),
+                (
+                    job_id,
+                    status.value,
+                    site[:200],
+                    detail[:1000],
+                    screenshot[:500],
+                    now,
+                    sent_at,
+                    UNCONFIRMED_PREFIX + "%",
+                    f"%{_LEGACY_UNCONFIRMED}%",
+                ),
             )
+
+            if resolve_press or status in SENT:
+                c.execute("DELETE FROM app_state WHERE key = ?", (_PRESS_PREFIX + job_id,))
+
+    def mark_press_started(self, job_id: str) -> None:
+        """Persist the final click boundary before sending a browser event."""
+        with transaction(self._conn) as c:
+            c.execute("INSERT OR IGNORE INTO app_state(key,value) VALUES (?, '1')", (_PRESS_PREFIX + job_id,))
+
+    def press_unresolved(self, job_id: str) -> bool:
+        """True when a click may have occurred but no outcome was durably recorded."""
+        return (
+            self._conn.execute("SELECT 1 FROM app_state WHERE key = ?", (_PRESS_PREFIX + job_id,)).fetchone()
+            is not None
+        )
 
     def get(self, job_id: str) -> ApplicationRecord | None:
         """The job's application, or None."""

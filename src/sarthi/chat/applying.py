@@ -184,6 +184,8 @@ class ApplyingFlow:
                 f"⏳ {what}: {detail} Filling it again. Your Submit still counts: if the new fill is "
                 "complete it is sent by itself, otherwise it comes back to you."
             )
+        elif outcome == "expired" and task.payload.get("auto_refill"):
+            text = f"⏳ {what}: {detail} Sarthi will refill it once and send it if the form is complete."
         elif outcome == "expired":
             text = f"⏳ {what}: {detail} Filling it again for a fresh approval…"
         elif "CAPTCHA" in str(task.payload.get("detail") or ""):
@@ -199,7 +201,7 @@ class ApplyingFlow:
         else:
             text = (
                 f"🙋 {what} needs you: {detail}\n\n"
-                f'<a href="{url}">Open the application</a>, attach the resume I sent, and submit. '
+                f'<a href="{url}">Open the application</a>, attach your resume, and submit. '
                 "Then tap the button so I can track it."
             )
             markup = buttons([("✅ I applied", f"applied:{task.key}")])

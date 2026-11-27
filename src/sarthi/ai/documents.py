@@ -229,6 +229,140 @@ async def tailor(
         return None
 
 
+# ---- tailoring as edits (each names its line and quotes it) -----------------------------------------------
+
+
+ChangeText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=1500)]
+
+
+class ResumeChange(BaseModel):
+    """One edit: which line (``path``), what it says now (``original``) and what it should say (``value``)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    path: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)]
+    action: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, max_length=20)] = "replace"
+    original: ChangeText | Annotated[list[ChangeText], at_most(20)] | None = None
+    value: ChangeText | Annotated[list[ChangeText], at_most(60)] = ""
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] = ""
+
+
+class ResumeChanges(BaseModel):
+    """The model's edits; code checks each one before it is used."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    changes: Annotated[list[ResumeChange], at_most(40)] = Field(default_factory=list)
+
+
+# Adapted from Resume-Matcher (Apache-2.0), apps/backend/app/prompts/templates.py (DIFF_IMPROVE_PROMPT,
+# CRITICAL_TRUTHFULNESS_RULES "heavy", DIFF_STRATEGY_INSTRUCTIONS) @ 959e458. Changed by Sarthi contributors:
+# Sarthi's paths, the per-line truth rule (a line may only use its own facts), no added bullets or skills,
+# the headline never changed, and bullet lengths kept.
+TAILOR_CHANGES_PROMPT = Prompt(
+    name="tailor_changes",
+    version="3",
+    instructions="""
+Tailor the candidate's resume in <resume_sections> to the job in <job_posting> by listing targeted changes.
+Code applies a change only when it passes every rule below; a change that breaks one is thrown away.
+
+TRUTH RULES (one line at a time):
+1. A re-worded line may use ONLY the facts of that same line. Never add a tool, language, framework,
+   technology, number, company, product, team size, scope or result that the line itself does not state,
+   even when another line, the skills list or the job mentions it. Example: "Built payment APIs in
+   Node.js" must not become "Built payment APIs in Python and Node.js" (Python is not in that line).
+2. Using the job's word for what the line already says is the point: "LLM workflows with retrieval" may
+   say "RAG pipeline"; "nightly scripts that load sales data" may say "ETL jobs". Claiming adjacent work or
+   a wider scope is not allowed. <job_keywords> "lack" skills must never appear.
+3. Keep every number exactly as written. Do not raise seniority ("worked on" is not "led").
+4. Keep each line about its length (the character count shown, within 15%) and start bullets with an
+   active past-tense verb, like the original.
+5. Never drop, merge or add a bullet, role, project, skill, certification, link or date. Never change
+   names, companies, titles, dates, schools or the headline.
+6. Do not copy the posting's sentences (no run of 5+ words from it); use its hard keywords in the
+   candidate's own sentence. No em dashes. Never use: passionate, leverage, spearheaded, orchestrated,
+   robust, cutting-edge, seamless, synergy, results-driven, proven track record, utilize, demonstrated.
+7. A line that already reads well for this job stays as it is: do not list it.
+
+CHANGES you can make (copy each path exactly as shown in <resume_sections>):
+- "summary", action "replace": the same facts (no fact from elsewhere on the resume), the job's focus
+  first. Call the candidate only by a title the resume gives them, never the job's title.
+- "experience[i].bullets[j]" or "projects[i].bullets[j]", action "replace": re-word one bullet.
+- "experience[i].bullets" or "projects[i].bullets", action "reorder": "value" is ALL that entry's ORIGINAL
+  bullets copied exactly, most relevant to this job first.
+- "skills[i].items", action "reorder": "value" is ALL skills of that line, the job's skills first.
+
+Every "replace" MUST copy the line's current text exactly into "original" (it is checked). What to send:
+1. The summary re-ordered so the facts this job cares about most come first (unless they already do).
+2. Every bullet where a job term names work the bullet really describes, re-worded with that term
+   (most jobs: 3 to 6 bullets). Keep the bullet's verb strength: "worked on" stays "worked on". Use
+   each job term in one or two lines, where it says the most; never inside a product's or feature's
+   name ("the Policy AI assistant" stays as named), and never as a label stuck on ("a GenAI pipeline").
+3. Each role's bullets and each skills line re-ordered toward the job.
+When <problems_to_fix> lists changes of your last answer that were thrown away, give each one again
+corrected (or leave it out), plus your other changes.
+""",
+    shape='{"changes": [{"path": "experience[0].bullets[1]", "action": "replace", '
+    '"original": "<the exact current text>", "value": "<the new text>", "reason": "<why>"}, '
+    '{"path": "skills[0].items", "action": "reorder", "original": null, "value": ["<skill>"], '
+    '"reason": "<why>"}]}',
+)
+
+
+def change_sections(master: MasterResume) -> str:
+    """The resume with each changeable line's path and length, for the change prompt (no contact details)."""
+    lines = [f"Headline (never changed): {master.headline}"]
+    if master.summary:
+        lines.append(f"summary ({len(master.summary)} chars): {master.summary}")
+    for i, job in enumerate(master.experience):
+        lines.append(f"\nexperience[{i}]: {job.title} at {job.company} ({job.start} - {job.end})")
+        lines += [f"  experience[{i}].bullets[{k}] ({len(b)} chars): {b}" for k, b in enumerate(job.bullets)]
+    for i, project in enumerate(master.projects):
+        lines.append(f"\nprojects[{i}]: {project.name} ({project.description})")
+        lines += [
+            f"  projects[{i}].bullets[{k}] ({len(b)} chars): {b}" for k, b in enumerate(project.bullets)
+        ]
+    lines.append("")
+    for i, group in enumerate(master.skills):
+        lines.append(f"skills[{i}].items ({group.label or 'skills'}): {', '.join(group.items)}")
+    for school in master.education:
+        lines.append(f"Education (never changed): {school.degree}, {school.school}")
+    return "\n".join(lines)
+
+
+async def tailor_changes(  # noqa: PLR0913  (the prompt's inputs)
+    client: AiClient,
+    master: MasterResume,
+    job_text: str,
+    problems: list[str] | None = None,
+    own_skills: tuple[str, ...] = (),
+    *,
+    hints: str = "",
+) -> ResumeChanges | None:
+    """The model's changes for one job, or None when no model answered. ``problems`` asks for a second try.
+
+    ``hints`` names lines that already describe work the job calls by its own word ("path: word" lines).
+    """
+    if not client.available:
+        return None
+    feedback = "\n".join(f"- {p}" for p in problems or []) or "none"
+    keywords = job_keywords(master, job_text, own_skills)
+    if hints:
+        keywords += f"\nlines that already describe work the job names (may use that word there):\n{hints}"
+    try:
+        return await client.structured(
+            TAILOR_CHANGES_PROMPT,
+            ResumeChanges,
+            resume_sections=scrub(change_sections(master)),
+            job_keywords=keywords,
+            job_posting=job_text[:JOB_CHARS],
+            problems_to_fix=feedback,
+        )
+    except AiError as error:
+        log.info("resume changes not made: %s", error)
+        return None
+
+
 # ---- cover letter ---------------------------------------------------------------------------------------
 
 

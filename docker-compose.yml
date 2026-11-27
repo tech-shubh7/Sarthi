@@ -10,23 +10,33 @@
 services:
   sarthi:
     build: .
-    image: sarthi:local
+    image: "${SARTHI_IMAGE:-sarthi:local}"
     init: true # a real PID 1: docker stop reaches Sarthi, which hands its tasks back
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: "${SARTHI_ENV_FILE:-.env}"
+        required: false
+    stop_grace_period: 45s
     environment:
       SARTHI_DATA_DIR: /app/data
+      SARTHI_DASHBOARD_PORT: "8765"
       SARTHI_DASHBOARD_HOST: "0.0.0.0" # inside the container; published below to this computer only
       SARTHI_OLLAMA_URL: http://ollama:11434/v1 # used only when an ollama/... model is listed
     volumes:
-      - ./data:/app/data # database, resume, documents, logins: everything that is yours
+      - "${SARTHI_HOST_DATA_DIR:-./data}:/app/data" # database, resume, documents, logins: everything that is yours
     ports:
-      - "127.0.0.1:8765:8765" # the dashboard, reachable from this computer only
-      - "127.0.0.1:6080:6080" # a site login's browser (/login in Telegram), only while it is open
+      - "127.0.0.1:${SARTHI_HOST_DASHBOARD_PORT:-8765}:8765" # the dashboard, reachable from this computer only
+      - "127.0.0.1:${SARTHI_HOST_SCREEN_PORT:-6080}:6080" # a site login's browser (/login in Telegram), only while it is open
     read_only: true # only /app/data (and the scratch folders below) can be written
     tmpfs:
       - /tmp
       - /home/sarthi:uid=1000,gid=1000,mode=700 # owned by the app user (Docker's default is root-only)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/', timeout=3).close()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
     shm_size: 256mb # Chromium needs more shared memory than Docker's default 64 MB
     security_opt:
       - no-new-privileges:true

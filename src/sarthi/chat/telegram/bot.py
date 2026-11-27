@@ -49,6 +49,7 @@ APPLY_STEPS = (
     names.DOCUMENTS, names.DOCUMENTS_READY, names.FORM_CHECK, names.ASK_QUESTIONS, names.APPLY,
     names.AUTO_APPLY, names.APPLY_PREVIEW, names.SUBMIT, names.APPLY_RESULT,
 )  # fmt: skip
+OTHER_APPLY_STEPS = tuple(step for step in APPLY_STEPS if step != names.AUTO_APPLY)
 PAUSED_KEY = "alerts.paused"
 OFFSET_KEY = "telegram.offset"
 WAIT_FOR_PAIRING_S = 600
@@ -283,14 +284,28 @@ class TelegramBot:
         await self.send_job(chat_id, task.key, JobStatus.ALERTED)
 
     async def handle_auto_apply(self, task: TaskRecord) -> None:
-        """``auto_apply`` task: the veto window ended; apply unless it was cancelled or answered meanwhile."""
-        if not self.chats.is_auto(task.key) or self.chats.job_status(task.key) in ANSWERED:
+        """Apply after the veto window while the job still qualifies."""
+        current = self.chats.job_status(task.key)
+        resumed = (
+            task.payload.get("resume") is True
+            and current is JobStatus.APPLY
+            and not self.chats.applying_alive(task.key, OTHER_APPLY_STEPS)
+        )
+        if not self.chats.is_auto(task.key) or (current in ANSWERED and not resumed):
+            return
+        if not self._still_strong(task.key) or not self.auto.qualifies(self.matches.get(task.key)):
+            self.auto.cancel(task.key)
             return
         self._start_applying(task.key)
 
     def apply_now(self, job_id: str) -> bool:
         """Apply now to a job waiting out its auto-apply veto window. False when none is waiting."""
-        if not self.chats.is_auto(job_id) or self.chats.job_status(job_id) in ANSWERED:
+        current = self.chats.job_status(job_id)
+        recoverable = current is JobStatus.APPLY and not self.chats.applying_alive(job_id, OTHER_APPLY_STEPS)
+        if not self.chats.is_auto(job_id) or (current in ANSWERED and not recoverable):
+            return False
+        if not self._still_strong(job_id) or not self.auto.qualifies(self.matches.get(job_id)):
+            self.auto.cancel(job_id)
             return False
         self._start_applying(job_id)
         return True

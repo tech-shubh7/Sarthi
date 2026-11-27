@@ -1,0 +1,71 @@
+{% macro field(name, label, hint='', kind='text', placeholder='') %}
+<div class="field{% if errors.get(name) %} has-error{% endif %}">
+  <label for="f-{{ name }}">{{ label }}</label>
+  {% if kind == 'area' %}
+  <textarea id="f-{{ name }}" name="{{ name }}" rows="3" placeholder="{{ placeholder }}" {% if not can_edit %}disabled{% endif %}>{{ values.get(name, '') }}</textarea>
+  {% else %}
+  <input id="f-{{ name }}" name="{{ name }}" type="text" value="{{ values.get(name, '') }}" placeholder="{{ placeholder }}" {% if not can_edit %}disabled{% endif %}>
+  {% endif %}
+  {% if errors.get(name) %}<p class="error">{{ errors[name] }}</p>{% elif hint %}<p class="hint">{{ hint }}</p>{% endif %}
+</div>
+{% endmacro %}
+<form class="card section" id="profile" method="post" action="/settings/profile" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+
+  <div class="form-section">
+    <h3>Resume</h3>
+    <p class="help">{% if has_profile %}Your resume is saved. Add a new one only to replace it.{% else %}No profile yet: add your resume and the fields below, or send /setup in Telegram.{% endif %}</p>
+    <div class="field{% if errors.get('resume') %} has-error{% endif %}">
+      <label for="f-resume" class="sr-only">Resume file</label>
+      <input id="f-resume" name="resume" type="file" accept=".pdf,.docx,.tex,.txt" {% if not can_edit %}disabled{% endif %}>
+      {% if errors.get('resume') %}<p class="error">{{ errors['resume'] }}</p>{% else %}<p class="hint">PDF, Word (.docx) or LaTeX (.tex), up to 5 MB. Kept on this computer only; tailored resumes keep its design.</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h3>What you are looking for</h3>
+    <p class="help">Sarthi searches for these titles and checks every job against these skills.</p>
+    <div class="cols">
+      {{ field('roles', 'Job titles', 'Comma-separated', placeholder='AI Engineer, Backend Engineer') }}
+      {{ field('skills', 'Your skills', 'Comma-separated, as on your resume', placeholder='Python, FastAPI, LangGraph') }}
+    </div>
+    {{ field('looking_for', 'In your own words', 'What makes a job right for you', 'area', 'LLM products at a startup, Python backend') }}
+  </div>
+
+  <div class="form-section">
+    <h3>Where you can work</h3>
+    <div class="cols">
+      {{ field('home', 'Country you live in', placeholder='United Kingdom') }}
+      <div class="field{% if errors.get('remote') %} has-error{% endif %}">
+        <label for="f-remote">Remote work</label>
+        <select id="f-remote" name="remote" {% if not can_edit %}disabled{% endif %}>
+          {% for value, text in remote_choices.items() %}
+          <option value="{{ value }}" {% if values.get('remote') == value %}selected{% endif %}>{{ text }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.get('remote') %}<p class="error">{{ errors['remote'] }}</p>{% endif %}
+      </div>
+      {{ field('countries', 'Other countries, on-site or hybrid', 'Or "none"', placeholder='UK, UAE, Europe') }}
+      {{ field('visa_free', 'No visa needed in (besides home)', 'e.g. an EU passport: Europe. Or "none"', placeholder='none') }}
+      {{ field('languages', 'Languages you speak besides English', 'With a level if you like. Jobs that require another language are hidden', placeholder='German B1, Hindi') }}
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h3>Experience and pay</h3>
+    <div class="cols">
+      {{ field('years', 'Years of work experience', '0 for a fresher', placeholder='1.5') }}
+      {{ field('salary', 'Minimum salary', 'Empty for none', placeholder='6 LPA, 80k GBP, USD 120000') }}
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h3>Never show me</h3>
+    <div class="cols">
+      {{ field('exclude_companies', 'Companies', 'Comma-separated', placeholder='Company A, Company B') }}
+    </div>
+    {{ field('ruled_out', 'Kinds of jobs', '', 'area', 'Sales, night shifts, service companies') }}
+  </div>
+
+  {% if can_edit %}<div class="form-actions"><button class="button" type="submit">Save profile</button></div>{% endif %}
+</form>

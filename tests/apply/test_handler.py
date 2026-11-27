@@ -1,6 +1,7 @@
 """The apply and submit tasks (with a fake browser), the application record and the approval in the chat."""
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,9 @@ class FakeEngine:
             raise self.result
         return self.result
 
-    async def submit(self, job_id: str, code: str) -> SubmitResult:
+    async def submit(
+        self, job_id: str, code: str, *, before_click: Callable[[], None] | None = None
+    ) -> SubmitResult:
         return self.outcome
 
     async def close_job(self, job_id: str) -> None:
@@ -609,3 +612,142 @@ async def test_a_paused_browser_defers_the_fill(
             TaskRecord(1, names.APPLY, job_id, {}, 1)
         )
     assert ApplicationStore(conn).get(job_id) is None  # no false hand-over
+
+
+@pytest.mark.parametrize(
+    "url", ["https://www.linkedin.com/jobs/view/1", "https://www.naukri.com/job-listings-1"]
+)
+async def test_native_boards_respect_the_automatic_send_switch(
+    conn: sqlite3.Connection,
+    job_store: JobStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+    clock: FakeClock,
+    url: str,
+) -> None:
+    job_id = job_at(job_store, url)
+    worker = applier(conn, job_store, queue, tmp_path, FakeEngine(FILLED), clock)
+    worker.chats = ChatStore(conn, clock=clock)
+    worker.chats.set_auto(job_id, on=True)
+    await worker.handle_apply(TaskRecord(1, names.APPLY, job_id, {}, 1))
+    assert queue.active(names.SUBMIT) == 0
+    assert payload(queue, names.APPLY_PREVIEW)["code"] == FILLED.code
+
+
+async def test_manual_only_boards_never_reach_the_browser(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, "https://www.naukri.com/job-listings-1")
+    engine = FakeEngine(FILLED)
+    worker = applier(conn, job_store, queue, tmp_path, engine, clock)
+    worker.allow_board_automation = False
+    await worker.handle_apply(TaskRecord(1, names.APPLY, job_id, {}, 1))
+    assert engine.filled == []
+    record = worker.applications.get(job_id)
+    assert record is not None and record.status is ApplicationStatus.NEEDS_HUMAN
+
+
+async def test_uncertain_submission_stays_held_on_refill_and_submit(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, LEVER)
+    engine = FakeEngine(FILLED, SubmitResult("unknown", "Natural-language confirmation missing."))
+    worker = applier(conn, job_store, queue, tmp_path, engine, clock)
+    submit = TaskRecord(1, names.SUBMIT, job_id, {"code": "ABC234"}, 1)
+    await worker.handle_submit(submit)
+    worker.applications.record(job_id, ApplicationStatus.FAILED, detail="A stale document task failed")
+    engine.outcome = SubmitResult("submitted", "Confirmation seen")
+    await worker.handle_apply(TaskRecord(2, names.APPLY, job_id, {}, 1))
+    await worker.handle_submit(submit)
+    assert engine.filled == []
+    record = worker.applications.get(job_id)
+    assert record is not None and record.unconfirmed and record.submitted_at is None
+
+
+async def test_submit_rechecks_the_site_limit_after_a_form_was_filled(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    pending = job_at(job_store, LEVER)
+    earlier = job_at(job_store, "https://jobs.lever.co/other/2", company="Other")
+    worker = applier(conn, job_store, queue, tmp_path, FakeEngine(FILLED), clock, limit=1)
+    worker.applications.record(pending, ApplicationStatus.FILLED, site="jobs.lever.co")
+    worker.applications.record(earlier, ApplicationStatus.SUBMITTED, site="jobs.lever.co")
+    with pytest.raises(DeferError):
+        await worker.handle_submit(TaskRecord(1, names.SUBMIT, pending, {"code": "ABC234"}, 1))
+    record = worker.applications.get(pending)
+    assert record is not None and record.status is ApplicationStatus.FILLED
+
+
+@pytest.mark.parametrize("refill_before", [False, True])
+async def test_automatic_refill_is_allowed_once(
+    conn: sqlite3.Connection,
+    job_store: JobStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+    clock: FakeClock,
+    refill_before: bool,
+) -> None:
+    job_id = job_at(job_store, LEVER)
+    engine = FakeEngine(FILLED, SubmitResult("expired", "The page closed before Submit."))
+    worker = applier(conn, job_store, queue, tmp_path, engine, clock)
+    worker.applications.record(job_id, ApplicationStatus.FILLED, site="jobs.lever.co")
+    original = {"code": "OLD", "auto": True, "auto_refill": refill_before}
+    await worker.handle_submit(TaskRecord(1, names.SUBMIT, job_id, original, 1))
+    refill = queue.claim([names.APPLY])
+    assert refill is not None and refill.payload.get("auto_refill", False) is not refill_before
+    await worker.handle_apply(refill)
+    if refill_before:
+        assert queue.active(names.SUBMIT) == 0
+        assert queue.active(names.APPLY_PREVIEW) == 1
+    else:
+        assert payload(queue, names.SUBMIT) == {"code": FILLED.code, "auto": True, "auto_refill": True}
+
+
+async def test_submit_checks_for_a_duplicate_role_after_filling(
+    conn: sqlite3.Connection,
+    job_store: JobStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+    clock: FakeClock,
+) -> None:
+    first = job_at(job_store, LEVER)
+    next_job = job_at(job_store, "https://boards.greenhouse.io/acme/jobs/2", country="GB")
+    engine = FakeEngine(FILLED)
+    worker = applier(conn, job_store, queue, tmp_path, engine, clock)
+    worker.applications.record(next_job, ApplicationStatus.FILLED, site="boards.greenhouse.io")
+    worker.applications.record(first, ApplicationStatus.SUBMITTED, site="jobs.lever.co")
+    await worker.handle_submit(TaskRecord(1, names.SUBMIT, next_job, {"code": FILLED.code, "auto": True}, 1))
+    assert payload(queue, names.APPLY_RESULT)["outcome"] == "duplicate"
+    assert engine.closed == [next_job]
+    assert not worker.applications.was_sent(next_job)
+
+
+async def test_skip_stops_a_queued_auto_submit(
+    conn: sqlite3.Connection,
+    job_store: JobStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+    clock: FakeClock,
+) -> None:
+    job_id = job_at(job_store, LEVER)
+    engine = FakeEngine(FILLED)
+    worker, chats = auto_applier(conn, job_store, queue, tmp_path, engine, clock)
+    chats.set_job_status(job_id, JobStatus.SKIPPED)
+    await worker.handle_submit(TaskRecord(1, names.SUBMIT, job_id, {"code": FILLED.code, "auto": True}, 1))
+    assert engine.closed == [job_id]
+    assert not worker.applications.was_sent(job_id)
+
+
+async def test_interrupted_press_is_held_after_restart(
+    conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
+) -> None:
+    job_id = job_at(job_store, LEVER)
+    applications = ApplicationStore(conn, clock=clock)
+    applications.record(job_id, ApplicationStatus.FILLED, site="jobs.lever.co")
+    applications.mark_press_started(job_id)
+    worker = applier(conn, job_store, queue, tmp_path, FakeEngine(FILLED), clock)
+    await worker.handle_submit(TaskRecord(1, names.SUBMIT, job_id, {"code": "old", "auto": True}, 1))
+    record = applications.get(job_id)
+    assert record is not None and record.unconfirmed and record.submitted_at is None
+    assert not applications.press_unresolved(job_id)
+    assert payload(queue, names.APPLY_RESULT)["outcome"] == "unknown"

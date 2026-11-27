@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sqlite3
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from tests.ai.test_limits import FakeTime
 from tests.conftest import FakeClock
 
 PROMPT = Prompt("test", "1", "Say hi.")
+DEEPSEEK = Endpoint("deepseek", "deepseek-flash", "https://deepseek.test/v1", SecretStr("fake"))
 GEMINI = Endpoint("gemini", "flash", "https://gemini.test/v1", SecretStr("secret-gemini-key"))
 OPENAI = Endpoint("openai", "mini", "https://openai.test/v1", SecretStr("secret-openai-key"))
 OLLAMA = Endpoint("ollama", "llama", "http://localhost:11434/v1", None)
@@ -61,13 +63,20 @@ def store(conn: sqlite3.Connection, clock: FakeClock) -> AiStore:
 
 
 def client(
-    store: AiStore, providers: FakeProviders, endpoints: list[Endpoint], clock: FakeClock, budget: int = 0
+    store: AiStore,
+    providers: FakeProviders,
+    endpoints: list[Endpoint],
+    clock: FakeClock,
+    budget: int = 0,
+    *,
+    allow_paid: bool = True,
 ) -> AiClient:
     http = httpx.AsyncClient(transport=httpx.MockTransport(providers))
     return AiClient(
         endpoints,
         store,
         daily_token_budget=budget,
+        allow_paid=allow_paid,
         requests_per_minute=6000,
         http=http,
         clock=clock,
@@ -429,3 +438,96 @@ async def test_any_other_400_still_falls_back(store: AiStore, clock: FakeClock) 
     )
     result = await client(store, providers, [GROQ, OPENAI], clock).structured(PROMPT, Answer)
     assert result.greeting == "ok"
+
+
+async def test_free_mode_skips_paid_models_and_reuses_fallback_cache(
+    store: AiStore, clock: FakeClock
+) -> None:
+    providers = FakeProviders({"gemini.test": [reply('{"greeting": "free", "count": 1}')]})
+    free = client(store, providers, [OPENAI, GEMINI], clock, allow_paid=False)
+    paid = client(store, providers, [OPENAI, GEMINI], clock)
+    assert (await free.structured(PROMPT, Answer)).greeting == "free"
+    assert (await paid.structured(PROMPT, Answer)).greeting == "free"
+    assert [r.url.host for r in providers.requests] == ["gemini.test"]
+
+
+async def test_paid_json_repair_cannot_run_after_the_first_call_used_the_budget(
+    store: AiStore, clock: FakeClock
+) -> None:
+    providers = FakeProviders(
+        {
+            "openai.test": [reply("invalid JSON", prompt_tokens=100)],
+            "gemini.test": [reply('{"greeting": "free", "count": 1}')],
+        }
+    )
+    result = await client(store, providers, [OPENAI, GEMINI], clock, budget=100).structured(PROMPT, Answer)
+    assert result.greeting == "free"
+    assert [r.url.host for r in providers.requests] == ["openai.test", "gemini.test"]
+
+
+async def test_deepseek_caps_completion_to_the_remaining_paid_budget(
+    store: AiStore, clock: FakeClock
+) -> None:
+    store.record_usage("deepseek", "deepseek-flash", 500, 0)
+    providers = FakeProviders({"deepseek.test": [reply('{"greeting": "paid", "count": 1}')]})
+    ai = client(store, providers, [DEEPSEEK], clock, budget=3_000)
+    assert (await ai.structured(PROMPT, Answer)).greeting == "paid"
+    body = providers.bodies()[0]
+    assert body["thinking"] == {"type": "disabled"}
+    assert 0 < body["max_tokens"] < 2_500  # the request also leaves room for its input
+
+
+async def test_deepseek_skips_a_prompt_too_large_for_the_remaining_budget(
+    store: AiStore, clock: FakeClock
+) -> None:
+    providers = FakeProviders({"gemini.test": [reply('{"greeting": "free", "count": 1}')]})
+    ai = client(store, providers, [DEEPSEEK, GEMINI], clock, budget=3_000)
+    result = await ai.structured(PROMPT, Answer, job_posting=chr(0x03BB) * 1_800)
+    assert result.greeting == "free"
+    assert [r.url.host for r in providers.requests] == ["gemini.test"]
+
+
+async def test_deepseek_cost_reservation_is_shared_across_clients(store: AiStore, clock: FakeClock) -> None:
+    started, release = asyncio.Event(), asyncio.Event()
+    requests: list[str] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.host)
+        if request.url.host == "deepseek.test":
+            started.set()
+            await release.wait()
+            return reply('{"greeting": "paid", "count": 1}')
+        return reply('{"greeting": "free", "count": 1}')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        limits = RateLimits()
+        first = AiClient([DEEPSEEK], store, daily_token_budget=3_000, http=http, clock=clock, limits=limits)
+        second = AiClient(
+            [DEEPSEEK, GEMINI], store, daily_token_budget=3_000, http=http, clock=clock, limits=limits
+        )
+        pending = asyncio.create_task(first.structured(PROMPT, Answer, job_posting="first"))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1.0)
+            fallback = await asyncio.wait_for(
+                second.structured(PROMPT, Answer, job_posting="second"), timeout=1.0
+            )
+            assert fallback.greeting == "free"
+        finally:
+            release.set()
+            await pending
+        assert requests == ["deepseek.test", "gemini.test"]
+
+
+async def test_deepseek_balance_refusal_uses_fallback_without_repeated_paid_requests(
+    store: AiStore, clock: FakeClock
+) -> None:
+    providers = FakeProviders(
+        {
+            "deepseek.test": [httpx.Response(402)],
+            "gemini.test": [reply('{"greeting": "free", "count": 1}')] * 2,
+        }
+    )
+    ai = client(store, providers, [DEEPSEEK, GEMINI], clock)
+    for job in ("first", "second"):
+        assert (await ai.structured(PROMPT, Answer, job_posting=job)).greeting == "free"
+    assert [r.url.host for r in providers.requests] == ["deepseek.test", "gemini.test", "gemini.test"]

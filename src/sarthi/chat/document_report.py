@@ -20,6 +20,13 @@ def _design_line(design: dict[str, Any]) -> str:
         kept = int(design.get("kept") or 0)
         extra = f"; {kept} line(s) kept as written because the new words did not fit" if kept else ""
         return f"🎨 Your own resume design, with {int(design.get('changed') or 0)} line(s) re-worded{extra}."
+    if design.get("kind") == "html":
+        changed = int(design.get("changed") or 0)
+        return (
+            f"🎨 Your resume's layout, re-made with {changed} line(s) changed for this job."
+            if changed
+            else "🎨 Your resume's layout, with your own words (nothing needed changing)."
+        )
     if not design.get("kind"):
         return (
             "🎨 Made in Sarthi's layout: your resume file isn't kept yet. Send it again with /setup (the "

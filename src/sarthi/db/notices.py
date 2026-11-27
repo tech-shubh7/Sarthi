@@ -62,12 +62,17 @@ class NoticeStore:
                 (KEEP,),
             )
 
-    def recent(self, limit: int = 50) -> list[NoticeRecord]:
-        """The newest notices first."""
+    def kinds(self) -> list[str]:
+        """Kinds available in the Activity filter."""
+        return [str(row[0]) for row in self._conn.execute("SELECT DISTINCT kind FROM notice ORDER BY kind")]
+
+    def recent(self, limit: int = 50, *, kind: str = "", oldest: bool = False) -> list[NoticeRecord]:
+        """Page of notices, optionally filtered by kind and ordered oldest first."""
         rows = self._conn.execute(
             "SELECT n.id, n.kind, n.job_id, n.text, n.at, j.title, j.company FROM notice n"
-            " LEFT JOIN job j ON j.id = n.job_id ORDER BY n.id DESC LIMIT ?",
-            (max(1, min(limit, KEEP)),),
+            " LEFT JOIN job j ON j.id = n.job_id WHERE (? = '' OR n.kind = ?)"
+            " ORDER BY CASE WHEN ? THEN n.id END ASC, n.id DESC LIMIT ?",
+            (kind, kind, oldest, max(1, min(limit, KEEP))),
         )
         return [
             NoticeRecord(

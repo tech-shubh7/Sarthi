@@ -6,19 +6,35 @@
   <div>
     <p class="eyebrow">Where jobs come from</p>
     <h1>Sources</h1>
-    <p class="lede">Sarthi reads {{ rows|length }} source{{ '' if rows|length == 1 else 's' }}, and most reach many sites: the job-board search covers LinkedIn, Indeed and your country's own board, Freehire covers about 90 hiring systems, and ATS-Scrapers' daily snapshot covers about 192,000 companies' own career pages. A failing source is tried less often until it works again.</p>
+    <p class="lede">See which readers are working, where jobs were found, and the company career pages already in your results.</p>
   </div>
 </header>
 {% if rows or sites %}
 <section class="stats" aria-label="Sources at a glance">
-  <div class="card stat teal"><span class="stat-label">Sources working</span><b class="stat-n">{{ rows|selectattr('failures', 'eq', 0)|list|length }}</b><span class="stat-sub">of {{ rows|length }} read</span></div>
+  <div class="card stat teal"><span class="stat-label">Source readers working</span><b class="stat-n">{{ rows|selectattr('failures', 'eq', 0)|list|length }}</b><span class="stat-sub">of {{ rows|length }} read</span></div>
   <div class="card stat saffron"><span class="stat-label">Struggling or failing</span><b class="stat-n">{{ rows|selectattr('failures', 'gt', 0)|list|length }}</b><span class="stat-sub">{{ rows|selectattr('failures', 'ge', 3)|list|length }} failing</span></div>
   <div class="card stat indigo"><span class="stat-label">Sites with jobs</span><b class="stat-n">{{ sites|length }}</b><span class="stat-sub">{{ '{:,}'.format(site_jobs) }} jobs in all</span></div>
-  <div class="card stat"><span class="stat-label">Company career pages</span><b class="stat-n">{{ '{:,}'.format(total) }}</b><span class="stat-sub">on {{ systems|length }} hiring system{{ '' if systems|length == 1 else 's' }}</span></div>
+  <div class="card stat"><span class="stat-label">Company pages with results</span><b class="stat-n">{{ '{:,}'.format(total) }}</b><span class="stat-sub">on {{ systems|length }} hiring system{{ '' if systems|length == 1 else 's' }}</span></div>
 </section>
 {% endif %}
 
-{% if rows %}
+{% if supported_systems %}
+<section class="card card-pad section" aria-labelledby="coverage-title">
+  <h2 class="card-title" id="coverage-title">{{ icon('sources') }}Catalog coverage</h2>
+  <p>The ATS-Scrapers snapshot searches about 192,000 company career pages by role, location and posting date when enabled. This installation supports {{ supported_systems|length }} hiring systems.</p>
+  <details><summary>Supported hiring systems</summary>
+    <ul class="chips">{% for name in supported_systems %}<li class="chip">{{ name }}</li>{% endfor %}</ul>
+  </details>
+  {% if not catalog %}<p class="hint">No catalog check is recorded yet.</p>{% endif %}
+</section>
+{% endif %}
+
+<nav class="view-tabs" aria-label="Sources sections">
+  {% for path, label in sections.items() %}
+  <a href="/sources/{{ path }}" {% if path == section %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+{% if section == 'readers' and rows %}
 <section class="card table-card section" aria-labelledby="sources-title">
 <h2 class="card-title table-title" id="sources-title">{{ icon('sources') }}Sources Sarthi reads</h2>
 <table class="table">
@@ -39,7 +55,7 @@
 </section>
 {% endif %}
 
-{% if sites %}
+{% if section == 'sites' and sites %}
 <section class="card table-card section" aria-labelledby="sites-title">
 <h2 class="card-title table-title" id="sites-title">{{ icon('search') }}Sites the jobs came from</h2>
 <table class="table">
@@ -61,7 +77,7 @@
 </section>
 {% endif %}
 
-{% if rows or sites %}
+{% if section == 'companies' and (rows or sites) %}
 <section class="card table-card section" id="career-pages" aria-labelledby="career-title">
 <h2 class="card-title table-title" id="career-title">{{ icon('matches') }}Company career pages</h2>
 <p class="table-note">Jobs found on companies' own career pages, by hiring system: {{ '{:,}'.format(career_jobs) }} job{{ '' if career_jobs == 1 else 's' }} at {{ '{:,}'.format(total) }} compan{{ 'y' if total == 1 else 'ies' }}.
@@ -90,7 +106,8 @@
 <p class="table-note faint">No job from a company's own career page yet.</p>
 {% endif %}
 </section>
-{% else %}
+{% endif %}
+{% if not rows and not sites %}
 {{ empty('No source read yet', 'Sources are read as soon as Sarthi runs (sarthi run).') }}
 {% endif %}
 {% endblock %}

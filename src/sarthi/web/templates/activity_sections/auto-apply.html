@@ -1,0 +1,22 @@
+<section class="section" aria-label="Auto-apply waiting" id="auto-apply">
+  <h2 class="card-title">{{ icon('spark') }}Auto-apply waiting{% if auto %} · {{ auto|length }}{% endif %}</h2>
+  {% if auto %}
+  {% for a in auto %}
+  <article class="card pending" id="auto-{{ a.job_id }}">
+    <div>
+      <h3>{{ job_link(a.title, a.url) }}</h3>
+      <span class="job-sub">{{ a.company }} · {{ a.score }}% match · applies at {{ a.at[:16]|replace('T', ' ') }} UTC</span>
+      <p class="hint">Sarthi applies by itself when the wait ends, unless you cancel. It sends the form without your Submit only when every answer came from your profile.</p>
+      {% if can_edit %}
+      <div class="row-actions">
+        <form method="post" action="/auto/{{ a.job_id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button quiet" type="submit">Cancel</button></form>
+        <form method="post" action="/auto/{{ a.job_id }}/now"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button" type="submit">Apply now</button></form>
+      </div>
+      {% endif %}
+    </div>
+  </article>
+  {% endfor %}
+  {% else %}
+  <p class="muted">Nothing waiting. Turn auto-apply on in <a href="/settings/automation">Settings</a>.</p>
+  {% endif %}
+</section>

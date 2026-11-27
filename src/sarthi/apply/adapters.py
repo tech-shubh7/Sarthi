@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib import resources
 from typing import Any
@@ -524,7 +525,9 @@ async def _cover(target: Locator) -> dict[str, Any]:
     return found if isinstance(found, dict) else {"cover": ""}
 
 
-async def press_submit(page: Page, selector: str, *, prefer: str = "") -> tuple[str, str] | None:
+async def press_submit(
+    page: Page, selector: str, *, prefer: str = "", before_click: Callable[[], None] | None = None
+) -> tuple[str, str] | None:
     """Press the form's submit control like a person would; None when pressed, else (outcome, why).
 
     Hidden twins of the button (a faded sticky bar, a mobile copy) are skipped; a button disabled until the
@@ -543,7 +546,7 @@ async def press_submit(page: Page, selector: str, *, prefer: str = "") -> tuple[
                 await page.locator(f"[{CONSENT_BUTTON_ATTR}]").first.click(timeout=3_000)
                 await page.wait_for_timeout(500)
         try:
-            await target.click(timeout=SUBMIT_CLICK_MS)
+            await target.click(timeout=SUBMIT_CLICK_MS, trial=True)
         except PlaywrightError as error:
             if attempt == 0:
                 continue
@@ -551,7 +554,13 @@ async def press_submit(page: Page, selector: str, *, prefer: str = "") -> tuple[
             if what:
                 return "needs_human", f'"{what}" covers the submit button on the page; submit it yourself.'
             return "failed", f"Could not press submit: {str(error).splitlines()[0][:200]}"
-        return None
+        break
+    if before_click is not None:
+        before_click()
+    try:
+        await target.click(timeout=SUBMIT_CLICK_MS, no_wait_after=True)
+    except PlaywrightError:
+        return "unknown", "The submit click could not be confirmed. Check the site before trying again."
     return None
 
 

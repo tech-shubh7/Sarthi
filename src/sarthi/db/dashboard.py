@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +24,7 @@ class Overview:
     replies: dict[str, int]  # reply kinds
     tasks_waiting: dict[str, int]  # pending or running tasks by type
     ai_tokens_today: dict[str, int]  # provider -> tokens
+    telegram_connected: bool = False
     pair_link: str | None = None  # the t.me link that connects Telegram, until it is used
     pair_step: str = "start"  # "create": make your own bot first; "start": tap Start in the bot
 
@@ -41,6 +43,8 @@ class MatchRow:
     first_seen_at: str
     source: str
     ai_used: bool = True  # False: only keywords were compared (the AI has not read the job yet)
+    reasons: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +128,7 @@ class DashboardQueries:
                 " GROUP BY provider",
                 (to_iso(today_start),),
             ),
+            telegram_connected=bool(self._state("telegram.owner_chat_id")),
             pair_link=self._pair_link(),
             pair_step=self._state("telegram.pair_step") or "start",
         )
@@ -150,7 +155,7 @@ class DashboardQueries:
             params += [like, like]
         return where, params
 
-    def matches(
+    def matches(  # noqa: PLR0913 (pagination and independent filters)
         self,
         decisions: tuple[str, ...],
         since: datetime,
@@ -158,16 +163,21 @@ class DashboardQueries:
         *,
         offset: int = 0,
         query: str = "",
+        sort: str = "score",
     ) -> list[MatchRow]:
         """Matches with these decisions among jobs first seen since ``since``, best first (one page)."""
         where, params = self._match_filter(decisions, since, query)
         sql = (
             "SELECT j.id, j.title, j.company, j.canonical_url, j.source, j.first_seen_at, m.score,"  # noqa: S608
-            " m.decision, m.ai_used, u.status FROM job_match m JOIN job j ON j.id = m.job_id"
+            " m.decision, m.ai_used, m.reasons, m.notes, u.status"
+            " FROM job_match m JOIN job j ON j.id = m.job_id"
             " LEFT JOIN job_user u ON u.job_id = j.id"
-            f" WHERE {where} ORDER BY m.score DESC, j.first_seen_at DESC LIMIT ? OFFSET ?"
+            f" WHERE {where} ORDER BY"
+            " CASE WHEN ? = 'newest' THEN j.first_seen_at END DESC,"
+            " CASE WHEN ? = 'company' THEN j.company END COLLATE NOCASE,"
+            " m.score DESC, j.first_seen_at DESC, j.id LIMIT ? OFFSET ?"
         )
-        rows = self._conn.execute(sql, (*params, min(limit, MAX_ROWS), max(offset, 0)))
+        rows = self._conn.execute(sql, (*params, sort, sort, min(limit, MAX_ROWS), max(offset, 0)))
         return [
             MatchRow(
                 r["id"],
@@ -180,6 +190,8 @@ class DashboardQueries:
                 r["first_seen_at"],
                 r["source"],
                 bool(r["ai_used"]),
+                tuple(json.loads(r["reasons"])),
+                tuple(json.loads(r["notes"])),
             )
             for r in rows
         ]

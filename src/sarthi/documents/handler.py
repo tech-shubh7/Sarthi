@@ -1,9 +1,10 @@
 """The ``documents`` task: a tailored resume, a cover letter and an ATS keyword report for one job.
 
 Made only for jobs the user tapped Apply (or "Tailored resume") on, not for every match, so AI calls stay few.
-Steps: master resume (read once per uploaded resume, kept only where the resume text confirms it) → tailoring
-(AI words, code facts; one more try when the AI used clichés, then strict) → cover letter (same) → PDFs →
-read-back check → keyword report → a ``documents_ready`` task for the chat.
+Steps: master resume (read once per uploaded resume, kept only where the resume text confirms it) → resume:
+the person's own file unchanged, or (``tailor_resume``) re-made as a page with the AI's verified line changes
+for this job → cover letter (AI words, code facts, one more try) → PDFs → read-back check → keyword report →
+a ``documents_ready`` task for the chat.
 """
 
 from __future__ import annotations
@@ -11,19 +12,20 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 from sarthi.ai.client import AiClient
+from sarthi.ai.documents import ResumeChange, read_master, tailor_changes, unsupported_claims
 from sarthi.ai.documents import cover_letter as ai_cover_letter
-from sarthi.ai.documents import read_master, tailor, unsupported_claims
 from sarthi.clock import Clock, utcnow
 from sarthi.db.documents import DocumentRecord, DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.tasks import TaskRecord
 from sarthi.documents.build import (
+    Built,
     Letter,
     cover_letter,
     edits,
@@ -31,6 +33,9 @@ from sarthi.documents.build import (
     tailored_resume,
     without_claims,
 )
+from sarthi.documents.diffs import Applied, Changed, apply_changes, term_hints
+from sarthi.documents.html_pdf import HtmlPdfError
+from sarthi.documents.html_resume import page_like, resume_pdf_html
 from sarthi.documents.inplace import OwnDesign, contacts_kept, own_design
 from sarthi.documents.keywords import keyword_report
 from sarthi.documents.render import (
@@ -93,6 +98,20 @@ def resume_hash(text: str) -> str:
     return text_hash(text)
 
 
+@dataclass
+class Tailoring:
+    """The tailored resume, the lines changed and the AI changes thrown away (with why)."""
+
+    resume: MasterResume
+    changed: list[Changed] = field(default_factory=list)
+    rejected: list[str] = field(default_factory=list)
+    answered: bool = False  # False when no AI answered (the resume is the person's own words)
+
+
+def _path(change: ResumeChange) -> str:
+    return change.path.replace(" ", "")
+
+
 def file_stem(name: str, company: str) -> str:
     """A file name part like "Asha_Rao_Acme": safe on every file system, readable for recruiters."""
     parts = [re.sub(r"[^A-Za-z0-9]+", "_", part).strip("_") for part in (name, company)]
@@ -112,11 +131,13 @@ class DocumentMaker:
         ai: AiClient,
         data_dir: Path,
         clock: Clock = utcnow,
-        tailor_resume: bool = True,
+        tailor_resume: bool = False,
     ) -> None:
         """Read jobs and the profile; write files under ``data_dir``; ask ``ai`` (the quality models).
 
-        ``tailor_resume`` False: every job gets the person's own resume unchanged; only the letter is new.
+        ``tailor_resume`` False (as ``SARTHI_TAILOR_RESUME`` by default): every job gets the person's own
+        resume unchanged; only the letter is new. True: the resume is re-made as a page in its own layout with
+        the AI's verified changes for the job.
         """
         self.tailor_resume = tailor_resume
         self.jobs = jobs
@@ -215,34 +236,31 @@ class DocumentMaker:
         master = await self.master(profile, last=tries.last)
         skills = profile.skills
 
-        if self.tailor_resume:
-            answer = await tailor(self.ai, master, job_text, own_skills=skills)
-            self._busy(answer, tries)
-            built = tailored_resume(master, answer, profile.resume_text, skills, job_text=job_text)
-            if (
-                built.problems
-            ):  # clichés, lengths, copied sentences: one more try with the problems, then strict
-                answer = await tailor(self.ai, master, job_text, built.problems[:12], skills) or answer
-                built = tailored_resume(
-                    master, answer, profile.resume_text, skills, strict=True, job_text=job_text
-                )
-            built = await self._checked_summary(master, built, tries)
+        paper = paper_for(profile.preferences.home_country)
+        stem = file_stem(master.name, job.company)
+        folder = self.data_dir / DOCUMENTS_DIR / job_id
+        resume_file, letter_file = folder / f"{stem}_Resume.pdf", folder / f"{stem}_Cover_Letter.pdf"
+        tailoring: Tailoring | None = None
+        if (
+            self.tailor_resume
+        ):  # the person's resume re-made as a page, with the verified changes for this job
+            tailoring = await self._tailored(master, profile, job_text, tries)
+            built = Built(tailoring.resume, reverted=tailoring.rejected)
         else:  # the person's own resume as it is (their file, when kept); only the letter is written per job
-            answer = None
             built = tailored_resume(master, None, profile.resume_text, skills, job_text=job_text)
         letter = await self._letter(
             master, profile, role=job.title, company=job.company, job_text=job_text, tries=tries
         )
 
-        paper = paper_for(profile.preferences.home_country)
-        stem = file_stem(master.name, job.company)
-        folder = self.data_dir / DOCUMENTS_DIR / job_id
-        resume_file, letter_file = folder / f"{stem}_Resume.pdf", folder / f"{stem}_Cover_Letter.pdf"
-        design = self._own_design(profile, master, built.resume, folder / f"{stem}_Resume")
         try:
-            resume_bytes = design.pdf if design.pdf is not None else resume_pdf(built.resume, paper)
+            if tailoring is not None:
+                design = OwnDesign(None, kind="html", applied=[c.where for c in tailoring.changed])
+                resume_bytes = await self._page_resume(profile, built.resume, paper)
+            else:
+                design = self._own_design(profile, master, built.resume, folder / f"{stem}_Resume")
+                resume_bytes = design.pdf if design.pdf is not None else resume_pdf(built.resume, paper)
             letter_bytes = letter_pdf(built.resume, letter, paper, today=self._today())
-        except RenderError as error:
+        except (RenderError, HtmlPdfError) as error:
             raise PermanentError(f"The PDF could not be made: {error}") from error
         dropped = contacts_kept(resume_bytes, master.contact)
         if dropped:  # never send a resume an employer cannot reach the person from
@@ -267,9 +285,13 @@ class DocumentMaker:
             },
             "ats": ats_problems(resume_bytes, built.resume, own_design=design.pdf is not None),
             "design": design.summary(),
-            "tailored_by_ai": answer is not None,
+            "tailored_by_ai": tailoring is not None and tailoring.answered,
             "letter_by_ai": letter.from_ai,
             "kept_original": built.reverted[:10],
+            "changes": [
+                {"where": c.where, "before": c.before, "after": c.after}
+                for c in (tailoring.changed if tailoring is not None else [])
+            ][:30],
         }
         self.documents.save(
             DocumentRecord(
@@ -287,6 +309,50 @@ class DocumentMaker:
             "none listed" if keywords.score is None else f"{keywords.score}%",
         )
         return report
+
+    async def _tailored(
+        self, master: MasterResume, profile: Profile, job_text: str, tries: Tries
+    ) -> Tailoring:
+        """The resume with the AI's verified changes for this job (one or two AI calls).
+
+        The changes code throws away (a quote that does not match, a fact the line does not state, a cliché,
+        a copied sentence, a wrong length) go back to the AI once; what passes from both answers is used.
+        """
+        skills = profile.skills
+
+        def apply(changes: list[ResumeChange]) -> Applied:
+            return apply_changes(
+                master, changes, job_text=job_text, resume_text=profile.resume_text, own_skills=skills
+            )
+
+        hints = term_hints(master, job_text)
+        answer = await tailor_changes(self.ai, master, job_text, own_skills=skills, hints=hints)
+        self._busy(answer, tries)
+        if answer is None:
+            return Tailoring(master, answered=False)
+        first = apply(answer.changes)
+        if not first.retry:
+            return Tailoring(first.resume, first.changed, first.rejected, answered=True)
+        again = await tailor_changes(self.ai, master, job_text, first.retry[:12], skills, hints=hints)
+        if again is None:
+            return Tailoring(first.resume, first.changed, first.rejected, answered=True)
+        thrown = {r.split(":", 1)[0] for r in first.rejected}
+        kept = [c for c in answer.changes if _path(c) not in thrown]
+        taken = {_path(c) for c in kept}
+        retried = [c for c in again.changes if c.action == "replace" and _path(c) not in taken]
+        second = apply([*kept, *retried])
+        return Tailoring(second.resume, second.changed, second.rejected, answered=True)
+
+    async def _page_resume(self, profile: Profile, resume: MasterResume, paper: str) -> bytes:
+        """``resume`` printed in the one-column page layout.
+
+        On the paper and in the page count of the person's own PDF, when it is kept.
+        """
+        original = load_original(self.data_dir, profile.resume_text)
+        page, pages = page_like(
+            original.data if original is not None and original.kind == "pdf" else None, paper
+        )
+        return await resume_pdf_html(resume, page, pages or 1)
 
     def _own_design(
         self, profile: Profile, master: MasterResume, tailored: MasterResume, base: Path
@@ -312,18 +378,6 @@ class DocumentMaker:
         found = await unsupported_claims(self.ai, master, text)
         self._busy(found, tries)
         return found or []
-
-    async def _checked_summary(self, master: MasterResume, built: Any, tries: Tries) -> Any:
-        """The tailored summary, or the master's when the reviewer finds a claim the resume lacks."""
-        summary = built.resume.summary
-        own = master.summary
-        if summary == own or not summary:
-            return built
-        problems = await self._claims(master, summary, tries)
-        if problems:
-            built.resume = built.resume.model_copy(update={"summary": own})
-            built.reverted += [f"summary: {p}" for p in problems[:3]]
-        return built
 
     async def _letter(  # noqa: PLR0913  (the letter's inputs)
         self,

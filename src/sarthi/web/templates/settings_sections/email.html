@@ -1,0 +1,53 @@
+{% if mail %}
+{% macro mail_field(name, label, hint='', kind='text', placeholder='') %}
+<div class="field{% if errors.get(name) %} has-error{% endif %}">
+  <label for="f-{{ name }}">{{ label }}</label>
+  <input id="f-{{ name }}" name="{{ name }}" type="{{ kind }}" value="{{ mail_form.get(name, '') }}" placeholder="{{ placeholder }}" autocomplete="off" spellcheck="false">
+  {% if errors.get(name) %}<p class="error">{{ errors[name] }}</p>{% elif hint %}<p class="hint">{{ hint }}</p>{% endif %}
+</div>
+{% endmacro %}
+<form class="card section" method="post" action="/settings/mail" id="mail">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-section">
+    <h3>Mail (reply tracking)</h3>
+    <p class="help">Sarthi reads your mailbox and tells you about interviews, tests and rejections for jobs you applied to,
+      and drafts a follow-up when an application stays quiet. It only reads: nothing is sent, moved, deleted or marked as read.</p>
+    {% if mail_result %}<p class="notice{% if not mail_result[0] %} bad{% endif %}" role="status">{{ mail_result[1] }}</p>{% endif %}
+    {% if mail.checked_at %}<p class="hint">Last check {{ ago(mail.checked_at) }}: {% if not mail.check_ok %}<strong>problem:</strong> {% endif %}{{ mail.check_text }}</p>{% endif %}
+    <div class="field check">
+      <label><input type="checkbox" name="mail_on" {% if mail_form.get('mail_on') %}checked{% endif %}>
+        <span>Track replies to my applications</span></label>
+    </div>
+    <div class="cols">
+      <div class="field{% if errors.get('mail_provider') %} has-error{% endif %}">
+        <label for="f-mail_provider">Mail provider</label>
+        <select id="f-mail_provider" name="mail_provider">
+          {% for key, preset in mail_presets.items() %}
+          <option value="{{ key }}" {% if mail_form.get('mail_provider') == key %}selected{% endif %}>{{ preset[0] }} ({{ preset[1] }})</option>
+          {% endfor %}
+          <option value="other" {% if mail_form.get('mail_provider') == 'other' %}selected{% endif %}>Other: the server below</option>
+        </select>
+        {% if errors.get('mail_provider') %}<p class="error">{{ errors['mail_provider'] }}</p>{% endif %}
+      </div>
+      {{ mail_field('mail_host', 'IMAP server (for Other)', 'Only when the provider is Other', placeholder='imap.example.com') }}
+      {{ mail_field('mail_user', 'Email address', 'The one you log in with', 'email', 'you@example.com') }}
+      <div class="field{% if errors.get('mail_password') %} has-error{% endif %}">
+        <label for="f-mail_password">App password</label>
+        <input id="f-mail_password" name="mail_password" type="password" value="" autocomplete="new-password" placeholder="{% if mail.password_saved %}saved{% endif %}">
+        {% if errors.get('mail_password') %}<p class="error">{{ errors['mail_password'] }}</p>
+        {% elif mail.password_saved %}<p class="hint">Saved. Leave empty to keep it.</p>
+        {% else %}<p class="hint">Not set yet. Kept on this computer only, never shown again.</p>{% endif %}
+      </div>
+      {{ mail_field('mail_port', 'Port', '993 for nearly every provider', placeholder='993') }}
+      {{ mail_field('mail_folder', 'Folder', 'Where replies arrive', placeholder='INBOX') }}
+    </div>
+    <p class="hint">Use an app password, not your normal one. Gmail: turn on 2-Step Verification, then create an app password at
+      myaccount.google.com/apppasswords. Yahoo, Zoho and iCloud make one in their account security settings. Outlook.com and
+      Microsoft 365 often refuse app passwords for IMAP; if the test fails, forward replies to another mailbox.</p>
+  </div>
+  <div class="form-actions">
+    <button class="button quiet" type="submit" formaction="/settings/mail/test">Test connection</button>
+    <button class="button" type="submit">Save</button>
+  </div>
+</form>
+{% endif %}

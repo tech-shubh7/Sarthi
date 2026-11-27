@@ -60,6 +60,7 @@ def sources_view(
         "sites": sites,
         "site_jobs": sum(line.row.jobs for line in sites),
         "systems": career_sites,
+        "supported_systems": sorted(systems),
         "career_jobs": sum(s.jobs for s in career_sites),
         "career": queries.career_pages(sorted(systems), limit, offset=offset),
         "catalog": next((r for r in rows if r.name == sites_map.catalog), None),

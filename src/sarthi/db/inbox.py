@@ -89,12 +89,13 @@ class InboxQueries:
         ).fetchone()[0]
         return InboxCounts(int(strong), int(questions), int(forms), len(self.auto_waiting()))
 
-    def questions(self) -> list[QuestionGroup]:
-        """Every job with questions waiting, oldest job first."""
+    def questions(self, job_id: str | None = None) -> list[QuestionGroup]:
+        """Waiting questions, optionally focused on one job."""
         rows = self._conn.execute(
             "SELECT q.job_id, q.field_key, q.label, q.field_type, q.options, j.title, j.company,"
             " j.canonical_url FROM pending_question q JOIN job j ON j.id = q.job_id"
-            " ORDER BY j.first_seen_at, q.job_id, q.position"
+            " WHERE ? IS NULL OR q.job_id = ? ORDER BY j.first_seen_at, q.job_id, q.position",
+            (job_id, job_id),
         )
         groups: dict[str, QuestionGroup] = {}
         for r in rows:
@@ -119,7 +120,8 @@ class InboxQueries:
             " FROM task t JOIN job j ON j.id = t.key LEFT JOIN job_match m ON m.job_id = t.key"
             " LEFT JOIN job_user u ON u.job_id = t.key"
             " WHERE t.type = 'auto_apply' AND t.status = 'pending'"
-            " AND (u.status IS NULL OR u.status IN ('alerted', 'digested'))"
+            " AND (u.status IS NULL OR u.status IN ('alerted', 'digested')"
+            " OR (u.status = 'apply' AND json_extract(t.payload, '$.resume') = 1))"
             " AND EXISTS (SELECT 1 FROM app_state s WHERE s.key = ? || t.key AND s.value = '1')"
             " ORDER BY t.run_after LIMIT ?",
             (_AUTO, MAX_JOBS),

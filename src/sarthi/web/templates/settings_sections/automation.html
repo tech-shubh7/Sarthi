@@ -1,0 +1,27 @@
+{% if controls %}
+<form class="card section" id="automation" method="post" action="/settings/alerts">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-section">
+    <h3>Alerts and auto-apply</h3>
+    <p class="help">How Sarthi tells you about matches, and whether it may apply by itself.</p>
+    <div class="field check">
+      <label><input type="checkbox" name="paused" {% if controls.paused %}checked{% endif %}>
+        <span>Pause instant alerts<br><span class="faint">Matches still wait for you in the daily digest and /today.</span></span></label>
+    </div>
+    <div class="field{% if errors.get('auto_line') %} has-error{% endif %}">
+      <label for="f-auto">Auto-apply from this match</label>
+      <select id="f-auto" name="auto_line">
+        <option value="off" {% if controls.auto_line is none %}selected{% endif %}>Off: I tap Apply myself</option>
+        {% for n in range(75, 101) %}
+        <option value="{{ n }}" {% if controls.auto_line == n %}selected{% endif %}>{{ n }}% or more</option>
+        {% endfor %}
+      </select>
+      {% if errors.get('auto_line') %}<p class="error">{{ errors['auto_line'] }}</p>{% else %}
+      <p class="hint">Sarthi tells you on the <a href="/activity/auto-apply">Activity</a> page (and in Telegram, if connected) and waits {{ controls.auto_wait_minutes }} minutes for a Cancel. It sends a form
+        without your tap only when every answer came from your profile{% if controls.auto_boards %}, also on LinkedIn, Naukri and other job boards with your login{% else %}, with job-board submissions shown under Apply yourself{% endif %}{% if controls.auto_daily_limit %},
+        and at most {{ controls.auto_daily_limit }} a day{% endif %}. Anything else waits for your Submit.</p>{% endif %}
+    </div>
+  </div>
+  <div class="form-actions"><button class="button" type="submit">Save</button></div>
+</form>
+{% endif %}

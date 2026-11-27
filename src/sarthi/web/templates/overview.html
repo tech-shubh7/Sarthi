@@ -4,7 +4,6 @@
 {% block main %}
 <header class="page-head">
   <div>
-    <p class="eyebrow">Your search</p>
     <h1>Overview</h1>
     <p class="lede">Everything Sarthi has found, matched and sent for you.</p>
   </div>
@@ -38,17 +37,18 @@
 </section>
 {% endif %}
 
-{% if inbox.total or inbox.strong %}
-<section class="card card-pad section" aria-label="Waiting for you">
-  <h2 class="card-title">{{ icon('check') }}Waiting for you</h2>
+<section class="card card-pad section" aria-label="Your search today">
+  <h2 class="card-title">{{ icon('check') }}Your next steps</h2>
   <dl class="facts">
-    {% if inbox.strong %}<dt><a href="/matches?show=alert">Strong matches to answer</a></dt><dd>{{ inbox.strong }}</dd>{% endif %}
-    {% if inbox.questions %}<dt><a href="/activity#questions">Jobs whose form asks you something</a></dt><dd>{{ inbox.questions }}</dd>{% endif %}
-    {% if inbox.forms %}<dt><a href="/applications">Filled forms waiting for your Submit</a></dt><dd>{{ inbox.forms }}</dd>{% endif %}
-    {% if inbox.auto %}<dt><a href="/activity#auto-apply">Auto-applies you can still cancel</a></dt><dd>{{ inbox.auto }}</dd>{% endif %}
+    <dt><a href="/matches?show=alert">Strong matches to review</a></dt><dd>{{ inbox.strong }}</dd>
+    <dt><a href="/applications/input">Employer questions and forms to approve</a></dt><dd>{{ application_counts.get('input', 0) }}</dd>
+    <dt><a href="/applications/captcha">CAPTCHA to solve</a></dt><dd>{{ application_counts.get('captcha', 0) }}</dd>
+    <dt><a href="/applications/manual">Applications to submit yourself</a></dt><dd>{{ application_counts.get('manual', 0) }}</dd>
+    <dt><a href="/applications/queued">Applications in progress</a></dt><dd>{{ application_counts.get('queued', 0) }}</dd>
+    <dt><a href="/applications/submitted">Confirmed submissions</a></dt><dd>{{ ov.applications.get('submitted', 0) + ov.applications.get('applied_by_user', 0) }}</dd>
   </dl>
+  <a class="button small quiet" href="/activity/timeline">View activity</a>
 </section>
-{% endif %}
 
 {% set shown = ov.shown %}
 {% set apps = ov.applications %}

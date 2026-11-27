@@ -60,15 +60,19 @@ def test_questions_auto_applies_and_notices_are_listed(
     queue.enqueue(names.AUTO_APPLY, auto, delay=300)
     NoticeStore(conn, clock=clock).add("followup", "⏰ No reply yet.\n<pre>Dear team, &lt;b&gt;</pre>", asked)
 
-    page = client.get("/activity").text
+    page = client.get("/activity/questions").text
     assert "Do you need a visa?" in page and '<option value="No"' in page
     assert 'type="checkbox" name="a.tools" value="Go"' in page
     assert "Why &lt;us&gt;?" in page  # labels from the employer's form are text, never markup
-    assert f'action="/auto/{auto}/cancel"' in page and "91% match" in page
+    assert f'action="/auto/{auto}/cancel"' not in page
+    auto_page = client.get("/activity/auto-apply").text
+    assert f'action="/auto/{auto}/cancel"' in auto_page and "91% match" in auto_page
+    assert "Do you need a visa?" not in auto_page
+    page = client.get("/activity/timeline").text
     assert "Dear team, &lt;b&gt;" in page and "Follow-up" in page
     overview = client.get("/").text
-    assert "Waiting for you" in overview and "Jobs whose form asks you something" in overview
-    assert "Auto-applies you can still cancel" in overview
+    assert "Your next steps" in overview and "Employer questions and forms to approve" in overview
+    assert "Applications in progress" in overview
 
 
 def test_answers_go_to_the_running_app_and_problems_come_back(
@@ -79,7 +83,7 @@ def test_answers_go_to_the_running_app_and_problems_come_back(
     AnswerStore(conn, clock=clock).set_pending(
         job_id, [FormField("visa", "Do you need a visa?", "select", True, ("Yes", "No"))]
     )
-    csrf = token(client, "/activity")
+    csrf = token(client, "/activity/questions")
     data = {"csrf": csrf, "a.visa": "Maybe", "a.tools": ["Python", "Go"]}
     bad = client.post(f"/questions/{job_id}", data=data, headers=HERE)
     assert bad.status_code == 400 and "Please pick one of the listed answers." in bad.text
@@ -104,7 +108,7 @@ def test_auto_apply_can_be_cancelled_or_started_here(client: TestClient, actions
 
 
 def test_site_logins_from_settings(client: TestClient, actions: FakeActions) -> None:
-    page = client.get("/settings").text
+    page = client.get("/settings/logins").text
     assert 'action="/settings/login/naukri"' in page and "Log in to LinkedIn" in page
     csrf = token(client)
     sent = client.post("/settings/login/naukri", data={"csrf": csrf}, headers=HERE, follow_redirects=False)
@@ -129,3 +133,15 @@ def test_every_new_change_needs_the_token_and_this_computer(
     csrf = token(client) if headers is not HERE else "wrong"
     assert client.post(path, data={"csrf": csrf}, headers=headers).status_code == 403
     assert actions.answered == [] and actions.auto == [] and actions.logins == []
+
+
+def test_timeline_can_filter_categories_and_sort_oldest_first(
+    client: TestClient, conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    store = NoticeStore(conn, clock=clock)
+    store.add("reply", "Early response")
+    store.add("source", "Ignored source notice")
+    store.add("reply", "Late response")
+    html = client.get("/activity/timeline", params={"kind": "reply", "sort": "oldest"}).text
+    assert html.index("Early response") < html.index("Late response")
+    assert "Ignored source notice" not in html

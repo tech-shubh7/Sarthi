@@ -6,12 +6,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from sarthi.db.answers import AnswerStore
 from sarthi.db.applications import ApplicationStatus, ApplicationStore
 from sarthi.db.chat import ChatStore, JobStatus
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchRecord, MatchStore
 from sarthi.db.replies import ReplyRecord, ReplyStore
 from sarthi.db.source_state import SourceStateStore
+from sarthi.jobs.forms import FormField
 from sarthi.web import server
 from sarthi.web.app import ago, create_app, read_only
 from tests.conftest import FakeClock
@@ -29,7 +31,7 @@ def client(conn: sqlite3.Connection, tmp_path: Path, clock: FakeClock) -> TestCl
 
 def match(conn: sqlite3.Connection, clock: FakeClock, job_id: str, score: int, decision: str) -> None:
     MatchStore(conn, clock=clock).save(
-        MatchRecord(job_id, "1", score, decision, "strong", None, (), (), False)
+        MatchRecord(job_id, "1", score, decision, "strong", None, ("Relevant role",), (), False)
     )
 
 
@@ -60,6 +62,7 @@ def test_pages_show_matches_applications_replies_and_sources(
     assert ">3<" in overview  # jobs found
     matches = client.get("/matches").text
     assert "AI Backend Engineer" in matches
+    assert "Why it matched" in matches and "Relevant role" in matches
     assert "Data Analyst" in matches
     assert "Senior Architect" not in matches  # hidden jobs are not matches
     assert matches.index("AI Backend Engineer") < matches.index("Data Analyst")  # best first
@@ -183,3 +186,69 @@ def test_the_link_to_connect_telegram_is_shown_until_used(
     assert "Connect Telegram" not in client.get("/").text
     chats.set_state("telegram.pair_link", None)
     assert "Connect Telegram" not in client.get("/").text
+
+
+def test_application_filters_show_distinct_states_and_include_unanswered_questions(
+    client: TestClient, conn: sqlite3.Connection, job_store: JobStore, clock: FakeClock
+) -> None:
+    ask = job_store.save(make_job(url="https://jobs.example/1", title="Question Engineer")).job_id
+    manual = job_store.save(make_job(url="https://jobs.example/2", title="Manual Designer")).job_id
+    sent = job_store.save(make_job(url="https://jobs.example/3", title="Sent Analyst")).job_id
+    captcha = job_store.save(make_job(url="https://jobs.example/5", title="Captcha Specialist")).job_id
+    uncertain = job_store.save(make_job(url="https://jobs.example/4", title="Uncertain Recruiter")).job_id
+    AnswerStore(conn, clock=clock).set_pending(ask, [FormField("why", "Why us?", "textarea", True)])
+    store = ApplicationStore(conn, clock=clock)
+    store.record(manual, ApplicationStatus.NEEDS_HUMAN, detail="Application site requires a login")
+    store.record(sent, ApplicationStatus.SUBMITTED)
+    store.record(captcha, ApplicationStatus.NEEDS_HUMAN, detail="CAPTCHA required")
+    store.record(
+        uncertain, ApplicationStatus.NEEDS_HUMAN, detail="Submit was pressed: it may have been sent."
+    )
+
+    roles = {
+        "input": "Question Engineer",
+        "manual": "Manual Designer",
+        "captcha": "Captcha Specialist",
+        "submitted": "Sent Analyst",
+        "verify": "Uncertain Recruiter",
+    }
+    for tab, title in roles.items():
+        result = client.get(f"/applications/{tab}")
+        assert result.status_code == 200
+        assert title in result.text
+        assert all(other not in result.text for other in roles.values() if other != title)
+    assert f"/activity/questions?job={ask}#job-{ask}" in client.get("/applications?show=input").text
+    assert "Open &amp; apply" not in client.get("/applications?show=verify").text
+
+
+def test_application_search_site_filter_and_sort(
+    client: TestClient, conn: sqlite3.Connection, job_store: JobStore, clock: FakeClock
+) -> None:
+    store = ApplicationStore(conn, clock=clock)
+    for index, (company, site) in enumerate(
+        (("Zeta Studio", "ats.example"), ("Alpha Works", "ats.example"), ("Other Group", "other.example"))
+    ):
+        job_id = job_store.save(
+            make_job(
+                url=f"https://jobs.example/{index}",
+                title="Backend Specialist",
+                company=company,
+            )
+        ).job_id
+        store.record(job_id, ApplicationStatus.NEEDS_HUMAN, site=site, detail="Apply at employer site")
+        clock.advance(2)
+    html = client.get(
+        "/applications/manual", params={"q": "backend", "site": "ats.example", "sort": "company"}
+    ).text
+    assert html.index("Alpha Works") < html.index("Zeta Studio")
+    assert "Other Group" not in html
+    oldest = client.get("/applications/manual", params={"sort": "oldest"}).text
+    assert oldest.index("Zeta Studio") < oldest.index("Alpha Works")
+    assert "Alpha Works" not in client.get("/applications/manual", params={"q": "%"}).text
+
+
+@pytest.mark.parametrize(
+    "path", ["/applications/missing", "/settings/missing", "/activity/missing", "/sources/missing"]
+)
+def test_unknown_section_fails_with_404(client: TestClient, path: str) -> None:
+    assert client.get(path).status_code == 404

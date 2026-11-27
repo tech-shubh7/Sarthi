@@ -113,6 +113,7 @@ class Settings(BaseSettings):
 
     # Applying: forms are filled in a browser without a window; nothing is submitted without your approval.
     apply_headless: bool = True
+    apply_allow_board_automation: bool = True
     apply_daily_limit: int = Field(default=30, ge=1, le=500, description="Applications per site per day.")
     # Auto-apply (off unless a line is set): strong matches at or above this % are applied to after a veto
     # window, and sent without a tap only when every answer came from the profile. The user can change the
@@ -150,6 +151,7 @@ class Settings(BaseSettings):
     # Providers: ollama, gemini, openai, anthropic, groq, openrouter, deepseek, mistral (sarthi.ai.providers).
     llm_fast_models: list[str] = Field(default=["ollama/llama3.1"], description="For matching.")
     llm_quality_models: list[str] = Field(default=["ollama/llama3.1"], description="For writing.")
+    llm_allow_paid: bool = Field(default=True, description="Allow requests to paid AI models.")
     llm_daily_token_budget: int = Field(
         default=500_000, ge=0, description="Paid providers only. 0: no limit."
     )

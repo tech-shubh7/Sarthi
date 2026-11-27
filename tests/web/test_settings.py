@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchRecord, MatchStore
 from sarthi.profile.models import Preferences, Profile, RemotePreference
-from sarthi.web.actions import Controls, MailSettings, Pending
+from sarthi.web.actions import Controls, MailSettings, MatchBatch, Pending
 from sarthi.web.app import create_app, read_only
 from sarthi.web.settings_form import form_values, profile_from_form
 from tests.conftest import FakeClock
@@ -69,6 +69,9 @@ class FakeActions:
     def choose(self, job_id: str, action: str) -> bool:
         self.chosen.append((job_id, action))
         return job_id != "gone"
+
+    def queue_matches(self) -> MatchBatch:
+        return MatchBatch(scheduled=2)
 
     def pending(self) -> dict[str, Pending]:
         return self.waiting
@@ -290,9 +293,9 @@ def test_saving_the_profile(client: TestClient, actions: FakeActions) -> None:
     response = client.post(
         "/settings/profile", data={"csrf": token(client)} | FORM, headers=HERE, follow_redirects=False
     )
-    assert (response.status_code, response.headers["location"]) == (303, "/settings?done=profile")
+    assert (response.status_code, response.headers["location"]) == (303, "/settings/profile?done=profile")
     assert actions.saved and actions.saved[-1].preferences.roles == ("AI Engineer", "Backend Engineer")
-    assert "matched again" in client.get("/settings?done=profile").text
+    assert "matched again" in client.get("/settings/profile?done=profile").text
 
 
 def test_a_bad_field_comes_back_with_its_message(client: TestClient, actions: FakeActions) -> None:
@@ -321,7 +324,7 @@ def test_auto_apply_and_pause_switches(client: TestClient, actions: FakeActions)
     good = token(client)
     client.post("/settings/alerts", data={"csrf": good, "auto_line": "85"}, headers=HERE)
     assert (actions.line, actions.paused) == (85, False)
-    page = client.get("/settings").text
+    page = client.get("/settings/automation").text
     assert '<option value="85" selected>' in page
     refused = client.post("/settings/alerts", data={"csrf": good, "auto_line": "40"}, headers=HERE)
     assert refused.status_code == 400 and "75 to 100" in refused.text
@@ -455,7 +458,7 @@ def test_a_filled_form_lost_in_a_restart_offers_to_fill_it_again(
     ApplicationStore(conn, clock=clock).record(job_id, ApplicationStatus.FILLED, site="jobs.lever.co")
     actions.waiting = {}  # its filled page is gone
     page = client.get("/applications").text
-    assert "closed when Sarthi restarted" in page and f"/applications/{job_id}/refill" in page
+    assert "previous browser tab is closed" in page and f"/applications/{job_id}/refill" in page
     good = token(client, "/applications")
     response = client.post(
         f"/applications/{job_id}/refill", data={"csrf": good}, headers=HERE, follow_redirects=False
@@ -485,8 +488,8 @@ def test_a_captcha_form_offers_to_finish_it_on_this_computer(
     store.record(
         other, ApplicationStatus.NEEDS_HUMAN, site="y.example", detail="Workday forms need your own account."
     )
-    page = client.get("/applications").text
-    assert "Finish it myself" in page and "only you can solve" in page
+    page = client.get("/applications/captcha").text
+    assert "Continue filled form" in page and "only you can solve" in page
     assert f"/applications/{job_id}/finish" in page and f"/applications/{other}/finish" not in page
     good = token(client, "/applications")
     response = client.post(
@@ -513,3 +516,35 @@ def test_finishing_by_hand_checks_the_csrf_token(client: TestClient, actions: Fa
     )
     assert response.status_code == 403
     assert actions.finished == []
+
+
+def test_bulk_apply_routes_to_the_in_progress_view(client: TestClient) -> None:
+    page = client.get("/matches")
+    csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)
+    assert csrf
+    denied = client.post("/matches/queue", data={"csrf": csrf[1]}, follow_redirects=False)
+    assert denied.status_code == 403
+    response = client.post(
+        "/matches/queue",
+        data={"csrf": csrf[1]},
+        headers={"origin": "http://127.0.0.1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/applications/queued?done=matching_queued"
+
+
+def test_invalid_automation_settings_do_not_pause_alerts(client: TestClient, actions: FakeActions) -> None:
+    csrf = token(client, "/settings/automation")
+    response = client.post(
+        "/settings/alerts", data={"csrf": csrf, "auto_line": "20", "paused": "on"}, headers=HERE
+    )
+    assert response.status_code == 400
+    assert not actions.paused
+
+
+def test_settings_sections_only_include_their_own_form(client: TestClient) -> None:
+    profile = client.get("/settings/profile").text
+    automation = client.get("/settings/automation").text
+    assert 'action="/settings/profile"' in profile and 'action="/settings/alerts"' not in profile
+    assert 'action="/settings/alerts"' in automation and 'action="/settings/profile"' not in automation

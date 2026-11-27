@@ -1,0 +1,13 @@
+{% if login_sites %}
+<section class="card section" id="logins" aria-label="Job site logins">
+  <div class="form-section">
+    <h3>Job site logins</h3>
+    <p class="help">{% if controls.board_automation %}Sign in so Sarthi can use your saved session.{% else %}Job-site submissions use the site’s own browser form.{% endif %} The site's login page opens on this computer (in Docker, a link shows at the top of the page); you log in on the site itself, then close the window, and Sarthi checks the login. It never sees your password.</p>
+    <div class="logins">
+      {% for key, name in login_sites %}
+      <form method="post" action="/settings/login/{{ key }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button quiet" type="submit">Log in to {{ name }}</button></form>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}

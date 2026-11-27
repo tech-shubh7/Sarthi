@@ -243,13 +243,13 @@ class Relay:
         iid = int(instance["id"])
         multipart = request.headers.get("content-type", "").startswith("multipart/form-data")
         if multipart:
-            form = await request.form()
-            payload: dict[str, Any] = {k: v for k, v in form.items() if isinstance(v, str)}
-            files = {
-                k: (v.filename or "file", await v.read(), v.content_type or "application/octet-stream")
-                for k, v in form.items()
-                if not isinstance(v, str)
-            }
+            async with request.form() as form:
+                payload: dict[str, Any] = {k: v for k, v in form.items() if isinstance(v, str)}
+                files = {
+                    k: (v.filename or "file", await v.read(), v.content_type or "application/octet-stream")
+                    for k, v in form.items()
+                    if not isinstance(v, str)
+                }
             if sum(len(f[1]) for f in files.values()) > MAX_BODY_BYTES:
                 return _error(413, "Request Entity Too Large")
         else:

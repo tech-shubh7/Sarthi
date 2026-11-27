@@ -8,14 +8,16 @@ import pytest
 from pydantic import BaseModel
 
 from sarthi.ai.client import AiUnavailableError
-from sarthi.ai.documents import ClaimCheck, CoverAnswer, TailorAnswer, TailoredJob
+from sarthi.ai.documents import ClaimCheck, CoverAnswer, ResumeChange, ResumeChanges
 from sarthi.chat.telegram.bot import TelegramBot
 from sarthi.db.chat import ChatStore
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
 from sarthi.db.matches import MatchStore
 from sarthi.db.tasks import TaskRecord
+from sarthi.documents import handler
 from sarthi.documents.handler import LAST_TRY, NO_AI, NO_RESUME, DocumentMaker
+from sarthi.documents.render import resume_pdf
 from sarthi.profile.master import MasterResume
 from sarthi.profile.models import Preferences, Profile
 from sarthi.queue import names
@@ -48,10 +50,23 @@ def good_answers() -> dict[str, BaseModel | None]:
         "master_resume": master().model_copy(
             update={"contact": master().contact.model_copy(update={"email": ""})}
         ),
-        "tailor_resume": TailorAnswer(
-            headline="AI Backend Engineer",
-            summary="Backend engineer building Python services and RAG search.",
-            experience=[TailoredJob(index=0, bullets=["Added a RAG search with LangChain and pgvector"])],
+        "tailor_changes": ResumeChanges(
+            changes=[
+                ResumeChange(
+                    path="experience[0].bullets",
+                    action="reorder",
+                    value=[
+                        "Added a RAG search with LangChain and pgvector",
+                        "Built 12 FastAPI services handling 5k requests per minute",
+                        "Cut p95 latency by 40% with Redis caching",
+                    ],
+                ),
+                ResumeChange(
+                    path="experience[0].bullets[1]",
+                    original="Cut p95 latency by 40% with Redis caching",
+                    value="Cut p95 latency by 40% by caching in Redis",
+                ),
+            ]
         ),
         "cover_letter": CoverAnswer(
             paragraphs=[
@@ -73,6 +88,16 @@ def documents(conn: sqlite3.Connection, clock: FakeClock) -> DocumentStore:
     return DocumentStore(conn, clock=clock)
 
 
+@pytest.fixture(autouse=True)
+def page_printer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tailored resume printed by Typst here, so these tests need no browser (Chromium is tested apart)."""
+
+    async def typst_page(resume: MasterResume, page: Any, pages: int | None = 1) -> bytes:
+        return resume_pdf(resume)
+
+    monkeypatch.setattr(handler, "resume_pdf_html", typst_page)
+
+
 def maker(
     job_store: JobStore,
     documents: DocumentStore,
@@ -81,7 +106,15 @@ def maker(
     ai: FakeAi,
     who: Profile | None,
 ) -> DocumentMaker:
-    return DocumentMaker(job_store, documents, queue, lambda: who, ai=ai, data_dir=tmp_path)  # type: ignore[arg-type]
+    return DocumentMaker(
+        job_store,
+        documents,
+        queue,
+        lambda: who,
+        ai=ai,  # type: ignore[arg-type]
+        data_dir=tmp_path,
+        tailor_resume=True,
+    )
 
 
 def saved(job_store: JobStore) -> str:
@@ -114,6 +147,9 @@ async def test_documents_are_made_stored_and_announced(
     )
     report = record.report
     assert report["tailored_by_ai"] and report["letter_by_ai"]
+    assert {c["where"] for c in report["changes"]} == {"experience[0].bullets", "experience[0].bullets[1]"}
+    assert report["design"]["kind"] == "html"
+    assert ai.asked.count("tailor_changes") == 1  # every change passed: no second call
     assert report["ats"] == []
     assert report["keywords"]["missing"] == ["Kubernetes"]
     task = ready(queue)
@@ -142,6 +178,22 @@ async def test_with_tailoring_off_the_resume_is_never_rewritten_only_the_letter_
     assert record is not None
     assert record.report["tailored_by_ai"] is False and record.report["letter_by_ai"] is True
     assert not any("tailor" in name for name in ai.asked)  # the AI is never asked to rewrite the resume
+
+
+async def test_a_change_that_adds_a_fact_goes_back_once_and_never_reaches_the_resume(
+    job_store: JobStore, documents: DocumentStore, queue: TaskQueue, tmp_path: Path
+) -> None:
+    untrue = ResumeChange(
+        path="experience[1].bullets[0]",
+        original="Wrote Express.js APIs and Jest tests",
+        value="Wrote Python and Express.js APIs and Jest tests",  # Python is on the resume, not in this line
+    )
+    ai = FakeAi(good_answers() | {"tailor_changes": ResumeChanges(changes=[untrue])})
+    job_id = saved(job_store)
+    report = await maker(job_store, documents, queue, tmp_path, ai, profile()).make(job_id, profile())
+    assert ai.asked.count("tailor_changes") == 2  # the thrown-away change went back once
+    assert report["changes"] == []
+    assert any("Python" in line for line in report["kept_original"])
 
 
 async def test_master_is_read_once_per_uploaded_resume(
@@ -346,7 +398,7 @@ async def test_docs_button_makes_documents_without_applying(
     assert chats.job_status(job_id) is None  # not an answer to the job
 
 
-async def test_letter_and_summary_with_unsupported_claims_are_not_used(
+async def test_a_letter_with_unsupported_claims_is_not_used(
     job_store: JobStore, documents: DocumentStore, queue: TaskQueue, tmp_path: Path
 ) -> None:
     answers = good_answers() | {
@@ -357,7 +409,6 @@ async def test_letter_and_summary_with_unsupported_claims_are_not_used(
     report = await maker(job_store, documents, queue, tmp_path, ai, profile()).make(job_id, profile())
     assert report["letter_by_ai"] is False  # two tries, both with a merged claim: the plain letter
     assert ai.asked.count("cover_letter") == 2
-    assert any(line.startswith("summary:") for line in report["kept_original"])
     stored = documents.get(job_id)
     assert stored is not None
     text = (tmp_path / "documents" / job_id / "cover_letter.txt").read_text()

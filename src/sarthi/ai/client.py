@@ -13,9 +13,11 @@ import json
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from datetime import timedelta
 from typing import Any, TypeVar
+from weakref import WeakKeyDictionary
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -35,8 +37,13 @@ REQUEST_TIMEOUT_S = 90.0
 LOCAL_TIMEOUT_S = 600.0  # a local model on a laptop CPU can take minutes for one answer
 MAX_ERROR_CHARS = 800
 MAX_PROVIDER_MESSAGE = 200
+DEEPSEEK_MAX_OUTPUT = 8192
+DEEPSEEK_CHAT_OVERHEAD = 64
+DEEPSEEK_BALANCE_WAIT_S = 3600.0
+_PAID_IN_FLIGHT: WeakKeyDictionary[RateLimits, int] = WeakKeyDictionary()
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 _HTTP_OK = 200
+_PAYMENT_REQUIRED = 402
 _SERVER_ERROR = 500
 _RETRY_STATUSES = frozenset({408, 409, 429})
 _LOGIN_FAILED = frozenset({401, 403})
@@ -47,11 +54,13 @@ class AiError(Exception):
 
 
 class BudgetExhaustedError(AiError):
-    """The daily token budget is spent; ``retry_after`` seconds until it resets."""
+    """The paid token budget has no room; ``retry_after`` seconds before another attempt."""
 
     def __init__(self, retry_after: float) -> None:
-        """Remember when the budget resets."""
-        super().__init__(f"daily AI token budget reached; resets in {retry_after / 3600:.1f} h")
+        """Remember when to try again."""
+        super().__init__(
+            f"daily AI token budget unavailable; try again in {max(1, round(retry_after / 60))} min"
+        )
         self.retry_after = retry_after
 
 
@@ -134,6 +143,7 @@ class AiClient:
         store: AiStore,
         *,
         daily_token_budget: int = 0,
+        allow_paid: bool = True,
         requests_per_minute: int = 30,
         http: httpx.AsyncClient | None = None,
         clock: Clock = utcnow,
@@ -149,6 +159,7 @@ class AiClient:
         self._limits = limits
         self._store = store
         self._budget = daily_token_budget
+        self._allow_paid = allow_paid
         self._interval = 60.0 / requests_per_minute
         self._http = http or httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S)
         self._clock = clock
@@ -167,29 +178,29 @@ class AiClient:
     async def structured(self, prompt: Prompt, schema: type[T], *, urgent: bool = False, **data: str) -> T:
         """Run ``prompt`` with ``data`` and return the validated answer (cached by model, version and input).
 
-        Raises ``BudgetExhaustedError`` when only paid models are left and the budget is spent, and
+        Raises ``BudgetExhaustedError`` when only paid models are left and the budget has no room, and
         ``AiUnavailableError`` when no model answers validly.
         """
         if not self.endpoints:
             raise AiUnavailableError("no AI model is configured")
         text = prompt.render(**data)
         budget_hit: BudgetExhaustedError | None = None
-        for endpoint in self.endpoints:
-            key = hashlib.sha256(
+        keys = {
+            endpoint.label: hashlib.sha256(
                 f"{endpoint.label}|{prompt.name}|{prompt.version}|{text}".encode()
             ).hexdigest()
+            for endpoint in self.endpoints
+        }
+        for key in keys.values():
             if (cached := self._store.cache_get(key)) is not None:
                 try:
                     return schema.model_validate_json(cached)
                 except ValidationError:
                     pass  # schema changed since it was cached: ask again
-            if endpoint.paid:
-                try:
-                    self._check_budget()
-                except BudgetExhaustedError as error:
-                    budget_hit = error
-                    continue
+        for endpoint in (item for item in self.endpoints if self._allow_paid or not item.paid):
             try:
+                if endpoint.paid:
+                    self._check_budget()
                 if endpoint.free:  # a local model: one request at a time, the user's chat first
                     async with local_gate(endpoint.base_url).hold(urgent=urgent):
                         result = await self._ask(endpoint, text, schema, urgent=urgent)
@@ -205,23 +216,53 @@ class AiClient:
                             log.info("AI model %s skipped: its rate limit is used up for now", endpoint.label)
                             continue
                         result = await self._ask(endpoint, text, schema, urgent=urgent)
+            except BudgetExhaustedError as error:
+                budget_hit = error
+                continue
             except _CallFailedError as error:
                 log.warning("AI model %s failed: %s", endpoint.label, error)
                 continue
-            self._store.cache_put(key, result.model_dump_json())
+            self._store.cache_put(keys[endpoint.label], result.model_dump_json())
             return result
         if budget_hit is not None:
             raise budget_hit
         raise AiUnavailableError("no configured AI model gave a valid answer")
 
-    def _check_budget(self) -> None:
+    def _check_budget(self, prompt_reserve: int = 0) -> int | None:
         if self._budget <= 0:
-            return
+            return None
         now = self._clock()
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         used = self._store.tokens_since(to_iso(midnight), only_providers=PAID_PROVIDERS)
-        if used >= self._budget:
+        available = self._budget - used - prompt_reserve
+        if available <= 0:
             raise BudgetExhaustedError(max(60.0, (midnight + timedelta(days=1) - now).total_seconds()))
+        remaining = available - _PAID_IN_FLIGHT.get(self._limits, 0)
+        if remaining <= 0:
+            raise BudgetExhaustedError(60.0)  # another request is using the remaining allowance
+        return remaining
+
+    @contextmanager
+    def _request_body(self, endpoint: Endpoint, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Reserve DeepSeek's estimated maximum token use until its response arrives."""
+        if endpoint.provider != "deepseek":
+            if endpoint.paid:
+                self._check_budget()  # a repair or a retry is a separate billable request
+            yield body
+            return
+
+        # Reserve at most one token per input byte, plus chat framing, so multibyte text is covered.
+        prompt_reserve = DEEPSEEK_CHAT_OVERHEAD + sum(
+            len(message["content"].encode()) for message in body["messages"]
+        )
+        remaining = self._check_budget(prompt_reserve)
+        max_output = min(DEEPSEEK_MAX_OUTPUT, remaining) if remaining is not None else DEEPSEEK_MAX_OUTPUT
+        reserved = prompt_reserve + max_output
+        _PAID_IN_FLIGHT[self._limits] = _PAID_IN_FLIGHT.get(self._limits, 0) + reserved
+        try:
+            yield {**body, "max_tokens": max_output}
+        finally:
+            _PAID_IN_FLIGHT[self._limits] -= reserved
 
     async def _ask(self, endpoint: Endpoint, text: str, schema: type[T], *, urgent: bool = False) -> T:
         messages = [{"role": "system", "content": SYSTEM_RULES}, {"role": "user", "content": text}]
@@ -253,15 +294,16 @@ class AiClient:
     async def _post(
         self, endpoint: Endpoint, body: dict[str, Any], headers: dict[str, str]
     ) -> httpx.Response:
-        try:
-            response = await self._http.post(
-                f"{endpoint.base_url}/chat/completions",
-                json=body,
-                headers=headers,
-                timeout=LOCAL_TIMEOUT_S if endpoint.free else REQUEST_TIMEOUT_S,
-            )
-        except httpx.HTTPError as error:
-            raise _CallFailedError(type(error).__name__) from error
+        with self._request_body(endpoint, body) as request_body:
+            try:
+                response = await self._http.post(
+                    f"{endpoint.base_url}/chat/completions",
+                    json=request_body,
+                    headers=headers,
+                    timeout=LOCAL_TIMEOUT_S if endpoint.free else REQUEST_TIMEOUT_S,
+                )
+            except httpx.HTTPError as error:
+                raise _CallFailedError(type(error).__name__) from error
         if not endpoint.free:
             self._limits.window(endpoint.label).update(response.headers)
         return response
@@ -294,6 +336,8 @@ class AiClient:
                 else "rejected"
             )
             message = _provider_message(response, endpoint)
+            if endpoint.provider == "deepseek" and response.status_code == _PAYMENT_REQUIRED:
+                self._limits.window(endpoint.label).refused(DEEPSEEK_BALANCE_WAIT_S)
             if (
                 response.status_code == _TOO_MANY_REQUESTS
                 and not endpoint.free
@@ -306,14 +350,13 @@ class AiClient:
             )
         try:
             payload = response.json()
-            content = payload["choices"][0]["message"]["content"] or ""
-        except (ValueError, KeyError, IndexError, TypeError) as error:
+            usage = payload.get("usage") or {}
+            self._store.record_usage(
+                endpoint.provider,
+                endpoint.model,
+                int(usage.get("prompt_tokens") or 0),
+                int(usage.get("completion_tokens") or 0),
+            )
+            return str(payload["choices"][0]["message"]["content"] or "")
+        except (AttributeError, ValueError, KeyError, IndexError, TypeError) as error:
             raise _CallFailedError("unexpected response shape") from error
-        usage = payload.get("usage") or {}
-        self._store.record_usage(
-            endpoint.provider,
-            endpoint.model,
-            int(usage.get("prompt_tokens") or 0),
-            int(usage.get("completion_tokens") or 0),
-        )
-        return str(content)

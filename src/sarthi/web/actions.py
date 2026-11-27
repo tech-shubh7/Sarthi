@@ -21,6 +21,15 @@ class Controls:
     auto_wait_minutes: int
     auto_daily_limit: int | None  # None: no daily cap
     auto_boards: bool = False  # auto-apply also sends on job boards with the user's login
+    board_automation: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class MatchBatch:
+    """Where the eligible matches were routed."""
+
+    scheduled: int = 0
+    manual: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +84,10 @@ class DashboardActions(Protocol):
 
     def choose(self, job_id: str, action: str) -> bool:
         """Apply, skip or later on one job, like its Telegram buttons. False for an unknown job."""
+        ...
+
+    def queue_matches(self) -> MatchBatch:
+        """Schedule eligible current-profile matches using the existing auto-apply threshold."""
         ...
 
     def pending(self) -> dict[str, Pending]:

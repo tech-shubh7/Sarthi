@@ -18,5 +18,6 @@ in [`licenses/`](licenses/).
 
 Files adapted from the Apache-2.0 and AGPL-3.0 projects say so at the top, as those licences require.
 
-The dashboard uses the [Inter](https://github.com/rsms/inter) font (SIL OFL 1.1,
+The dashboard, and tailored resume PDFs where Calibri is not installed, use the
+[Inter](https://github.com/rsms/inter) font (SIL OFL 1.1,
 [licenses/Inter-OFL.txt](licenses/Inter-OFL.txt)).

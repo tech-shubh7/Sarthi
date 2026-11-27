@@ -165,3 +165,22 @@ def test_unusable_rows_are_skipped() -> None:
     assert (
         row_to_posting({"url": "not a url", "title": "x", "company": "y", "ats_type": "greenhouse"}) is None
     )
+
+
+async def test_changed_roles_refresh_the_same_snapshot(snapshot: Any, clock: FakeClock) -> None:
+    path = snapshot([row(1, "Backend Engineer"), row(2, "Data Analyst")])
+    transport, _ = manifest("same")
+    source = CatalogSource(path, "https://m.example/m.json", transport=transport, clock=clock)
+    first = SearchQuery(roles=("Backend Engineer",), countries=("IN",))
+    second = SearchQuery(roles=("Data Analyst",), countries=("IN",))
+    assert [job.source_job_id for job in await source.fetch(first)] == ["1"]
+    assert [job.source_job_id for job in await source.fetch(second)] == ["2"]
+    assert await source.fetch(second) == []
+
+
+async def test_catalog_includes_spelling_variants_of_the_same_roles(snapshot: Any, clock: FakeClock) -> None:
+    path = snapshot([row(1, "Back-End Engineer"), row(2, "Full Stack Developer"), row(3, "Data Engineer")])
+    transport, _ = manifest("v1")
+    source = CatalogSource(path, "https://m.example/m.json", transport=transport, clock=clock)
+    search = SearchQuery(roles=("Backend Engineer", "Full-stack Developer"), countries=("IN",))
+    assert sorted(j.source_job_id or "" for j in await source.fetch(search)) == ["1", "2"]

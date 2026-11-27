@@ -161,6 +161,18 @@ def _check_job_terms(job: JobPosting, profile: Profile, verdict: _Verdict) -> No
             verdict.notes.append(f"Asks for {needed}+ years; you have {years:g}")
 
 
+def _check_pay(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:
+    """A published maximum below the user's floor rules out comparable offers."""
+    floor, offer = profile.preferences.min_salary, job.salary
+    if floor is None or floor.minimum is None or offer is None or offer.maximum is None:
+        return
+    if (offer.currency, offer.period) == (floor.currency, floor.period) and offer.maximum < floor.minimum:
+        verdict.blockers.append(
+            f"Pays up to {offer.currency} {offer.maximum:,.0f} per {offer.period.value}, "
+            f"below your {floor.minimum:,.0f} minimum"
+        )
+
+
 def _check_exclusions(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:
     prefs = profile.preferences
     company = job.company.lower()
@@ -228,6 +240,7 @@ def check_rules(job: JobPosting, profile: Profile) -> RulesResult:
     else:
         _check_on_site(job, profile, verdict)
     _check_job_terms(job, profile, verdict)
+    _check_pay(job, profile, verdict)
     _check_stack(job, profile, verdict)
     _check_family(job, profile, verdict)
     scam = scam_check(job.description)

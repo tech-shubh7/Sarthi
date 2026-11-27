@@ -102,15 +102,15 @@ class AutoApply:
         """Let a tapped Apply send by itself, or ask for Submit again."""
         self.chats.set_state(TAPS_KEY, "on" if on else "off")
 
-    def wanted(self, match: MatchRecord | None) -> bool:
-        """True for a match the AI read and scored at or above the line, while today's limit allows."""
+    def qualifies(self, match: MatchRecord | None) -> bool:
+        """Check the score and evidence for an auto-apply, including jobs already scheduled."""
         line = self.line()
-        return (
-            line is not None
-            and match is not None
-            and match.ai_used
-            and match.score >= line
-            and (self.settings.daily_limit is None or self._today_count() < self.settings.daily_limit)
+        return line is not None and match is not None and match.ai_used and match.score >= line
+
+    def wanted(self, match: MatchRecord | None) -> bool:
+        """Decide whether a new match can take one of today's auto-apply slots."""
+        return self.qualifies(match) and (
+            self.settings.daily_limit is None or self._today_count() < self.settings.daily_limit
         )
 
     def _today(self) -> str:
@@ -120,11 +120,17 @@ class AutoApply:
         day, _, count = (self.chats.get_state(COUNT_KEY) or "").partition(" ")
         return int(count) if day == self._today() and count.isdigit() else 0
 
-    def schedule(self, job_id: str, score: int) -> tuple[str, Markup]:
+    def schedule(self, job_id: str, score: int, *, resume: bool = False) -> tuple[str, Markup]:
         """Mark the job for auto-apply, queue it after the veto window; the chat message and its buttons."""
         self.chats.set_auto(job_id, on=True)
         self.chats.set_state(COUNT_KEY, f"{self._today()} {self._today_count() + 1}")
-        self.queue.enqueue(names.AUTO_APPLY, job_id, delay=self.settings.wait_s, priority=Priority.NORMAL)
+        self.queue.enqueue(
+            names.AUTO_APPLY,
+            job_id,
+            {"resume": True} if resume else None,
+            delay=self.settings.wait_s,
+            priority=Priority.NORMAL,
+        )
         job = self.jobs.get(job_id)
         what = f"<b>{escape(job.title)}</b> at {escape(display_company(job.company))}" if job else "this job"
         text = (

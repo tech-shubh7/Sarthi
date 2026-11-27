@@ -114,7 +114,7 @@ def test_the_form_shows_the_saved_setup() -> None:
 
 def test_the_section_never_shows_the_password(client: TestClient, actions: FakeActions) -> None:
     actions.mail_settings = GMAIL
-    page = client.get("/settings").text
+    page = client.get("/settings/email").text
     assert "Mail (reply tracking)" in page and 'action="/settings/mail"' in page
     assert 'formaction="/settings/mail/test"' in page
     assert re.search(r'name="mail_password" type="password" value=""', page)
@@ -127,12 +127,12 @@ def test_saving_mail_settings(client: TestClient, actions: FakeActions) -> None:
     response = client.post(
         "/settings/mail", data={"csrf": token(client)} | FORM, headers=HERE, follow_redirects=False
     )
-    assert (response.status_code, response.headers["location"]) == (303, "/settings?done=mail#mail")
+    assert (response.status_code, response.headers["location"]) == (303, "/settings/email?done=mail")
     saved, password = actions.mail_saved[-1]
     assert (saved.host, saved.user, saved.enabled, password) == (
         "imap.gmail.com", "asha.rao@example.com", True, "abcdefghijklmnop",
     )  # fmt: skip
-    page = client.get("/settings?done=mail").text
+    page = client.get("/settings/email?done=mail").text
     assert "no restart needed" in page and "abcdefghijklmnop" not in page
 
 

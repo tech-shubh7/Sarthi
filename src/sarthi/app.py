@@ -24,7 +24,7 @@ from sarthi.answers.handler import FormChecker
 from sarthi.apply.agent import ApplicationBrowser
 from sarthi.apply.engine import LOGIN_PAGES, SITE_NAMES, ApplyEngine
 from sarthi.apply.engine import login as login_to
-from sarthi.apply.handler import Applier
+from sarthi.apply.handler import Applier, is_job_board
 from sarthi.apply.screen import ScreenError, login_screen
 from sarthi.chat.autoapply import AutoApplySettings
 from sarthi.chat.pairing import CODE_LIFETIME, OWNER_KEY, code_hash, new_code, owner_chat
@@ -44,7 +44,7 @@ from sarthi.config import Settings
 from sarthi.db.ai_store import AiStore
 from sarthi.db.answers import AnswerStore
 from sarthi.db.applications import ApplicationStore
-from sarthi.db.chat import ChatStore
+from sarthi.db.chat import ChatStore, JobStatus
 from sarthi.db.connection import connect
 from sarthi.db.documents import DocumentStore
 from sarthi.db.jobs import JobStore
@@ -79,7 +79,7 @@ from sarthi.tracking.account import MailSetup, current_mailbox, current_setup, s
 from sarthi.tracking.handler import STATUS_KEY as MAIL_STATUS_KEY
 from sarthi.tracking.handler import Mailbox, ReplyTracker
 from sarthi.tracking.mail import MailError, count_messages
-from sarthi.web.actions import Controls, MailSettings, Pending
+from sarthi.web.actions import Controls, MailSettings, MatchBatch, Pending
 from sarthi.web.server import NoFreePortError, make_server
 from sarthi.web.sources_view import SiteMap
 
@@ -159,7 +159,8 @@ class WebActions:
             auto_line=auto.line(),
             auto_wait_minutes=round(auto.settings.wait_s / 60),
             auto_daily_limit=auto.settings.daily_limit,
-            auto_boards=auto.boards(),
+            auto_boards=self._app.applier.allow_board_automation and auto.boards(),
+            board_automation=self._app.applier.allow_board_automation,
         )
 
     def set_paused(self, paused: bool) -> None:
@@ -176,6 +177,38 @@ class WebActions:
             return False
         self._app.bot.choose(job_id, action)
         return True
+
+    def queue_matches(self) -> MatchBatch:
+        """Route recent matches that meet the current-profile auto-apply threshold."""
+        profile = self.profile()
+        bot = self._app.bot
+        line = bot.auto.line()
+        if profile is None or line is None:
+            return MatchBatch()
+        candidates = bot.matches.auto_apply_candidates(
+            match_version(profile), self._app.clock() - REMATCH_AFTER_UPGRADE, line
+        )
+        scheduled = manual = 0
+        for job_id in candidates:
+            job = bot.jobs.get(job_id)
+            match = bot.matches.get(job_id)
+            if job is None or match is None or bot.chats.is_auto(job_id):
+                continue
+            role = bot.jobs.role_key_of(job_id)
+            if role and self._app.applier.applications.sent_for_role(role, job_id):
+                continue
+            url = str(job.apply_url or job.url)
+            board = is_job_board(url)
+            if board and not self._app.applier.allow_board_automation:
+                self._app.applier.mark_manual_board(job_id, url)
+                bot.chats.set_job_status(job_id, JobStatus.APPLY)
+                manual += 1
+            elif (not board or bot.auto.boards()) and bot.auto.wanted(match):
+                resume = bot.chats.job_status(job_id) is JobStatus.APPLY
+                text, _ = bot.auto.schedule(job_id, match.score, resume=resume)
+                bot.note("auto_apply", text, job_id)
+                scheduled += 1
+        return MatchBatch(scheduled, manual)
 
     def pending(self) -> dict[str, Pending]:
         """Filled forms waiting for Submit."""
@@ -369,7 +402,7 @@ class App:
             names.ALERT: self.bot.handle_alert,
             names.DIGEST: self._digest,
             names.CATCHUP_REPORT: self.bot.handle_catchup_report,
-            names.DOCUMENTS: self.documents.handle,
+            names.DOCUMENTS: self.prepare_documents,
             names.DOCUMENTS_READY: self.bot.handle_documents_ready,
             names.FORM_CHECK: self.forms.handle,
             names.ASK_QUESTIONS: self.bot.handle_ask_questions,
@@ -384,6 +417,12 @@ class App:
             names.FOLLOWUP_NOTICE: self.bot.handle_followup_notice,
             names.SOURCE_NOTICE: self.bot.handle_source_notice,
         }
+
+    async def prepare_documents(self, task: TaskRecord) -> None:
+        """Run document preparation when applying is still possible or documents were requested directly."""
+        if task.payload.get("apply") and self.applier.skip_application_documents(task.key):
+            return
+        await self.documents.handle(task)
 
     def worker(self) -> Worker:
         """Background work: reading sources and matching (slow, AI-heavy, never what the user waits on)."""
@@ -621,12 +660,17 @@ class App:
                 "minutes passed). Try again, and close the window only once you see your account.",
             )
             return
+        if not self.settings.apply_allow_board_automation:
+            await self._say(chat_id, f"✅ Logged in to {name}. Open the job on the site to apply.")
+            return
         retried = self.retry_after_login(site)
         more = f" Filling the {retried} application(s) that waited for this login again." if retried else ""
         await self._say(chat_id, f"✅ Logged in to {name}: Sarthi can apply there now.{more}")
 
     def retry_after_login(self, site: str) -> int:
         """Fill again the forms handed over only because the user was not logged in to ``site``."""
+        if not self.settings.apply_allow_board_automation:
+            return 0
         host = urlparse(LOGIN_PAGES[site]).hostname or ""
         domain = host.removeprefix("www.").removeprefix("secure.")
         jobs = self.applier.applications.waiting_for_login(domain)
@@ -812,6 +856,7 @@ def _ai(
         endpoints,
         AiStore(conn, clock=clock),
         daily_token_budget=settings.llm_daily_token_budget,
+        allow_paid=settings.llm_allow_paid,
         requests_per_minute=settings.llm_requests_per_minute,
         clock=clock,
         background=background,
@@ -1007,6 +1052,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         chats=chats,
         clock=clock,
         auto_on_boards=bot.auto.boards,
+        allow_board_automation=settings.apply_allow_board_automation,
     )
 
     def mailbox() -> Mailbox | None:  # read before every check: a dashboard change counts at once

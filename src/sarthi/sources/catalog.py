@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -49,6 +50,8 @@ MIN_LOOK_BACK = timedelta(days=2)  # the snapshot is refreshed about daily; repo
 INTERRUPT_WAIT_S = 10.0  # how long a stopped scan gets to end
 QUERY_TIMEOUT_S = 600.0  # a slow connection still finishes; a stuck one is stopped (and retried later)
 EXTENSIONS_ENV = "SARTHI_DUCKDB_EXTENSIONS"
+_ROLE_STYLE = re.compile(r"(back|front|full)[ -]+(end|stack)")
+_TITLE = r"regexp_replace(lower(title), '(back|front|full)[ -]+(end|stack)', '\1\2', 'g')"
 COLUMNS = (
     "url", "title", "company", "ats_type", "ats_id", "location", "country_iso", "is_remote", "workplace_type",
     "salary_min", "salary_max", "salary_currency", "salary_period", "employment_type", "apply_url",
@@ -57,11 +60,13 @@ COLUMNS = (
 
 def build_query(query: SearchQuery, since: datetime, snapshot: str) -> tuple[str, list[Any]]:
     """The SQL and its parameters (never formatted into the SQL: role names are the user's text)."""
-    roles = [_like(role) for role in query.roles[:MAX_ROLES] if _like(role) != "%%"]
+    roles = [
+        _like(_ROLE_STYLE.sub(r"\1\2", role.lower())) for role in query.roles[:MAX_ROLES] if role.strip()
+    ]
     params: list[Any] = [snapshot]
     where = ["coalesce(posted_at, cast(source_created_at AS VARCHAR)) >= ?"]
     params.append(since.strftime("%Y-%m-%d"))
-    where.append("(" + " OR ".join(["lower(title) LIKE ? ESCAPE '\\'"] * len(roles)) + ")")
+    where.append("(" + " OR ".join([f"{_TITLE} LIKE ? ESCAPE '\\'"] * len(roles)) + ")" if roles else "false")
     params += roles
     places: list[str] = []
     for code in query.countries:
@@ -74,7 +79,10 @@ def build_query(query: SearchQuery, since: datetime, snapshot: str) -> tuple[str
     if places:
         where.append("(" + " OR ".join(places) + ")")
     columns = ", ".join((*COLUMNS, "posted_at"))
-    sql = f"SELECT {columns} FROM read_parquet(?) WHERE {' AND '.join(where)} LIMIT {MAX_ROWS}"  # noqa: S608
+    sql = (
+        f"SELECT {columns} FROM read_parquet(?) WHERE {' AND '.join(where)}"  # noqa: S608 (bound values)
+        f" ORDER BY coalesce(posted_at, cast(source_created_at AS VARCHAR)) DESC, url LIMIT {MAX_ROWS}"
+    )
     return sql, params
 
 
@@ -113,7 +121,7 @@ class CatalogSource:
         self.snapshot, self.manifest = snapshot, manifest
         self._transport = transport
         self._clock = clock
-        self._read_version: str | None = None
+        self._read_search: tuple[str, tuple[str, ...], tuple[str, ...], bool, timedelta] | None = None
 
     async def _version(self) -> str | None:
         async with web.client(self._transport) as http:
@@ -122,19 +130,20 @@ class CatalogSource:
         return str(version) if version else None
 
     async def fetch(self, query: SearchQuery) -> list[JobPosting]:
-        """New jobs since the last snapshot read (none when the snapshot has not changed)."""
+        """Read the search again when either the snapshot or the search changes."""
         if not query.roles:
             return []
         version = await self._version()
-        if version is not None and version == self._read_version:
-            return []
         look_back = max(timedelta(hours=query.hours_old or 0), MIN_LOOK_BACK)
+        search = (version, query.roles, query.countries, query.remote, look_back) if version else None
+        if search is not None and search == self._read_search:
+            return []
         sql, params = build_query(query, self._clock() - look_back, self.snapshot)
         rows = await _run(sql, params)
         postings = [p for p in (row_to_posting(r) for r in rows) if p is not None]
         if len(postings) < len(rows):
             log.info("%s: %d of %d rows were not usable", self.name, len(rows) - len(postings), len(rows))
-        self._read_version = version
+        self._read_search = search
         return postings
 
 

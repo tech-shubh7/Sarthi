@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:">
+<title>{{ name }}</title>
+<style>
+/* One resume page in the style of a classic Word resume: centred spaced-capital name, the person's own
+   headline, a contact line, profile links, small spaced-capital section headings over a thin rule. Every
+   size is multiplied by --s, which the renderer lowers a step at a time when the resume would not fit. */
+@font-face {
+  font-family: "Sarthi Inter";
+  src: url("{{ font_url }}") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  size-adjust: 93%; /* Inter is wider than Calibri, the font of most Word resumes: same line lengths */
+}
+:root { --s: 1; --ink: #1a1a1a; --soft: #444444; --link: #2b5cb8; --rule: #bfbfbf; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: #ffffff; }
+body {
+  font-family: Calibri, Carlito, "Sarthi Inter", "Liberation Sans", Arial, sans-serif;
+  font-size: calc({{ body_pt }}pt * var(--s));
+  line-height: 1.2;
+  /* Contextual alternates (Inter's raised dash between digits, capital-height brackets) and ligatures print
+     as glyphs with no letter behind them: a tracking system would read "2026 ? Present". Plain glyphs only. */
+  font-feature-settings: "calt" 0, "liga" 0, "case" 0, "ss01" 0;
+  font-variant-ligatures: none;
+  color: var(--ink);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+a { color: var(--link); text-decoration: underline; }
+a.quiet { color: inherit; text-decoration: none; }
+header { text-align: center; }
+.name {
+  margin: 0;
+  font-size: calc(18pt * var(--s));
+  font-weight: 700;
+  letter-spacing: calc(1.4pt * var(--s));
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+.headline { margin: calc(1pt * var(--s)) 0 0; font-size: calc(10.5pt * var(--s)); color: var(--soft); }
+.contact, .links { margin: calc(1pt * var(--s)) 0 0; font-size: calc(9pt * var(--s)); color: var(--soft); }
+.links { margin-bottom: calc(1pt * var(--s)); }
+.sep { white-space: pre; }
+section { margin-top: calc(7.5pt * var(--s)); }
+h2 {
+  margin: 0 0 calc(3.5pt * var(--s));
+  padding-bottom: calc(2pt * var(--s));
+  border-bottom: calc(0.75pt * var(--s)) solid var(--rule);
+  font-size: calc({{ body_pt }}pt * var(--s));
+  font-weight: 700;
+  letter-spacing: calc(1.8pt * var(--s));
+  text-transform: uppercase;
+  break-after: avoid;
+}
+p { margin: 0; }
+.summary { line-height: 1.25; }
+.skills p { margin-bottom: calc(1.6pt * var(--s)); }
+.skill { white-space: nowrap; } /* "re-ranking" is never split over two lines */
+.entry + .entry { margin-top: calc(5.5pt * var(--s)); }
+.row { display: flex; justify-content: space-between; align-items: baseline; gap: 12pt; }
+.title { font-weight: 700; font-size: calc({{ title_pt }}pt * var(--s)); }
+.dates { color: var(--soft); white-space: nowrap; }
+.where { color: var(--soft); font-style: italic; }
+.stack { color: var(--soft); font-style: italic; font-weight: 400; }
+ul { margin: calc(2pt * var(--s)) 0 0; padding: 0; list-style: none; }
+li { position: relative; padding-left: calc(14.5pt * var(--s)); margin-bottom: calc(2pt * var(--s)); }
+li::before { content: "\2022"; position: absolute; left: calc(5pt * var(--s)); }
+.detail { margin-top: calc(0.5pt * var(--s)); }
+
+/* Page breaks for a resume longer than a page, from Resume-Matcher (Apache-2.0),
+   apps/frontend/app/(default)/css/globals.css "PAGE BREAK CONTROL" @ 959e458: an entry stays on one page,
+   or splits only between bullets; a heading is never the last line of a page. */
+[data-resume-item], [data-resume-section] li { break-inside: avoid; }
+[data-resume-item="split"] { break-inside: auto; }
+[data-resume-item="split"] :not(ul, ol, li, li *, :has(ul, ol), :is(ul, ol) ~ *, :is(ul, ol) ~ * *) {
+  break-after: avoid;
+}
+[data-resume-item="split"] :is(ul, ol) { break-before: avoid; }
+[data-resume-item="split"] li:first-child { break-after: avoid; }
+[data-resume-item="split"] li:last-child { break-before: avoid; }
+[data-resume-section-title] { break-after: avoid; }
+</style>
+</head>
+<body>
+<header>
+  <h1 class="name">{{ name }}</h1>
+  {% if headline %}<p class="headline">{{ headline }}</p>{% endif %}
+  {% if contact %}<p class="contact">{% for part in contact %}{% if not loop.first %}<span class="sep">  |  </span>{% endif %}{% if part.href %}<a class="quiet" href="{{ part.href }}">{{ part.text }}</a>{% else %}{{ part.text }}{% endif %}{% endfor %}</p>{% endif %}
+  {% if links %}<p class="links">{% for link in links %}{% if not loop.first %}<span class="sep">  |  </span>{% endif %}<a href="{{ link.href }}">{{ link.text }}</a>{% endfor %}</p>{% endif %}
+</header>
+
+{% if summary %}
+<section data-resume-section>
+  <h2 data-resume-section-title>Summary</h2>
+  <p class="summary">{{ summary }}</p>
+</section>
+{% endif %}
+
+{% if skills %}
+<section class="skills" data-resume-section>
+  <h2 data-resume-section-title>Skills</h2>
+  {% for group in skills %}<p>{% if group.label %}<b>{{ group.label }}:</b> {% endif %}{% for skill in group.names %}<span class="skill">{{ skill }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endfor %}
+</section>
+{% endif %}
+
+{% if experience %}
+<section data-resume-section>
+  <h2 data-resume-section-title>Experience</h2>
+  {% for job in experience %}
+  <div class="entry" data-resume-item="split">
+    <div class="row"><span class="title">{{ job.title }}</span><span class="dates">{{ job.dates }}</span></div>
+    {% if job.where %}<div class="where">{{ job.where }}</div>{% endif %}
+    {% if job.bullets %}<ul>{% for bullet in job.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if projects %}
+<section data-resume-section>
+  <h2 data-resume-section-title>Projects</h2>
+  {% for project in projects %}
+  <div class="entry" data-resume-item="split">
+    <div class="row"><span><b>{% if project.link %}<a class="quiet" href="{{ project.link }}">{{ project.name }}</a>{% else %}{{ project.name }}{% endif %}</b>{% if project.description %}<span class="stack sep">  —  </span><span class="stack">{{ project.description }}</span>{% endif %}</span></div>
+    {% if project.bullets %}<ul>{% for bullet in project.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if education %}
+<section data-resume-section>
+  <h2 data-resume-section-title>Education</h2>
+  {% for school in education %}
+  <div class="entry" data-resume-item>
+    <div class="row"><span class="title">{{ school.school }}</span><span class="dates">{{ school.dates }}</span></div>
+    {% if school.detail %}<p class="detail">{{ school.detail }}</p>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% for extra in extras %}
+<section data-resume-section>
+  <h2 data-resume-section-title>{{ extra.heading }}</h2>
+  <ul>{% for item in extra.lines %}<li>{{ item }}</li>{% endfor %}</ul>
+</section>
+{% endfor %}
+</body>
+</html>

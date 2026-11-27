@@ -482,7 +482,9 @@ class ApplyEngine:
         if form_field.type == "file":
             await page.wait_for_timeout(800)
 
-    async def submit(self, job_id: str, code: str) -> SubmitResult:
+    async def submit(
+        self, job_id: str, code: str, *, before_click: Callable[[], None] | None = None
+    ) -> SubmitResult:
         """Submit the approved fill. Refuses without the code, a still-open page, or with blanks left.
 
         After the press, no confirmation is ``unknown`` (it may have been sent), never ``failed``.
@@ -504,14 +506,19 @@ class ApplyEngine:
             before = await adapters.body_text(page)
             # The application browser's walk names the exact button it stopped at: that one first.
             prefer = str(adapter.extra.get("button") or "")
-            if refused := await adapters.press_submit(page, adapter.submit, prefer=prefer):
+            if refused := await adapters.press_submit(
+                page, adapter.submit, prefer=prefer, before_click=before_click
+            ):
                 return SubmitResult(*refused, await self._screenshot(page, job_id, refused[0]))
-            outcome, detail = await self._outcome(page, adapter, opened.url, before)
-            if adapter is naukri.NAUKRI and outcome != "submitted" and await naukri.chatbot_open(page):
-                outcome, detail = (
-                    "needs_human",
-                    "Naukri asked follow-up questions in its chatbot: answer them on Naukri.",
-                )
+            try:
+                outcome, detail = await self._outcome(page, adapter, opened.url, before)
+                if adapter is naukri.NAUKRI and outcome != "submitted" and await naukri.chatbot_open(page):
+                    outcome, detail = (
+                        "needs_human",
+                        "Naukri asked follow-up questions in its chatbot: answer them on Naukri.",
+                    )
+            except PlaywrightError:
+                outcome, detail = UNKNOWN, "The form stopped responding after Submit. Check the site."
             shot = await self._screenshot(page, job_id, outcome)
             if outcome == "submitted":
                 await self.close_job(job_id)

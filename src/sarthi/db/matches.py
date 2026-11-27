@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 
 from sarthi.clock import Clock, to_iso, utcnow
 from sarthi.db.connection import transaction
@@ -76,6 +77,23 @@ class MatchStore:
             ai_used=bool(row["ai_used"]),
             matched_at=row["matched_at"],
         )
+
+    def auto_apply_candidates(self, version: str, since: datetime, threshold: int) -> list[str]:
+        """Current strong matches that are neither in the apply pipeline nor waiting for input."""
+        rows = self._conn.execute(
+            "SELECT m.job_id FROM job_match m JOIN job j ON j.id = m.job_id"
+            " LEFT JOIN job_user u ON u.job_id = m.job_id"
+            " WHERE m.decision = 'alert' AND m.ai_used = 1 AND m.profile_version = ? AND m.score >= ?"
+            " AND j.first_seen_at >= ? AND (u.status IS NULL OR u.status IN ('alerted', 'digested', 'apply'))"
+            " AND NOT EXISTS (SELECT 1 FROM application a WHERE a.job_id = m.job_id)"
+            " AND NOT EXISTS (SELECT 1 FROM pending_question q WHERE q.job_id = m.job_id)"
+            " AND NOT EXISTS (SELECT 1 FROM task t WHERE t.key = m.job_id"
+            " AND t.status IN ('pending', 'running')"
+            " AND t.type IN ('auto_apply','documents','documents_ready','form_check','apply','submit'))"
+            " ORDER BY m.score DESC, j.first_seen_at DESC, m.job_id",
+            (version, threshold, to_iso(since)),
+        )
+        return [str(row[0]) for row in rows]
 
     def counts(self) -> dict[str, int]:
         """How many jobs got each decision."""
