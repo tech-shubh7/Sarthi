@@ -2,43 +2,48 @@
   <img src="docs/brand/sarthi-wordmark-tagline-light.svg" alt="Sarthi, your AI job assistant" width="440">
 </p>
 
+<h3 align="center">Finds the jobs that fit you, and applies to them for you.<br>
+Free, open source, and it runs on your own computer.</h3>
+
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0-233A8B" alt="Licence: AGPL-3.0"></a>
   <img src="https://img.shields.io/badge/python-3.12-233A8B" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/runs-on%20your%20computer-20B486" alt="Runs on your computer">
   <img src="https://img.shields.io/badge/status-early%20development-F4A024" alt="Status: early development">
 </p>
 
-# Sarthi (सारथि)
-
-
-**Your AI job assistant, running on your own computer.** Sarthi searches LinkedIn, Indeed, Naukri,
-~430 job sites and the career pages of ~192,000 companies every day, keeps only the jobs that really fit
-your resume and preferences, writes a cover letter for each one, fills in the application, and sends it
-when you say so, or by itself with auto-apply. Free, open source, and your data stays with you.
+<p align="center">
+  <b>LinkedIn</b> · <b>Indeed</b> · <b>Naukri</b> · <b>~430 job sites</b> · <b>~192,000 company career pages</b>
+</p>
 
 https://github.com/user-attachments/assets/467061aa-a120-45f4-8b9d-bd82fc4006f6
 
+Job hunting means hours of searching, reading postings that don't fit, and typing the same details into
+form after form. **Sarthi does that part for you.** Give it your resume and the jobs you want. Every hour
+it searches all the sources above, keeps only the jobs that really fit your resume and preferences, and
+tells you. Press **Apply** and it writes a cover letter for that job, fills in the form and sends it when
+you say so. Or turn on auto-apply and let it send by itself.
+
+No account, no cloud server, no subscription. Your resume, your answers and your site logins stay on your
+computer.
+
+<p align="center">
+  <a href="#install"><b>Install</b></a> &nbsp;·&nbsp;
+  <a href="#first-time-setup-step-by-step"><b>Set up</b></a> &nbsp;·&nbsp;
+  <a href="#how-matching-works"><b>How matching works</b></a> &nbsp;·&nbsp;
+  <a href="#troubleshooting-and-faq"><b>FAQ</b></a>
+</p>
+
 ## How it works
 
-You give Sarthi your resume and the jobs you want. It then works all day:
-
-1. **Finds jobs.** It searches job boards, ~430 job sites and hiring systems, free job feeds and a daily
-   snapshot of ~192,000 company career pages. It does this for your job titles and your countries.
-2. **Keeps only the ones that fit you.** Each job gets a score and an honest list of what you have and what
-   you are missing. Jobs you clearly cannot get are hidden: the wrong country or visa, far more years than
-   you have, a senior job when you are junior, or a scam.
-3. **Tells you.** Strong matches go to the dashboard straight away (and to Telegram, if you connect it).
-   The rest come in one daily digest.
-4. **Applies when you say so.** You press **Apply**. Sarthi writes a cover letter for that job and fills in
-   the form with your details. It shows you the filled form before anything is sent. You can also let it
-   send forms by itself (auto-apply).
-5. **Hands you what only a person can do.** A CAPTCHA, a site that blocks robots, or a login go to clear
-   lists on the dashboard. Each one has a button to finish it in a few clicks.
-6. **Watches your inbox** (if you want it to). It tells you when a company replies: an interview, a test or
-   a rejection.
-
-It is free and open source (AGPL-3.0). There is no account and no cloud server. Your resume, your answers
-and your site logins stay on your computer.
+| Step | What happens |
+|---|---|
+| **1. Finds jobs** | Searches LinkedIn, Indeed, your country's job boards, ~430 job sites, free remote feeds and a daily snapshot of ~192,000 company career pages, for your job titles and countries |
+| **2. Keeps only what fits** | Scores each job on the must-haves your resume really shows, with a clear ✓ have / ✗ missing list. Hides the wrong country or visa, far more years than you have, senior roles when you are junior, and scams |
+| **3. Tells you** | Strong matches appear on the dashboard (and in Telegram) at once. The rest come in one daily digest |
+| **4. Applies** | Writes a cover letter for the job (and, if you turn it on, a tailored resume), fills the form with your details and shows it to you before anything is sent. With auto-apply, it sends by itself |
+| **5. Hands you the human steps** | CAPTCHAs, sites that block robots and expired logins go to clear lists, each finished in a few clicks |
+| **6. Watches your inbox** | Optional. Tells you when a company replies: an interview, a test or a rejection |
 
 > **Status:** early, under active development, heading for the first public release (v0.1). Expect rough
 > edges, and please [open an issue](https://github.com/tech-shubh7/Sarthi/issues) when you hit one.
