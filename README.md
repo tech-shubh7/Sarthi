@@ -10,19 +10,13 @@
 
 # Sarthi (सारथि)
 
+
 **Your AI job assistant, running on your own computer.** Sarthi searches LinkedIn, Indeed, Naukri,
 ~430 job sites and the career pages of ~192,000 companies every day, keeps only the jobs that really fit
 your resume and preferences, writes a cover letter for each one, fills in the application, and sends it
 when you say so, or by itself with auto-apply. Free, open source, and your data stays with you.
 
-<p align="center">
-  <a href="https://github.com/tech-shubh7/Sarthi/releases/download/videos-v1/sarthi-intro-github.mp4">
-    <img src="docs/media/sarthi-intro.jpg" alt="Watch: what Sarthi is (49 seconds)" width="49%"></a>
-  <a href="https://github.com/tech-shubh7/Sarthi/releases/download/videos-v1/sarthi-guide-github.mp4">
-    <img src="docs/media/sarthi-guide.jpg" alt="Watch: how to use Sarthi (1 minute)" width="49%"></a>
-  <br>
-  <sub>▶ <b>What is Sarthi</b> (49 s) &nbsp;·&nbsp; ▶ <b>How to use it</b> (1 min). Click to play.</sub>
-</p>
+https://github.com/user-attachments/assets/467061aa-a120-45f4-8b9d-bd82fc4006f6
 
 ## How it works
 
