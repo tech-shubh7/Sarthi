@@ -109,9 +109,9 @@ def run() -> None:
     except SetupError as error:
         typer.echo(f"Cannot start: {error}", err=True)
         raise typer.Exit(code=1) from None
+    # The dashboard's address is logged by the web server once it has its port: 8765 may be taken, and
+    # printing the setting here sent people to another program (2026-11-28).
     typer.echo("Sarthi is running. Press Ctrl+C to stop.")
-    if sarthi.settings.dashboard:
-        typer.echo(f"Dashboard: http://127.0.0.1:{sarthi.settings.dashboard_port} (this computer only)")
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(until_terminated(sarthi.run()))
 

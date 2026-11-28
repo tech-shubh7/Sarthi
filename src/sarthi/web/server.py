@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import logging
+import os
 import socket
 from collections.abc import Generator
 from pathlib import Path
@@ -82,7 +83,10 @@ def make_server(  # noqa: PLR0913  (where, how, and what it may change)
     chosen = free_port(port, host)
     if chosen != port:
         log.warning("Port %d is in use; the dashboard took %d instead", port, chosen)
-    log.info("Dashboard: http://%s:%d", HOST, chosen)
+    # Under Docker the port inside the container is not the one the user opens (docker-compose.yml passes it).
+    shown = os.environ.get("SARTHI_HOST_DASHBOARD_PORT", "").strip()
+    shown_port = int(shown) if shown.isdigit() else chosen
+    log.info("Dashboard: http://%s:%d (open it in your browser; this computer only)", HOST, shown_port)
     config = uvicorn.Config(
         create_app(read_only(db_path), actions=actions, data_dir=data_dir, sites=sites),
         host=host,

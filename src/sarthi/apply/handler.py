@@ -128,12 +128,16 @@ class Applier:
         auto_on_boards: Callable[[], bool] = lambda: False,
         allow_board_automation: bool = True,
         resolve_link: Callable[[str], Awaitable[str | None]] = redirects.resolve,
+        tailored_only: bool = False,
     ) -> None:
         """Fill forms with ``engine``; record outcomes in ``applications``; tell the chat via ``queue``.
 
         ``chats`` says which jobs are marked for auto-apply; ``auto_on_boards`` whether auto-apply also sends
         on job boards with the user's login (the user's own choice, read at each application).
+        ``tailored_only`` (``SARTHI_TAILOR_RESUME``): auto-apply sends by itself only a resume that was really
+        tailored to the job; one the AI left unchanged waits for the user's Submit.
         """
+        self.tailored_only = tailored_only
         self.auto_on_boards = auto_on_boards
         self.allow_board_automation = allow_board_automation
         self.engine = engine
@@ -292,7 +296,8 @@ class Applier:
                 names.SUBMIT, task.key, {"code": result.code, "approved": True}, priority=Priority.APPLY
             )
             return
-        if auto_refill or (auto and (not board or self.auto_on_boards())):
+        held = self._untailored(task.key) if (auto_refill or auto) else ""
+        if not held and (auto_refill or (auto and (not board or self.auto_on_boards()))):
             # Every answer came from the profile, a saved answer or the posting (questions only the user can
             # answer stop above); a job board only when the user included them: sent without a tap.
             submission = {"code": result.code, "auto": True, **({"auto_refill": True} if auto_refill else {})}
@@ -304,11 +309,25 @@ class Applier:
             {
                 "code": result.code,
                 "screenshot": self._relative(result.screenshot),
-                "filled": result.filled[:30],
+                "filled": ([("Not sent by itself", held)] if held else []) + result.filled[:30],
                 "system": result.adapter,
             },
             priority=Priority.APPLY,
         )
+
+    def _untailored(self, job_id: str) -> str:
+        """Why auto-apply must not send this job's resume by itself ("" when it may)."""
+        if not self.tailored_only:
+            return ""
+        made = self.documents.get(job_id)
+        report = made.report if made is not None else {}
+        if not report.get("tailored_by_ai"):
+            return "the AI could not tailor your resume for this job; check it and press Submit"
+        if not report.get("changes"):
+            return (
+                "the tailored resume has no changes for this job (same as yours); check it and press Submit"
+            )
+        return ""
 
     def _manual_reason(self, url: str) -> str:
         if not self.allow_board_automation and is_job_board(url):

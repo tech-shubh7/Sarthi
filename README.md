@@ -83,7 +83,7 @@ computer.
 ## What you need
 
 - **A computer that stays on** while you want Sarthi to search: Windows 10/11, macOS or Linux, with 8 GB
-  of memory. Docker needs about 4 GB of free disk. Without Docker, plan for about 1.5 GB.
+  of memory. Docker needs about 6 GB of free disk (the image is about 4 GB). Without Docker, plan for about 1.5 GB.
 - **One AI key.** Free ones work and take two minutes to get: [Gemini](https://aistudio.google.com/apikey),
   [Groq](https://console.groq.com/keys) or [OpenRouter](https://openrouter.ai/keys). A paid key (DeepSeek,
   OpenAI, Anthropic, Mistral) is faster and more reliable. See [AI models](#ai-models-and-what-they-cost).
@@ -108,7 +108,7 @@ Open `.env` in any text editor. Paste your AI key after the `=` on its line, for
 `SARTHI_GEMINI_API_KEY=your-key`, and save. Then:
 
 ```bash
-docker compose up -d      # the first start builds Sarthi: about 10 minutes and 3.5 GB
+docker compose up -d      # the first start builds Sarthi: 10 to 30 minutes and about 4 GB
 ```
 
 Open **http://127.0.0.1:8765** in your browser. That is Sarthi's dashboard.

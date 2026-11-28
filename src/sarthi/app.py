@@ -1075,6 +1075,7 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
         clock=clock,
         auto_on_boards=bot.auto.boards,
         allow_board_automation=settings.apply_allow_board_automation,
+        tailored_only=settings.tailor_resume,
     )
 
     def mailbox() -> Mailbox | None:  # read before every check: a dashboard change counts at once

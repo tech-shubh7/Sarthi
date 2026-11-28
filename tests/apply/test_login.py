@@ -48,7 +48,11 @@ async def test_login_window_is_a_plain_browser_and_the_check_decides(
     args = started[0]
     assert f"--user-data-dir={tmp_path / 'profile'}" in args
     assert args[-1] == engine.LOGIN_PAGES["linkedin"]
-    assert not any("remote-debugging" in a or "enable-automation" in a for a in args)
+    # No automation flags: LinkedIn answers an automated window with CAPTCHA after CAPTCHA. The only DevTools
+    # switch is the cookie keeper's own: a random port on 127.0.0.1, while the window is open (see keeper).
+    assert not any(flag in a for a in args for flag in ("enable-automation", "remote-debugging-address"))
+    assert [a for a in args if "remote-debugging" in a] == ["--remote-debugging-port=0"]
+    assert not any("webdriver" in a or "AutomationControlled" in a for a in args)
 
 
 async def test_a_window_left_open_too_long_is_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

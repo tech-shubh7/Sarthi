@@ -21,6 +21,7 @@ services:
       SARTHI_DATA_DIR: /app/data
       SARTHI_DASHBOARD_PORT: "8765"
       SARTHI_DASHBOARD_HOST: "0.0.0.0" # inside the container; published below to this computer only
+      SARTHI_HOST_DASHBOARD_PORT: "${SARTHI_HOST_DASHBOARD_PORT:-8765}" # only to show the right address in the log
       SARTHI_OLLAMA_URL: http://ollama:11434/v1 # used only when an ollama/... model is listed
     volumes:
       - "${SARTHI_HOST_DATA_DIR:-./data}:/app/data" # database, resume, documents, logins: everything that is yours

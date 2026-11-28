@@ -490,6 +490,37 @@ async def test_auto_apply_sends_a_clean_fill_without_a_tap(
     assert result["detail"].startswith("🤖 Sent by auto-apply.")
 
 
+@pytest.mark.parametrize(
+    ("report", "sent"),
+    [
+        ({"tailored_by_ai": True, "changes": [{"where": "summary", "before": "a", "after": "b"}]}, True),
+        ({"tailored_by_ai": True, "changes": []}, False),  # the AI changed nothing: the same resume
+        ({"tailored_by_ai": False, "changes": []}, False),  # the AI never answered
+    ],
+)
+async def test_with_tailoring_on_auto_apply_sends_only_a_really_tailored_resume(
+    conn: sqlite3.Connection,
+    job_store: JobStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+    clock: FakeClock,
+    report: dict[str, Any],
+    sent: bool,
+) -> None:
+    job_id = job_at(job_store, LEVER, docs=False)
+    record = DocumentRecord(job_id, PROFILE.version, "documents/r.pdf", "documents/c.pdf", report=report)
+    DocumentStore(conn).save(record)
+    worker, chats = auto_applier(conn, job_store, queue, tmp_path, FakeEngine(FILLED), clock)
+    worker.tailored_only = True
+    chats.set_auto(job_id, on=True)
+    await worker.handle_apply(TaskRecord(1, names.APPLY, job_id, {}, 1))
+    assert (queue.claim([names.SUBMIT]) is not None) is sent
+    if not sent:  # the filled form waits for the user's Submit, saying why
+        preview = queue.claim([names.APPLY_PREVIEW])
+        assert preview is not None
+        assert preview.payload["filled"][0][0] == "Not sent by itself"
+
+
 async def test_auto_apply_never_sends_on_a_job_board_or_with_questions_left(
     conn: sqlite3.Connection, job_store: JobStore, queue: TaskQueue, tmp_path: Path, clock: FakeClock
 ) -> None:

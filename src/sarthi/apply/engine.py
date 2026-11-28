@@ -25,7 +25,7 @@ from playwright.async_api import Browser, BrowserContext, Page, Playwright, Requ
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Response as PlaywrightResponse
 
-from sarthi.apply import adapters, linkedin, naukri
+from sarthi.apply import adapters, keeper, linkedin, naukri
 from sarthi.apply.adapters import Adapter, FillError, PostingClosedError
 
 if TYPE_CHECKING:
@@ -165,6 +165,8 @@ class ApplyEngine:
         try:
             yield
         finally:
+            if submitting and self._context is not None:
+                await keep_sessions(self._context)  # a power cut or a killed Sarthi skips aclose()
             self._busy -= 1
             self._submitting -= submitting
             async with self._idle:
@@ -330,6 +332,10 @@ class ApplyEngine:
         """Close every page and the browser."""
         for job_id in list(self._open):
             await self.close_job(job_id)
+        if self._context is not None:
+            # A site that renewed its login cookie while applying (Shine does, as "until the browser closes")
+            # would sign the user out with this close (2026-11-28): keep those first.
+            await keep_sessions(self._context)
         for closer in (self._context, self._browser):
             if closer is not None:
                 with contextlib.suppress(PlaywrightError):
@@ -695,6 +701,7 @@ SIGNED_IN_CHECK = {
     "foundit": "https://www.foundit.in/seeker/dashboard",
 }
 LOGIN_CHECK_S = 30
+KEEPER_GRACE_S = 3.0
 
 
 async def login(
@@ -715,16 +722,24 @@ async def login(
     screen (the virtual one of ``sarthi.apply.screen``).
     """
     profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / keeper.PORT_FILE).unlink(missing_ok=True)  # a stale one would point at a closed port
     executable = await browser_executable()
     args = [executable, f"--user-data-dir={profile_dir}", "--no-first-run", "--no-default-browser-check"]
+    args.append(keeper.PORT_ARG)  # local only: lets Sarthi keep the login's session cookies (see keeper)
     if env:
         args += ["--window-position=0,0", "--window-size=1280,900"]
     window = await _open_window([*args, LOGIN_PAGES[site]], {**os.environ, **(env or {})})
+    domain = keeper.site_domain(urlparse(LOGIN_PAGES[site]).hostname or "")
+    keeping = asyncio.create_task(keeper.keep_while_open(window, profile_dir, domain))
     try:
         await asyncio.wait_for(window.wait(), wait_s)
     except TimeoutError:
         window.terminate()
         await window.wait()
+    finally:
+        # The keeper never holds up (or breaks) the login check: it gets a moment to finish, then is stopped.
+        with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+            await asyncio.wait_for(keeping, KEEPER_GRACE_S)
     return await signed_in(site, profile_dir, headless=headless)
 
 
@@ -795,6 +810,12 @@ async def _behind_bot_check(page: Page) -> bool:
     return bool(_BOT_CHECK_TITLE.search(title or "")) or bool(adapters.BLOCKED_PAGE.search(text or ""))
 
 
+async def keep_sessions(context: BrowserContext) -> None:
+    """``_keep_session`` for every job site Sarthi can log in to."""
+    for site in LOGIN_PAGES:
+        await _keep_session(context, site)
+
+
 async def _keep_session(context: BrowserContext, site: str) -> None:
     """Give the site's "until the browser closes" cookies an expiry, so the login survives a restart."""
     domain = ".".join((urlparse(LOGIN_PAGES[site]).hostname or "").split(".")[-2:])
@@ -806,7 +827,7 @@ async def _keep_session(context: BrowserContext, site: str) -> None:
             [
                 {**c, "expires": until}
                 for c in cookies
-                if c.get("expires", -1) in (-1, 0) and str(c.get("domain", "")).lstrip(".").endswith(domain)
+                if c.get("expires", -1) in (-1, 0) and keeper.belongs(str(c.get("domain", "")), domain)
             ],
         )
         if kept:
