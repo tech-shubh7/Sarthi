@@ -134,6 +134,7 @@ def test_an_hourly_rate_is_not_an_hr_job(title: str) -> None:
         ("You have successfully applied to this job", True),
         ("Apply now  Save job", False),
         ("Applied 3 weeks ago", False),  # an old mark: not this Submit
+        ("Let's get you applied. Already on Example Jobs? Sign in to Apply", False),  # a sign-in wall
     ],
 )
 def test_a_boards_own_applied_mark_counts_as_sent(text: str, sent: bool) -> None:

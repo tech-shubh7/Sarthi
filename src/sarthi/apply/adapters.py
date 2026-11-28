@@ -205,7 +205,8 @@ THANKS = re.compile(
 # sent only when it appeared after Submit was pressed: three Shine applications that went out were reported
 # "unconfirmed" on 2026-11-28 because only thank-you wording was read.
 APPLIED_NOW = re.compile(
-    r"\bapplied\s*[·•\-]?\s*just now\b|\byou(?:'ve| have)? (?:successfully )?applied\b"
+    # "you've / you have applied", never a bare "you applied": a sign-in wall reads "Let's get you applied"
+    r"\bapplied\s*[·•\-]?\s*just now\b|\byou(?:'ve| have) (?:successfully )?applied\b"
     r"|\bapplication sent\b",
     re.I,
 )
