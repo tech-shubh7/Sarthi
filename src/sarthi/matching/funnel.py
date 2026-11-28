@@ -21,6 +21,10 @@ from sarthi.profile.models import Profile
 MIN_SKILLS_WITHOUT_TITLE = 4  # the AI's read of the full job counts more than keyword overlap
 MAX_REASONS = 4
 MIN_DETAILS = 40  # characters of posting text below which a job is only a title (no line about the work)
+MIN_POSTING_CHARS = 300  # less is a title and a line: nothing about years, level or must-haves to judge
+UNREAD_SCORE = 55  # shown at the bottom of the digest: above the hide line, far below an alert or auto-apply
+UNREAD_LINE = "✗ Sarthi could not read this job's description: open it to check the years and skills it asks"
+SKILLS_ONLY_CAP = 74  # not one of your job titles: shown as a fair match at most, never near-perfect
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +67,16 @@ async def evaluate(
         return MatchResult(0, Outcome(Decision.HIDE, "not_relevant", why), free.reasons, rules.notes, False)
     free_score = _clamp(free.score + rules.location_points)
     reasons = free.reasons
+    if ai is not None and ai.available and len(job.description.strip()) < MIN_POSTING_CHARS:
+        # A title and a line (the page could not be read): the AI would only be scoring the title, which
+        # gave 100 to empty postings and 44 or 70 to identical ones (audit, 2026-11-28). One honest place
+        # instead: the bottom of the digest, said plainly, never an alert or an auto-apply. A title that is
+        # one of the user's roles is shown, the same for every such job; anything else is hidden as weak.
+        score = UNREAD_SCORE if free.title_share > 0 else min(free_score, thresholds.hide_below - 1)
+        outcome = decide(rules, score, thresholds)
+        if outcome.decision is not Decision.HIDE:
+            outcome = Outcome(Decision.DIGEST, "unread")
+        return MatchResult(score, outcome, (UNREAD_LINE, *reasons)[:MAX_REASONS], rules.notes, ai_used=False)
     ai_verdict: AiScore | None = None
     ai_wanted = ai is not None and ai.available and free_score >= thresholds.ai_from
     if ai is not None and ai_wanted:
@@ -80,6 +94,10 @@ async def evaluate(
         score = ai_verdict.score
         confidence = ai_verdict.confidence
         reasons = ai_verdict.reasons + tuple(r for r in reasons if r.startswith("Title"))
+        if free.title_share == 0:
+            # Kept for its skills, not its title (a MERN or "Cloud Engineer" job): it was shown in the
+            # digest at 92-96, as if a perfect fit for a backend role.
+            score = min(score, SKILLS_ONLY_CAP)
 
     outcome = decide(rules, score, thresholds, confidence)
     if outcome.decision is Decision.ALERT and free.title_share == 0:

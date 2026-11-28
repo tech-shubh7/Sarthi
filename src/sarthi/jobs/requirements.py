@@ -80,7 +80,7 @@ _YEARS_IN_TITLE = re.compile(
 
 def min_years_in_title(title: str) -> int | None:
     """The years a job title itself asks for ("Data Scientist 5 To 12 Years" -> 5), or None."""
-    years = [int(m.group(1)) for m in _YEARS_IN_TITLE.finditer(title or "")]
+    years = [_range_lost(int(m.group(1))) for m in _YEARS_IN_TITLE.finditer(title or "")]
     plausible = [n for n in years if 0 < n <= _MAX_PLAUSIBLE_YEARS]
     return min(plausible) if plausible else None
 
@@ -93,6 +93,8 @@ def min_years_required(text: str) -> int | None:
     labelled shapes postings use ("Experience: 3-5 Years", "Node.js (4+ years)", a line "6-9 Years").
     """
     text = (text or "").replace("**", "").replace("__", "").replace("\\", "")
+    text = _SCHOOLING.sub(" ", text)  # "Minimum 15 years of full time education" is schooling, not work
+    text = _DECIMAL_YEARS.sub(r"\1", text)  # "7.5 years" asks 7 (it was read as "5 years")
     years = [int(m.group(1)) for m in _YEARS_OF_EXPERIENCE.finditer(text)]
     for m in _LABELLED.finditer(text):
         years.append(_dash_lost(int(m.group(1))) if m.group(2) is None else int(m.group(1)))
@@ -103,6 +105,7 @@ def min_years_required(text: str) -> int | None:
     years += [int(m.group(2)) for m in _SKILL_LINE.finditer(text) if not _NOT_EXPERIENCE.search(m.group(1))]
     years += [int(m.group(1)) for m in _BARE_RANGE.finditer(text)]
     years += [int(m.group(1)) for m in _OTHER_LANGUAGES.finditer(text)]
+    years = [_range_lost(n) for n in years]
     if 0 in years:
         return None  # "0-2 years": freshers are welcome, so there is no minimum to fall short of
     plausible = [n for n in years if 0 < n <= _MAX_PLAUSIBLE_YEARS]
@@ -111,6 +114,26 @@ def min_years_required(text: str) -> int | None:
     overall = [int(m.group(1) or m.group(2)) for m in _OVERALL.finditer(text)]
     overall = [n for n in overall if 0 < n <= _MAX_PLAUSIBLE_YEARS]
     return max(min(plausible), min(overall)) if overall else min(plausible)
+
+
+# Accenture-style "15 years of full time education" / "16 years of schooling": a degree, not experience.
+_SCHOOLING = re.compile(
+    rf"\b\d{{1,2}}\s*\+?\s*{_YEARS}(?:\s+of)?(?:\s+[\w-]+){{0,3}}?\s+(?:education|schooling|study|studies)\b",
+    re.IGNORECASE,
+)
+_DECIMAL_YEARS = re.compile(r"\b(\d{1,2})\.\d\b(?=\s*\+?\s*(?:years?|yrs?)\b)", re.IGNORECASE)
+_RANGE_LOST_FROM = 20  # "23 years of experience" in a junior posting is a "2-3" whose dash a feed dropped
+
+
+def _range_lost(n: int) -> int:
+    """23 -> 2 and 24 -> 2 ("2-3", "2-4" with the dash lost); real asks of 20+ years do not start lower.
+
+    Only from 20: "12 years" or "15 years" are real senior asks, while no posting asks 23 or 24 years.
+    """
+    first, second = divmod(n, 10)
+    if n >= _RANGE_LOST_FROM and 0 < first < second and second - first <= _DASH_LOST_SPAN:
+        return first
+    return n
 
 
 def _dash_lost(n: int) -> int:

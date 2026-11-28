@@ -192,6 +192,9 @@ class JobBoardSource:
                 hours_old=query.hours_old,
                 country_indeed=jobspy_country(country) if country else "usa",
                 description_format="markdown",
+                # Without it LinkedIn and Naukri rows have no description at all (half the matches shown on
+                # 2026-11-28 were titles only); their job pages refuse Sarthi's own page reader later.
+                fetch_description=True,
                 verbose=0,
             )
             for sites, place in groups

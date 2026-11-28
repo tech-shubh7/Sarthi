@@ -30,7 +30,9 @@ CHAT_FIRST_WAIT_S = 20  # the user's own messages use the (local) AI first
 #    and a title with no posting text is never an instant alert.
 # 6: the AI names strengths and gaps apart; "0-2 years" asks no minimum; a title limits the countries.
 #    The score is the AI's must-have rubric; a job the AI could not read waits for it.
-LOGIC_VERSION = "7-world-profiles"
+# 8: audit fixes: unread postings are never scored from the title, senior duties, a "II" grade gives way to
+#    the years stated, lost dashes in year ranges, a missing top must-have caps the score.
+LOGIC_VERSION = "8-audit"
 
 
 def match_version(profile: Profile) -> str:

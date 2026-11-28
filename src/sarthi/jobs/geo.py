@@ -872,6 +872,48 @@ def seniority_of(title: str) -> str | None:
     return None
 
 
+# A word in the title names the kind of job ("Contract Java Developer"). In the text it must read as the
+# terms of THIS job: "Contract Lifecycle Management" (a product), "contract tests" or "a flexible schedule
+# and part-time options for parents" are not (seen hiding full-time jobs, 2026-11-28).
+_TITLE_KINDS = (
+    ("internship", r"\bintern(?:ship)?\b"),
+    ("contract", r"\b(?:contract(?:or)?|fixed[- ]term)\b"),
+    ("part_time", r"\bpart[- ]time\b"),
+    ("freelance", r"\bfreelance\b"),
+    ("full_time", r"\b(?:full[- ]time|permanent)\b"),
+)
+_TERMS = r"(?:employment|job|position|role|work|engagement|contract)\s*(?:type|basis|nature)?\s*[:\-–]?\s*"
+_TEXT_KINDS = (
+    (
+        "contract",
+        rf"\b{_TERMS}(?:contract(?:ual)?|fixed[- ]term|c2h|contract[- ]to[- ]hire)\b"
+        r"|\b(?:on (?:a )?contract(?:ual)? basis|contract(?:ual)? (?:role|position|job|opening|assignment|"
+        r"engagement|employment)|fixed[- ]term (?:contract|role|position)|contract[- ]to[- ]hire|"
+        r"\d+[- ](?:month|year)s? contract|duration of (?:the )?contract)\b",
+    ),
+    (
+        "part_time",
+        rf"\b{_TERMS}part[- ]time\b|\bpart[- ]time (?:role|position|job|opening|basis|employment)\b"
+        r"|\b\d+\s*(?:hours|hrs) (?:a|per) week\b(?! or more)",
+    ),
+    ("freelance", rf"\b{_TERMS}freelance\b|\bfreelance (?:role|position|project|basis|contract)\b"),
+)
+_FULL_TIME = re.compile(r"\b(?:full[- ]time|permanent)\b", re.I)
+
+
+def _employment_kind(title: str, text: str) -> str | None:
+    """The kind of job from its title, else from the terms its text states; full-time wins a mixed text."""
+    for kind, pattern in _TITLE_KINDS:
+        if re.search(pattern, title, re.I):
+            return kind
+    if _FULL_TIME.search(text):
+        return "full_time"  # "Full-time" stated: other mentions are options or the company's products
+    for kind, pattern in _TEXT_KINDS:
+        if re.search(pattern, text, re.I):
+            return kind
+    return None
+
+
 def detect_terms(title: str, text: str) -> dict[str, str]:
     """Visa sponsorship, relocation help, kind of contract and seniority, only when the posting says so."""
     text = text or ""
@@ -903,18 +945,8 @@ def detect_terms(title: str, text: str) -> dict[str, str]:
         re.I,
     ):
         found["relocation"] = "yes"
-    for kind, pattern in [
-        ("internship", r"\bintern(?:ship)?\b"),
-        ("contract", r"\b(?:contract(?:or)?|fixed[- ]term)\b"),
-        ("part_time", r"\bpart[- ]time\b"),
-        ("freelance", r"\bfreelance\b"),
-        ("full_time", r"\b(?:full[- ]time|permanent)\b"),
-    ]:
-        if re.search(pattern, title, re.I) or (
-            kind != "internship" and re.search(pattern, text[:3000], re.I)
-        ):
-            found["employment_type"] = kind
-            break
+    if kind := _employment_kind(title, text[:3000]):
+        found["employment_type"] = kind
     if level := seniority_of(title):
         found["seniority"] = level
     return found

@@ -37,6 +37,7 @@ WRONG_ROLE_CAP = 0.45  # under the hide line (50): never shown
 THIN_COVERAGE_BELOW = 0.5  # fewer than half the must-haves shown on the resume
 THIN_COVERAGE_CAP = 0.55
 VAGUE_CAP = 0.7  # the model is unsure (a vague posting): never shown as a near-perfect match
+TOP_MISSING_CAP = 0.7  # the first (most important) must-have is not on the resume: never an alert
 MAX_MUST_HAVES = 6
 
 MAX_LINES = 2
@@ -100,7 +101,7 @@ class MatchAnswers(BaseModel):
 
 MATCH_PROMPT = Prompt(
     name="match",
-    version="5",
+    version="6",
     instructions="""
 Judge how well the job fits the candidate, as a strict recruiter would. Use only what the job posting and
 the candidate's resume say; a skill counts only when the resume shows it was used.
@@ -115,15 +116,24 @@ Return JSON with these keys, each a number from 0 to 1 unless stated:
   * an engineer building LLM apps, agents and RAG, applying to "ML Engineer" work that trains models
     (feature engineering, statistics, model training, fraud or recommendation models): 0.3
   * a Python backend developer applying to a Java/Spring, frontend-only, data-analyst or DevOps role: 0.2
+  * a "Full Stack" or "Software Engineer" title whose duties are mostly UI work (React screens, CSS), or
+    mostly Salesforce, ServiceNow, SAP or mobile apps, for a backend candidate: 0.3
   * sales, support, teaching or other non-engineering work: 0.0
+  Judge the duties and requirements, not the title: the title often says less than the text.
 - "skills_fit": share of the job's required skills the resume shows
 - "seniority_fit": does the job's level match their experience (a senior, "III", staff or lead role for
-  someone with 1-2 years is 0.1 or lower; a mid-level, "intermediate" or "II" role, or one asking for
-  2+ years more than they have, is 0.4 or lower)
+  someone with 1-2 years is 0.1 or lower; a role asking for 2+ years more than they have is 0.4 or lower;
+  duties such as owning the roadmap, mentoring engineers or leading design reviews are senior duties).
+  The years the posting states decide over a grade in the title: "Software Engineer II" asking for 1 year
+  fits someone with 1 year. An entry-level role (SDE I, Associate, Junior, Graduate, Fresher, 0-2 years)
+  for someone with 0-2 years is 0.9 or higher.
 - "eligible": could they realistically be hired, judging by required degrees, years and must-haves
 - "overall_fit": your overall judgement
-- "confidence": how sure you are: 0.4 or lower when the posting is vague, very short or lists only
-  generic requirements ("knowledge of programming languages", "good communication")
+- "confidence": how sure you are: 0.4 or lower when the posting is vague, very short, cut off before its
+  requirements, only the company's description, or lists only generic requirements ("knowledge of
+  programming languages", "good communication")
+- A tool the candidate would use while working (Cursor, Claude Code, GitHub Copilot, Jira) is not a
+  must-have skill.
 - "min_years_required": the minimum years of work experience the posting requires (a number, e.g. 5 for
   "5-8 years", 0 for "0-2 years"), or null when it states none
 - "strengths": up to 2 short sentences, most important first: what the candidate has that the job asks
@@ -183,6 +193,10 @@ def combine(answers: MatchAnswers) -> int:
         raw = min(raw, WRONG_ROLE_CAP)
     if parts["coverage"] < THIN_COVERAGE_BELOW:
         raw = min(raw, THIN_COVERAGE_CAP)
+    if answers.must_haves and not answers.must_haves[0].shown:
+        # The posting's most important requirement is not on the resume (a required BigCommerce, n8n): a fair
+        # match at most, however many of the rest are (audit: such jobs were alerted at 77-89).
+        raw = min(raw, TOP_MISSING_CAP)
     if answers.confidence < SURE_ENOUGH:
         raw = min(raw, VAGUE_CAP)
     if answers.eligible < NOT_ELIGIBLE_BELOW:

@@ -127,10 +127,15 @@ Open **http://127.0.0.1:8765**. Stop Sarthi with **Ctrl+C**. After you change `.
 
 ## First-time setup, step by step
 
-1. **Add your profile.** On the dashboard, go to **Settings → Profile**. Upload your resume, then enter the
-   job titles you want (for example *Backend Engineer, Python Developer*) and the country you live in.
-   Choose whether you want remote jobs or jobs in other countries, then save. Sarthi reads your skills and
-   years of experience from the resume. Check them and correct anything it got wrong.
+1. **Add your profile.** On the dashboard, go to **Settings → Profile** and fill in:
+   - your resume file;
+   - the job titles you want (for example *Backend Engineer, Python Developer*) and your skills, as they
+     appear on your resume;
+   - the country you live in, whether you want remote work, and any other countries you would move to;
+   - your years of work experience (0 for a fresher) and, if you like, a minimum salary.
+
+   Press **Save profile**. Prefer to be asked? Send `/setup` to the Telegram bot and upload your resume: it
+   suggests job titles and skills for you to confirm.
 2. **Log in to the job sites you use.** Go to **Settings → Job-site logins** and press a site (LinkedIn,
    Naukri, Indeed, ...).
    - A browser window opens on that site's own login page. Log in as you normally do.

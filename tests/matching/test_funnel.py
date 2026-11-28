@@ -199,7 +199,8 @@ async def test_ai_is_only_used_near_the_alert_line() -> None:
     ai = FakeAi(AiScore(90, 0.9))
     fair = make_job(  # free score between 35 and 50: a partial title match, a weak description, an old post
         title="Backend Platform Engineer",
-        description="Kubernetes.",
+        description="Kubernetes. "
+        + "We are a friendly team that writes things down and helps each other. " * 5,
         country_codes=["DE", "IN"],
         posted_at=NOW - timedelta(days=50),
     )

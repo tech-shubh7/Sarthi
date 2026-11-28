@@ -115,7 +115,9 @@ def _employment_type(job: JobPosting) -> EmploymentType:
 _OTHER_FAMILIES: dict[str, str] = {
     "sales": r"\bsales\b|\bbusiness development\b|\bpre-?sales\b",
     "marketing": r"\bmarketing\b|\bsocial media\b|\bseo\b|\bcontent writer\b",
-    "recruiting": r"\brecruit(?:er|ing|ment)\b|\btalent acquisition\b|\bhr\b|\bhuman resources\b",
+    # "hr" alone, never a rate ("$50/hr", "per hr": an engineering gig, hidden as recruiting on 2026-11-28).
+    "recruiting": r"\brecruit(?:er|ing|ment)\b|\btalent acquisition\b|(?<!/)(?<!per )\bhr\b"
+    r"|\bhuman resources\b",
     "support": r"\b(?:production|application|desktop|technical|it|customer|l[123])\s+support\b"
     r"|\bhelp\s*desk\b|\bsupport (?:engineer|analyst|specialist|executive)\b",
     "teaching": r"\btrainer\b|\bteacher\b|\btutor\b|\bfaculty\b|\blecturer\b",
@@ -159,13 +161,17 @@ def _check_job_terms(job: JobPosting, profile: Profile, verdict: _Verdict) -> No
     level = seniority_of(job.title)
     if level == "manager" and any(_MANAGES.search(role) for role in prefs.roles):
         level = None  # the user wants manager roles: "manager" names the job, not a level above them
+    needed = min_years_in_title(job.title) or min_years_required(job.description)
     level_years = LEVEL_MIN_YEARS.get(level or "")
+    # "II" or "Intermediate" is a company's own grade: Google's "Software Engineer II" asks for 1 year.
+    # When the posting states its years, they decide; a senior, lead or higher title still decides alone.
+    if level == "mid" and needed is not None:
+        level_years = None
     if level_years is not None and level_years > years + years_tolerance(years):
         verdict.blockers.append(
             f"{level.capitalize() if level else ''} level role; you have {years:g} year(s)"
         )
         return
-    needed = min_years_in_title(job.title) or min_years_required(job.description)
     if needed is not None:
         if needed > years + years_tolerance(years):
             verdict.blockers.append(f"Asks for {needed}+ years of experience; you have {years:g}")

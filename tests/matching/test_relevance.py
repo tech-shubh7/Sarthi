@@ -138,8 +138,20 @@ async def test_levels_within_reach_are_kept() -> None:
 
 
 def test_mid_level_is_fine_from_two_years() -> None:
-    assert check_rules(make_job(title="Software Engineer II"), make_profile(years_experience=2)).eligible
-    assert not check_rules(make_job(title="Software Engineer II"), make_profile(years_experience=1)).eligible
+    no_years = make_job(title="Software Engineer II", description="Build payment APIs in Python on AWS.")
+    assert check_rules(no_years, make_profile(years_experience=2)).eligible
+    assert not check_rules(no_years, make_profile(years_experience=1)).eligible
+
+
+def test_the_years_a_posting_states_decide_over_a_ii_grade() -> None:
+    """Google's "Software Engineer II" asks for 1 year (audit, 2026-11-28): it is within reach of 1 year."""
+    google = make_job(
+        title="Software Engineer II, Google Cloud",
+        description="Minimum qualifications: Bachelor's degree. 1 year of experience with software development.",
+    )
+    assert check_rules(google, make_profile(years_experience=1)).eligible
+    senior = make_job(title="Senior Software Engineer", description="1 year of experience with Python.")
+    assert not check_rules(senior, make_profile(years_experience=1)).eligible
 
 
 def test_manager_titles_are_kept_for_people_who_want_them() -> None:
