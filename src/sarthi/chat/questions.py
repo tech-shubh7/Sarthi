@@ -27,6 +27,11 @@ MAX_LISTED = 40  # longer option lists (countries) are typed, not listed: a Tele
 _CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
 
 
+def _company_key(company: str) -> str:
+    """A company's name for comparing two postings of it ("Bolna AI" and "bolna ai")."""
+    return re.sub(r"[^a-z0-9]", "", company.lower())
+
+
 def clean_answer(text: str) -> str:
     """The user's typed answer without control characters, trimmed to the stored length."""
     return re.sub(r"[ \t]+", " ", _CONTROL.sub("", text)).strip()[:MAX_ANSWER_CHARS]
@@ -211,6 +216,31 @@ class QuestionFlow:
 
     def _save(self, job_id: str, question: FormField, answer: str) -> None:
         # An answer about this employer ("Why us?") is kept for this job only, never sent to another company.
-        key = for_job(question.label, job_id) if company_specific(question.label) else question.label
+        specific = company_specific(question.label)
+        key = for_job(question.label, job_id) if specific else question.label
         self.answers.save(key, answer)
         self.answers.answered(job_id, question.key)
+        self._share(job_id, question.label, answer, specific=specific)
+
+    def _share(self, job_id: str, label: str, answer: str, *, specific: bool) -> None:
+        """The same question waiting on other applications gets this answer too.
+
+        A second Bolna job asked again the four questions the user had just answered for the first
+        (2026-11-28). An answer about the employer only goes to other jobs at the same company. An
+        application left with no question goes on.
+        """
+        job = self.jobs.get(job_id)
+        company = _company_key(job.company) if job else ""
+        for other, field_key in self.answers.waiting_elsewhere(label, job_id):
+            question = self._question(other, field_key)
+            fits = fitted(question, answer)[0] if question is not None else None
+            if fits is None:
+                continue  # that form offers other choices: it still asks
+            if specific:
+                other_job = self.jobs.get(other)
+                if other_job is None or not company or _company_key(other_job.company) != company:
+                    continue
+                self.answers.save(for_job(label, other), fits)
+            self.answers.answered(other, field_key)
+            if not self.answers.pending(other):
+                self._continue(other)

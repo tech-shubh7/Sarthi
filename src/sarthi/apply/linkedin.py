@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Locator, Page
@@ -210,18 +211,77 @@ async def _displayed(page: Page, form_field: FormField) -> bool:
         return False
 
 
+UPLOAD_RESUME = 'button:has-text("Upload resume"), label:has-text("Upload resume")'
+UPLOAD_WAIT_S = 20.0
+
+
+async def _upload_resume(page: Page, modal: Locator, resume_file: str, result: StepResult) -> None:
+    """Attach the tailored resume on LinkedIn's resume step and select it.
+
+    The step has no file box in the page: it lists the resumes saved on LinkedIn (the newest one chosen)
+    and an "Upload resume" button that opens a file picker. Sarthi looked for a file box only, so the
+    tailored resume was never attached and LinkedIn sent a saved one (2026-11-28). Now the picker is
+    answered with the tailored file, and the application stops for the user when it cannot be attached
+    and chosen: never the wrong resume in silence.
+    """
+    name = Path(resume_file).name
+    try:
+        async with page.expect_file_chooser(timeout=8000) as chooser_info:
+            await modal.locator(UPLOAD_RESUME).first.click()
+        chooser = await chooser_info.value
+        await chooser.set_files(resume_file)
+        listed = modal.get_by_text(Path(name).stem, exact=False).first
+        await listed.wait_for(state="visible", timeout=UPLOAD_WAIT_S * 1000)
+        chosen = await listed.evaluate(
+            """e => { const card = e.closest('li, [class*="document"], div:has(input[type=radio])');
+                      const radio = card && card.querySelector('input[type=radio]');
+                      if (radio && !radio.checked) { radio.click(); }
+                      return !!(radio && radio.checked); }"""
+        )
+    except (PlaywrightError, TimeoutError) as error:
+        result.failed.append(
+            ("Resume", f"the tailored resume could not be attached ({type(error).__name__})")
+        )
+        return
+    if not chosen:
+        result.failed.append(("Resume", "the tailored resume was uploaded but could not be selected"))
+        return
+    result.filled.append(("Resume", name))
+
+
+async def _attach_resume(
+    page: Page, discovered: list[FormField], resume_file: str, result: StepResult
+) -> bool:
+    """Attach the tailored resume on this step; False when it could not be (the walk stops for the user).
+
+    A file box on the step takes the file directly; without one (LinkedIn's current resume step) the
+    "Upload resume" button's file picker does. Never a silently skipped resume.
+    """
+    if not resume_file or any(label == "Resume" for label, _ in result.filled):
+        return True
+    boxes = [f for f in discovered if f.type == "file" and "cover" not in f.label.lower()]
+    if boxes:
+        try:
+            await adapters.fill_field(page, LINKEDIN, boxes[0], resume_file)
+        except (PlaywrightError, FillError) as error:
+            result.failed.append(("Resume", f"the tailored resume could not be attached ({error})"))
+            return False
+        result.filled.append(("Resume", resume_file.rsplit("/", 1)[-1]))
+        return True
+    modal = page.locator(MODAL).first
+    if await modal.locator(UPLOAD_RESUME).count():
+        await _upload_resume(page, modal, resume_file, result)
+    return not result.failed
+
+
 async def _fill_step(
     page: Page, ctx: FormContext, resume_file: str, result: StepResult, seen: set[str]
 ) -> None:
     discovered = await adapters.discover(page, LINKEDIN)
-    fields = [f for f in discovered if f.type == "file" or await _displayed(page, f)]
+    if not await _attach_resume(page, discovered, resume_file, result):
+        return
+    fields = [f for f in discovered if f.type != "file" and await _displayed(page, f)]
     for form_field in fields:
-        if form_field.type == "file":
-            if resume_file and "cover" not in form_field.label.lower():
-                with contextlib.suppress(PlaywrightError, FillError):
-                    await adapters.fill_field(page, LINKEDIN, form_field, resume_file)
-                    result.filled.append(("Resume", resume_file.rsplit("/", 1)[-1]))
-            continue
         key = f"{form_field.label}|{form_field.type}"
         if key in seen:
             continue

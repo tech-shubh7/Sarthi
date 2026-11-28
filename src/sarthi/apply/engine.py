@@ -248,7 +248,7 @@ class ApplyEngine:
                 "so Sarthi did not open it"
             )
 
-    async def _new_page(self) -> Page:
+    async def _new_page(self, *, retried: bool = False) -> Page:
         if self._context is None:
             self._playwright = await async_playwright().start()
             if self.profile_dir is not None:
@@ -278,9 +278,30 @@ class ApplyEngine:
                 )
             if self.url_check is not None:
                 await self._context.route("**/*", self._guard)
-        page = await self._context.new_page()
+        try:
+            page = await self._context.new_page()
+        except PlaywrightError:
+            if retried:
+                raise
+            # The browser window was closed (by the user, or it crashed): every later application failed with
+            # "Target page, context or browser has been closed" (2026-11-28). Start a fresh browser once.
+            log.info("the application browser was closed: starting it again")
+            await self._reset_browser()
+            return await self._new_page(retried=True)
         page.set_default_timeout(15_000)
         return page
+
+    async def _reset_browser(self) -> None:
+        """Forget a closed browser, so the next page starts a new one."""
+        self._open.clear()
+        for closer in (self._context, self._browser):
+            if closer is not None:
+                with contextlib.suppress(PlaywrightError):
+                    await closer.close()
+        if self._playwright is not None:
+            with contextlib.suppress(PlaywrightError):
+                await self._playwright.stop()
+        self._context = self._browser = self._playwright = None
 
     async def close_job(self, job_id: str) -> None:
         """Forget the job's open page (closing it)."""
@@ -566,7 +587,7 @@ class ApplyEngine:
             await asyncio.sleep(1.5)
         return SubmitResult("needs_human", f"Not sent within {round(wait_s / 60)} minutes.")
 
-    async def _outcome(
+    async def _outcome(  # noqa: PLR0911  (each way a submit can end)
         self, page: Page, adapter: Adapter, form_url: str, before: str = ""
     ) -> tuple[str, str]:
         end = time.monotonic() + SUBMIT_WAIT_S
@@ -576,6 +597,9 @@ class ApplyEngine:
                 return "submitted", f"Confirmation seen at {page.url}"
             if why := await adapters.rejected(page, adapter):
                 return "verification_failed", why
+            shown = await adapters.body_text(page)
+            if adapters.APPLIED_NOW.search(shown) and not adapters.APPLIED_NOW.search(before):
+                return "submitted", f"The site marked it applied at {page.url}"
             if not adapter.strict_success:
                 moved = page.url.split("#")[0] != form_url.split("#", maxsplit=1)[0]
                 now = await adapters.body_text(page)

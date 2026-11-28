@@ -3,6 +3,7 @@
 import pytest
 
 from sarthi.ai.scoring import AiScore, MatchAnswers, MustHave, combine
+from sarthi.apply.adapters import APPLIED_NOW
 from sarthi.jobs.geo import detect_terms
 from sarthi.jobs.models import JobPosting
 from sarthi.jobs.requirements import min_years_in_title, min_years_required, restore_ranges
@@ -123,6 +124,20 @@ def test_the_kind_of_job_comes_from_its_terms_not_any_word(text: str, kind: str 
 def test_an_hourly_rate_is_not_an_hr_job(title: str) -> None:
     assert check_rules(make_job(title=title), make_profile(roles=["Software Engineer"])).eligible
     assert not check_rules(make_job(title="HR Executive"), make_profile(roles=["Software Engineer"])).eligible
+
+
+@pytest.mark.parametrize(
+    ("text", "sent"),
+    [
+        ("APPLICATION ENGINEER  ✓ Applied · just now  Share", True),  # Shine, in place on the job page
+        ("Applied just now", True),
+        ("You have successfully applied to this job", True),
+        ("Apply now  Save job", False),
+        ("Applied 3 weeks ago", False),  # an old mark: not this Submit
+    ],
+)
+def test_a_boards_own_applied_mark_counts_as_sent(text: str, sent: bool) -> None:
+    assert bool(APPLIED_NOW.search(text)) is sent
 
 
 def test_a_title_still_names_the_kind() -> None:

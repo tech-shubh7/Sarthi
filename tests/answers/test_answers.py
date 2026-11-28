@@ -414,6 +414,44 @@ async def test_questions_are_asked_one_by_one_and_remembered(
     assert not await flow.on_text(OWNER, "random chat")  # nothing waiting: normal conversation
 
 
+def test_an_answer_reaches_the_same_question_waiting_on_other_applications(
+    flow: QuestionFlow, job_store: JobStore, queue: TaskQueue
+) -> None:
+    """A second Bolna job asked again what the user had just answered for the first (2026-11-28)."""
+    first = job_store.save(make_job(company="Bolna AI", title="Product Engineer, Backend")).job_id
+    second = job_store.save(
+        make_job(url="https://jobs.example.com/2", company="Bolna AI", title="Product Engineer, Voice AI")
+    ).job_id
+    other = job_store.save(
+        make_job(url="https://jobs.example.com/3", company="Acme", title="Engineer")
+    ).job_id
+    notice = FormField("n", "What is your notice period?", "text", True)
+    why = FormField("w", "Why Bolna? What excites you about our product?", "textarea", True)
+    new = FormField("v", "Have you worked in voice AI previously?", "select", True, ("Yes", "No"))
+    flow.answers.set_pending(first, [notice, why])
+    flow.answers.set_pending(second, [notice, why, new])
+    flow.answers.set_pending(other, [notice, why])
+
+    assert flow.answer(first, "n", "30 days") is None
+    assert flow.answer(first, "w", "Voice agents at scale") is None
+    # the general answer reaches every job; the "why us" answer only the same company's other job
+    assert [q.key for q in flow.answers.pending(second)] == ["v"]
+    assert [q.key for q in flow.answers.pending(other)] == ["w"]
+    assert flow.answers.saved()[for_job(why.label, second)] == "Voice agents at scale"
+    assert queue.active(names.APPLY) == 0  # each still waits on a question of its own
+
+    flow.answers.set_pending(other, [notice])
+    flow.answer(second, "v", "No")
+    assert flow.answers.pending(second) == [] and queue.active(names.APPLY) == 0  # dashboard continues it
+    flow.answers.set_pending(other, [FormField("n2", notice.label, "text", True)])
+    third = job_store.save(make_job(url="https://jobs.example.com/4", company="Beta", title="Dev")).job_id
+    flow.answers.set_pending(third, [FormField("n3", notice.label, "text", True)])
+    flow.answers.set_pending(first, [FormField("n4", notice.label, "text", True)])
+    flow.answer(first, "n4", "30 days")
+    assert flow.answers.pending(other) == [] and flow.answers.pending(third) == []
+    assert queue.active(names.APPLY) == 2  # both went on by themselves
+
+
 async def test_cancel_skips_the_job(flow: QuestionFlow, job_store: JobStore, queue: TaskQueue) -> None:
     job_id = job_store.save(make_job()).job_id
     flow.answers.set_pending(job_id, [FormField("q1", "Why us?", "textarea", True)])

@@ -201,6 +201,14 @@ THANKS = re.compile(
     r"(submitted|received)|we('ve| have) received your application|successfully submitted",
     re.I,
 )
+# A board's own "you applied" mark, shown in place on the job page (Shine: "Applied · just now"). It counts as
+# sent only when it appeared after Submit was pressed: three Shine applications that went out were reported
+# "unconfirmed" on 2026-11-28 because only thank-you wording was read.
+APPLIED_NOW = re.compile(
+    r"\bapplied\s*[·•\-]?\s*just now\b|\byou(?:'ve| have)? (?:successfully )?applied\b"
+    r"|\bapplication sent\b",
+    re.I,
+)
 
 
 async def form_gone(page: Page, adapter: Adapter) -> bool:

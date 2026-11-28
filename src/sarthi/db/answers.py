@@ -83,6 +83,14 @@ class AnswerStore:
             for row in rows
         ]
 
+    def waiting_elsewhere(self, label: str, job_id: str) -> list[tuple[str, str]]:
+        """(job id, field key) of the same question waiting on other jobs' applications."""
+        rows = self._conn.execute(
+            "SELECT job_id, field_key FROM pending_question WHERE label = ? AND job_id != ?",
+            (label.strip()[:500], job_id),
+        )
+        return [(row["job_id"], row["field_key"]) for row in rows]
+
     def answered(self, job_id: str, key: str) -> None:
         """One question is answered."""
         with transaction(self._conn) as c:

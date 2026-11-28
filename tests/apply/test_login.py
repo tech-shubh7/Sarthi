@@ -34,13 +34,17 @@ async def test_login_window_is_a_plain_browser_and_the_check_decides(
         started.append(args)
         return window
 
-    async def check(site: str, profile_dir: Path) -> bool:
+    checked: list[bool] = []
+
+    async def check(site: str, profile_dir: Path, *, headless: bool = True) -> bool:
         assert site == "linkedin" and profile_dir == tmp_path / "profile"
+        checked.append(headless)
         return recognised
 
     monkeypatch.setattr(engine, "_open_window", spawn)
     monkeypatch.setattr(engine, "signed_in", check)
-    assert await engine.login("linkedin", tmp_path / "profile") is recognised
+    assert await engine.login("linkedin", tmp_path / "profile", headless=False) is recognised
+    assert checked == [False]  # checked by the same kind of browser that applies (Shine refuses headless)
     args = started[0]
     assert f"--user-data-dir={tmp_path / 'profile'}" in args
     assert args[-1] == engine.LOGIN_PAGES["linkedin"]
@@ -53,7 +57,7 @@ async def test_a_window_left_open_too_long_is_closed(tmp_path: Path, monkeypatch
     async def spawn(*_: Any) -> Window:
         return window
 
-    async def check(*_: Any) -> bool:
+    async def check(*_: Any, **__: Any) -> bool:
         return False
 
     monkeypatch.setattr(engine, "_open_window", spawn)
@@ -84,6 +88,36 @@ async def test_login_check_validates_the_host_and_final_path(
             return False  # no visible password field
 
     assert await engine._signed_in(Page(), site) is recognised  # type: ignore[arg-type]
+
+
+async def test_a_closed_application_browser_is_started_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A closed window failed every later application ("browser has been closed"): one fresh start instead."""
+
+    class Closed:
+        async def new_page(self) -> Any:
+            raise engine.PlaywrightError("Target page, context or browser has been closed")
+
+    class Fresh:
+        async def new_page(self) -> Any:
+            class Page:
+                def set_default_timeout(self, ms: int) -> None:
+                    pass
+
+            return Page()
+
+    browser = engine.ApplyEngine(tmp_path, url_check=None)
+    browser._context = Closed()  # type: ignore[assignment]
+    resets: list[bool] = []
+
+    async def reset() -> None:
+        resets.append(True)
+        browser._context = Fresh()  # type: ignore[assignment]
+
+    monkeypatch.setattr(browser, "_reset_browser", reset)
+    page = await browser._new_page()
+    assert page is not None and resets == [True]
 
 
 FLAGS = {"httpOnly": True, "secure": True, "sameSite": "Lax"}
