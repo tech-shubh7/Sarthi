@@ -660,7 +660,12 @@ class App:
                         f"Open this on the computer running Sarthi and log in to {name} there, then close "
                         f"the window (the link works for 10 minutes):\n{screen.url}",
                     )
-                done = await login_to(site, self.settings.data_dir / BROWSER_PROFILE, env=screen.env)
+                done = await login_to(
+                    site,
+                    self.settings.data_dir / BROWSER_PROFILE,
+                    env=screen.env,
+                    headless=self.settings.apply_headless,  # checked as the applying browser sees the site
+                )
         except ScreenError as error:
             await self._say(chat_id, f"Could not open a browser for the login: {error}")
             return

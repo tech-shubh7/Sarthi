@@ -261,7 +261,14 @@ class ApplyEngine:
                     locale="en-US",
                     viewport={"width": 1280, "height": 1600} if self.headless else None,
                     env=_browser_env(self.env),
-                    args=["--window-position=0,0", "--window-size=1280,900"] if self.env else [],
+                    args=(
+                        ["--window-position=0,0", "--window-size=1280,900"]
+                        if self.env
+                        # a normal window on the user's own screen: out of the way, in the taskbar
+                        else []
+                        if self.headless
+                        else ["--start-minimized", "--window-size=1280,900"]
+                    ),
                     service_workers="block",  # a service worker's requests would skip the address guard
                 )
             else:
@@ -657,7 +664,12 @@ LOGIN_CHECK_S = 30
 
 
 async def login(
-    site: str, profile_dir: Path, *, wait_s: float = LOGIN_WAIT_S, env: dict[str, str] | None = None
+    site: str,
+    profile_dir: Path,
+    *,
+    wait_s: float = LOGIN_WAIT_S,
+    env: dict[str, str] | None = None,
+    headless: bool = True,
 ) -> bool:
     """Open the site's login page in a plain browser window; the user signs in and closes it.
 
@@ -679,7 +691,7 @@ async def login(
     except TimeoutError:
         window.terminate()
         await window.wait()
-    return await signed_in(site, profile_dir)
+    return await signed_in(site, profile_dir, headless=headless)
 
 
 _EXECUTABLE: list[str] = []  # Chromium's path, looked up once (starting Playwright for it took 1.2 s a click)
@@ -704,7 +716,7 @@ KEEP_SESSION_DAYS = 30
 _BOT_CHECK_TITLE = re.compile(r"just a moment|attention required|access denied|blocked", re.IGNORECASE)
 
 
-async def signed_in(site: str, profile_dir: Path) -> bool:
+async def signed_in(site: str, profile_dir: Path, *, headless: bool = True) -> bool:
     """True when the saved browser profile is signed in to ``site`` (checked out of sight).
 
     A signed-in session is kept for ``KEEP_SESSION_DAYS``: sites such as Shine sign in with a cookie that
@@ -713,7 +725,11 @@ async def signed_in(site: str, profile_dir: Path) -> bool:
     the check is then taken as signed in, and a real sign-out is found when Sarthi next opens a form there.
     """
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(str(profile_dir), headless=True)
+        # The same kind of browser that applies: Shine accepts a login in a normal window and refuses it in a
+        # headless one, so a headless check called a signed-in user "signed out" (2026-11-28).
+        context = await playwright.chromium.launch_persistent_context(
+            str(profile_dir), headless=headless, args=[] if headless else ["--start-minimized"]
+        )
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             target = SIGNED_IN_CHECK.get(site, LOGIN_PAGES[site])

@@ -198,7 +198,9 @@ def login(site: str = typer.Argument(..., help="linkedin or naukri")) -> None:
                 typer.echo(f"A browser window is opening. Log in to {site} there; it closes once you're in.")
             else:
                 typer.echo(f"Open this in your browser and log in to {site} there:\n\n    {screen.url}\n")
-            return await login_to(site, settings.data_dir / BROWSER_PROFILE, env=screen.env)
+            return await login_to(
+                site, settings.data_dir / BROWSER_PROFILE, env=screen.env, headless=settings.apply_headless
+            )
 
     try:
         done = asyncio.run(log_in())
