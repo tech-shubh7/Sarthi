@@ -53,7 +53,8 @@ PAGES: tuple[ApplicationPage, ...] = (
     ApplicationPage(
         "apply-yourself", ApplicationView.MANUAL, "Apply yourself",
         "Sarthi cannot send these (a Workday account, a site that refuses automated browsers, a form it "
-        "could not read). Open the job, apply on the site, then press I applied.", True,
+        "could not read). Open the job, apply on the site, then press I applied. The Sarthi browser "
+        "extension fills these forms for you (Settings > Browser extension).", True,
         "Applications to send yourself", "Nothing to apply to by hand.",
     ),
     ApplicationPage(

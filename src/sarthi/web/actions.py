@@ -6,10 +6,31 @@ same steps the Telegram buttons take). ``sarthi dashboard`` on its own has none,
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
+from sarthi.jobs.forms import FormField
+from sarthi.profile.assist import AssistFill
 from sarthi.profile.models import Profile
+
+
+@dataclass(frozen=True, slots=True)
+class ExtensionJob:
+    """A job the user may be applying to in their own browser (shown in the extension's list)."""
+
+    job_id: str
+    title: str
+    company: str
+    note: str = ""  # why it is in the list: "Apply yourself", "Filled, waiting for you", ...
+
+
+@dataclass(frozen=True, slots=True)
+class ExtensionJobs:
+    """The job the open page belongs to (when Sarthi knows it) and the ones waiting for the user."""
+
+    matched: str | None = None
+    jobs: list[ExtensionJob] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +170,44 @@ class DashboardActions(Protocol):
 
     def ai_ready(self) -> bool:
         """Whether an AI model for matching has its key (none: no job can be matched yet)."""
+        ...
+
+    # ---- the browser extension (sarthi.profile.assist): fills forms the user submits themselves ----
+
+    def extension_code(self) -> str:
+        """A new one-time code to pair the browser extension (valid a few minutes; replaces an older one)."""
+        ...
+
+    def pair_extension(self, code: str) -> str | None:
+        """The extension's key for a right code (any older key stops working), else None."""
+        ...
+
+    def extension_allowed(self, key: str) -> bool:
+        """Whether ``key`` is the paired extension's key."""
+        ...
+
+    def extension_jobs(self, url: str) -> ExtensionJobs:
+        """The job at ``url`` (when Sarthi knows it) and the jobs waiting for the user to apply."""
+        ...
+
+    def extension_scan_config(self, url: str) -> dict[str, str]:
+        """The form scanner's selectors for the hiring system at ``url``."""
+        ...
+
+    def extension_fill(self, job_id: str, fields: list[FormField]) -> AssistFill | None:
+        """What to fill into the form; None for an unknown job. Starts the tailored resume when missing."""
+        ...
+
+    def extension_file(self, job_id: str, kind: str) -> Path | None:
+        """This job's tailored resume ("resume") or cover letter ("cover") PDF, or None."""
+        ...
+
+    def extension_applied(self, job_id: str, given: list[tuple[str, str]]) -> bool:
+        """The user submitted it in their browser: recorded as applied, and their new answers are kept."""
+        ...
+
+    def extension_package(self) -> bytes:
+        """The extension as a .zip to load into Chrome, Edge or Brave."""
         ...
 
     # ---- mail (reply tracking) ----

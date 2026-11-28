@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sarthi</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icon-32.png" alt="" width="24" height="24">
+    <h1>Sarthi</h1>
+  </header>
+
+  <section id="pair" hidden>
+    <p>Connect this browser to your Sarthi once. On the dashboard open <b>Settings → Browser extension</b> and copy the code.</p>
+    <label for="code">Code</label>
+    <input id="code" autocomplete="off" spellcheck="false" placeholder="ABCD2345" maxlength="16">
+    <details>
+      <summary>Sarthi is not at 127.0.0.1:8765?</summary>
+      <label for="base">Dashboard address</label>
+      <input id="base" spellcheck="false" placeholder="http://127.0.0.1:8765">
+    </details>
+    <button id="pair-go" class="primary">Connect</button>
+  </section>
+
+  <section id="main" hidden>
+    <label for="job">Job</label>
+    <select id="job"></select>
+    <p class="hint" id="job-hint"></p>
+    <button id="fill" class="primary">Fill this form</button>
+    <div id="result" hidden></div>
+    <button id="applied" hidden>I submitted it</button>
+    <p class="foot"><a href="#" id="unpair">Disconnect</a></p>
+  </section>
+
+  <p id="message" role="status"></p>
+  <script src="popup.js"></script>
+</body>
+</html>

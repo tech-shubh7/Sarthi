@@ -41,7 +41,7 @@ computer.
 | **1. Finds jobs** | Searches LinkedIn, Indeed, your country's job boards, ~430 job sites, free remote feeds and a daily snapshot of ~192,000 company career pages, for your job titles and countries |
 | **2. Keeps only what fits** | Scores each job on the must-haves your resume really shows, with a clear ✓ have / ✗ missing list. Hides the wrong country or visa, far more years than you have, senior roles when you are junior, and scams |
 | **3. Tells you** | Strong matches appear on the dashboard (and in Telegram) at once. The rest come in one daily digest |
-| **4. Applies** | Writes a cover letter for the job (and, if you turn it on, a tailored resume), fills the form with your details and shows it to you before anything is sent. With auto-apply, it sends by itself |
+| **4. Applies** | Writes a tailored resume and a cover letter for the job, fills the form with your details and shows it to you before anything is sent. With auto-apply, it sends by itself |
 | **5. Hands you the human steps** | CAPTCHAs, sites that block robots and expired logins go to clear lists, each finished in a few clicks |
 | **6. Watches your inbox** | Optional. Tells you when a company replies: an interview, a test or a rejection |
 
@@ -255,16 +255,18 @@ changes over time with what you apply to and what you skip.
 
 ## Your resume and cover letter
 
-- **Your resume is sent exactly as you uploaded it** by default: your design, your links, your words.
+- **A tailored resume for each job.** The AI rewords and reorders your resume lines toward the job.
+  - Every change quotes your original line. A change is kept only if that line already backs it: it may
+    not add a tool, number, company or result your resume does not state.
+  - **Your own design is kept** when every changed line fits into your file (a PDF works directly; a Word
+    or LaTeX file needs LibreOffice or Tectonic installed to become a PDF). Otherwise the resume is
+    printed on a clean page in your layout, on your paper size and page count, with all your contact
+    details and links.
+  - Auto-apply sends by itself only a resume that really changed for the job; one the AI left as it was
+    waits for your Submit.
+  - Prefer your file exactly as you uploaded it? Set `SARTHI_TAILOR_RESUME=false`.
 - **A cover letter is written for each job** you apply to. It uses your real experience and what that job
   needs. It is checked so it never claims something your resume does not say.
-- **Tailored resumes are experimental and off by default.** Set `SARTHI_TAILOR_RESUME=true` to turn them
-  on.
-  - The AI rewords some resume lines toward each job.
-  - A changed line is kept only if your original resume backs it.
-  - The result is a new PDF in a clean layout, with all your contact details and links.
-
-  They are off by default because one wrong line costs you more than a tailored one gains.
 
 Every document is on the job's page under **Applications**. In Telegram, tap **Tailored resume**.
 
@@ -301,13 +303,29 @@ with a count in the sidebar:
 | What happened | What you do |
 |---|---|
 | **A CAPTCHA** ("I'm not a robot") | Press **Finish it myself**. The filled form opens in a window on your computer. Solve the CAPTCHA, press Submit there, and close the window |
-| **The site blocks automated browsers**: a "Request blocked" or "Verify you are human" page (often Indeed and Naukri) | The job moves to **Apply yourself**. Open its **Quick apply kit**: the job link, your resume and letter to download, and your details and saved answers to copy. Apply in your own browser, then press **I applied** |
-| **The site needs its own account** (Workday and similar) | The same: **Apply yourself**, with the Quick apply kit |
+| **The site blocks automated browsers**: a "Request blocked" or "Verify you are human" page (often Indeed and Naukri) | The job moves to **Apply yourself**. Open it in your own browser and let the **Sarthi browser extension** fill the form (below), or use its **Quick apply kit** to copy your details. Then press **I applied** |
+| **The site needs its own account** (Workday and similar) | The same: **Apply yourself**, with the extension or the Quick apply kit |
 | **You were logged out** of a job site | **Login needed**: log in once. Every job waiting for that site continues |
 | **No confirmation after Submit** | **Verify submission**: check the site or your email before you try again |
 
 Sarthi never solves CAPTCHAs, never hides that it is a program, and never tries to get around a site's
 protection.
+
+### The browser extension: apply yourself in seconds
+
+For the jobs Sarthi cannot send, the Sarthi extension (Chrome, Edge, Brave) fills the application form you
+have open in your own browser: your details, your saved answers, and that job's tailored resume and cover
+letter. You check it and press the site's own **Submit**; the extension never submits.
+
+1. **Settings → Browser extension → Download the extension**, unzip it, open `chrome://extensions`, turn on
+   *Developer mode*, press *Load unpacked* and pick the folder.
+2. Press **Show a pairing code** on that page and type the code into the extension once.
+3. On an application form, click the Sarthi icon → **Fill this form**. Filled fields get a green outline.
+   Answer what only you can, press the site's Submit, then **I submitted it**: Sarthi records the
+   application and keeps your new answers for the next forms (never passwords or codes).
+
+The extension talks only to your Sarthi on this computer, with a key from the pairing. It can touch a page
+only when you click it there.
 
 ## AI models and what they cost
 
@@ -318,7 +336,7 @@ used up its free quota, the next one answers. Models without a key are skipped.
 |---|---|---|---|
 | Free cloud tiers | Gemini, Groq, OpenRouter `:free` models | Free | They have daily limits. When the limits run out, matching waits for the next day |
 | Paid APIs | DeepSeek, OpenAI, Anthropic, Mistral | Pay per use | Faster and steadier. `SARTHI_LLM_DAILY_TOKEN_BUDGET` caps what paid models may use (default 500,000 tokens a day) |
-| On your computer | Ollama | Free | For writing documents only. Matching never runs on a local model, so your laptop stays usable |
+| On your computer | Ollama | Free | Writes documents. Matching runs on it too, fully offline, when you set `SARTHI_LLM_LOCAL_MATCHING=true` (for a GPU or an Apple Silicon Mac; on a plain laptop CPU it would keep the computer busy all day). Use a model of 7B or larger |
 
 ```ini
 # in .env: a paid model first, free ones after it
@@ -349,7 +367,8 @@ change these:
 | `SARTHI_AUTO_APPLY_MIN_SCORE` | off | Auto-apply line (75 to 100). Also in Settings → Automation |
 | `SARTHI_AUTO_APPLY_JOB_BOARDS` | `false` | Let auto-apply send on LinkedIn, Naukri, Indeed and other job boards |
 | `SARTHI_AUTO_APPLY_WAIT_MINUTES` | `5` | How long you have to cancel an auto-apply |
-| `SARTHI_TAILOR_RESUME` | `false` | Reword resume lines for each job (experimental) |
+| `SARTHI_TAILOR_RESUME` | `true` | A tailored resume per job (`false`: your file exactly as uploaded) |
+| `SARTHI_LLM_LOCAL_MATCHING` | `false` | Match jobs on a local Ollama model too, fully offline (needs a GPU or Apple Silicon) |
 | `SARTHI_LLM_DAILY_TOKEN_BUDGET` | `500000` | Daily limit for paid AI models (0: no limit) |
 | `SARTHI_DASHBOARD_PORT` | `8765` | The dashboard's port (without Docker) |
 | `SARTHI_HOST_DASHBOARD_PORT` | `8765` | The dashboard's port on your computer, with Docker |

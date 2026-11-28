@@ -1,0 +1,22 @@
+<!doctype html><html><head><title>Apply</title></head><body>
+<form id="f" onsubmit="event.preventDefault(); document.body.dataset.sent = 'yes';">
+  <div class="field"><label for="first">First name *</label><input id="first" name="first" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" type="email" name="email" value="already@example.com" required></div>
+  <div class="field"><label for="years">How many years of work experience do you have with Python? *</label><input id="years" name="years" required></div>
+  <div class="field"><label for="resume">Resume/CV *</label><input id="resume" type="file" name="resume" required></div>
+  <div class="field"><label for="auth">Are you legally authorized to work in India? *</label>
+    <select id="auth" name="auth" required><option value="">Select...</option><option value="1">Yes</option><option value="0">No</option></select></div>
+  <fieldset><legend>Gender</legend>
+    <label><input type="radio" name="g" value="m"> Male</label>
+    <label><input type="radio" name="g" value="d"> I don't wish to answer</label></fieldset>
+  <div class="field"><label for="why">Why do you want to work here? *</label><textarea id="why" name="why" required></textarea></div>
+  <div class="field"><label for="pw">Create a password *</label><input id="pw" type="password" name="pw" required></div>
+  <button type="submit">Submit</button>
+</form>
+<script>
+  // Like React: the form keeps its own copy of each value, updated only by input events.
+  window.state = {};
+  document.querySelectorAll("input, textarea, select").forEach((el) =>
+    el.addEventListener("input", (e) => { window.state[e.target.name] = e.target.value; }));
+</script>
+</body></html>

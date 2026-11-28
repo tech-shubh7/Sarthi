@@ -124,11 +124,12 @@ class Settings(BaseSettings):
     # Also send without a tap on job boards with the user's login (LinkedIn, Naukri, Indeed, ...). Off by
     # default: those sites may restrict accounts that apply in bulk. /autoapply boards on|off changes it.
     auto_apply_job_boards: bool = False
-    # Rewrite resume lines for each job with the AI. Off: every application sends the person's own resume
-    # exactly as uploaded (design, links, wording); only the cover letter is written per job. Off by
-    # default: rewritten lines can state things the resume never said (seen: "Python and Node.js" for
-    # Node.js-only work), and a false line costs more than a tailored one gains.
-    tailor_resume: bool = False
+    # Rewrite resume lines for each job with the AI: in the person's own file when every changed line fits,
+    # else on a page in their layout. Every change quotes its original line and may not add a tool, number,
+    # company or result that line does not state (the "Python and Node.js" for Node.js-only work seen once is
+    # refused by code). On since 2026-11-28 (60 of 61 real documents were really tailored). Off: every
+    # application sends the person's own resume exactly as uploaded; only the cover letter is per job.
+    tailor_resume: bool = True
     # A tapped Apply sends a clean fill without a Submit tap (/autoapply taps on|off changes it).
     auto_apply_taps_send: bool = False
     auto_apply_daily_limit: int | None = Field(default=None, ge=1)  # None: no cap of its own
@@ -158,6 +159,11 @@ class Settings(BaseSettings):
         default=500_000, ge=0, description="Paid providers only. 0: no limit."
     )
     llm_requests_per_minute: int = Field(default=30, ge=1)
+    llm_local_matching: bool = Field(
+        default=False,
+        description="Let a local model (Ollama) score jobs too: for a computer with a GPU or Apple Silicon. "
+        "Off by default: scoring thousands of jobs a day on a laptop CPU keeps it at full load.",
+    )
     ollama_url: str = "http://localhost:11434/v1"
     gemini_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None

@@ -273,8 +273,22 @@ class DocumentMaker:
         )
 
         try:
-            if tailoring is not None:
+            own = (
+                self._own_design(profile, master, built.resume, folder / f"{stem}_Resume")
+                if tailoring is not None and tailoring.changed
+                else None
+            )
+            if own is not None and own.pdf is not None and not own.problems and not own.skipped:
+                # Every tailored line fits into the person's own file: their design, their fonts.
+                design, resume_bytes = own, own.pdf
+            elif tailoring is not None:
+                # Some lines would not fit (or the file cannot become a PDF here): the page layout carries
+                # all of them, on the person's paper and page count.
                 design = OwnDesign(None, kind="html", applied=[c.where for c in tailoring.changed])
+                if own is not None:
+                    design.problems = own.problems or [
+                        f"{len(own.skipped)} changed line(s) did not fit your file"
+                    ]
                 resume_bytes = await self._page_resume(profile, built.resume, paper)
             else:
                 design = self._own_design(profile, master, built.resume, folder / f"{stem}_Resume")

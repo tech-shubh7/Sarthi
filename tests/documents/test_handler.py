@@ -18,6 +18,7 @@ from sarthi.db.matches import MatchStore
 from sarthi.db.tasks import TaskRecord
 from sarthi.documents import handler
 from sarthi.documents.handler import LAST_TRY, NO_AI, NO_RESUME, DocumentMaker
+from sarthi.documents.inplace import OwnDesign
 from sarthi.documents.render import resume_pdf
 from sarthi.profile.master import MasterResume
 from sarthi.profile.models import Preferences, Profile
@@ -159,6 +160,46 @@ async def test_documents_are_made_stored_and_announced(
     assert task.payload["error"] is None
     saved_master = MasterResume.model_validate_json((tmp_path / "master_resume.json").read_text())
     assert saved_master.contact.email == "asha.rao@example.com"  # read locally, never from the AI
+
+
+@pytest.mark.parametrize(
+    ("skipped", "problems", "own_used"),
+    [
+        ([], [], True),  # every changed line fits the person's file: their design is sent
+        (["b2"], [], False),  # a line did not fit: the page carries all the changes
+        ([], ["LibreOffice is not installed here"], False),  # a Word file that cannot become a PDF here
+    ],
+)
+async def test_the_tailored_resume_keeps_the_persons_own_design_when_every_change_fits(
+    job_store: JobStore,
+    documents: DocumentStore,
+    queue: TaskQueue,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    skipped: list[str],
+    problems: list[str],
+    own_used: bool,
+) -> None:
+    made = maker(job_store, documents, queue, tmp_path, FakeAi(good_answers()), profile())
+    own_pdf = b""
+
+    def own(who: Profile, base: MasterResume, tailored: MasterResume, path: Path) -> OwnDesign:
+        nonlocal own_pdf
+        own_pdf = resume_pdf(tailored) + b"%own-design"  # the person's file with the lines written in
+        pdf = None if problems else own_pdf
+        return OwnDesign(pdf, kind="pdf", applied=["b1"], skipped=skipped, problems=list(problems))
+
+    monkeypatch.setattr(made, "_own_design", own)
+    job_id = saved(job_store)
+    report = await made.make(job_id, profile())
+    record = documents.get(job_id)
+    assert record is not None
+    sent = (tmp_path / record.resume_file).read_bytes()
+    assert (sent == own_pdf) is own_used
+    assert report["design"]["kind"] == ("pdf" if own_used else "html")
+    assert report["changes"]  # either way the job gets the tailored lines
+    if not own_used:
+        assert report["design"]["problems"]  # and the report says why the person's design was not used
 
 
 async def test_with_tailoring_off_the_resume_is_never_rewritten_only_the_letter_is_new(

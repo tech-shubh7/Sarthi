@@ -6,6 +6,7 @@ SETTINGS_SECTIONS = {
     "logins": "Job-site logins",
     "email": "Email",
     "telegram": "Telegram",
+    "extension": "Browser extension",
 }
 ACTIVITY_SECTIONS = {
     "timeline": "Timeline",

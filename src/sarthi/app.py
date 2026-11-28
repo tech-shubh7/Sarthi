@@ -54,10 +54,13 @@ from sarthi.db.replies import ReplyStore
 from sarthi.db.source_state import SourceStateStore
 from sarthi.db.tasks import TaskRecord, TaskStore
 from sarthi.documents.handler import DocumentMaker
+from sarthi.extension import ExtensionService
+from sarthi.jobs.forms import FormField
 from sarthi.matching.decide import Thresholds
 from sarthi.matching.handler import LOGIC_VERSION, Matcher, match_version
 from sarthi.matching.learning import RECENT as LEARN_FROM
 from sarthi.matching.learning import learned_thresholds
+from sarthi.profile.assist import AssistFill
 from sarthi.profile.master import load_master, master_path
 from sarthi.profile.models import Profile
 from sarthi.profile.original import keep_original
@@ -79,7 +82,7 @@ from sarthi.tracking.account import MailSetup, current_mailbox, current_setup, s
 from sarthi.tracking.handler import STATUS_KEY as MAIL_STATUS_KEY
 from sarthi.tracking.handler import Mailbox, ReplyTracker
 from sarthi.tracking.mail import MailError, count_messages
-from sarthi.web.actions import Controls, MailSettings, MatchBatch, Pending
+from sarthi.web.actions import Controls, ExtensionJobs, MailSettings, MatchBatch, Pending
 from sarthi.web.server import NoFreePortError, make_server
 from sarthi.web.sources_view import SiteMap
 
@@ -130,6 +133,57 @@ class WebActions:
         """Act on ``app``'s stores, queue and bot."""
         self._app = app
         self._path = profile_path(app.settings.data_dir)
+        applier = app.applier
+        self._extension = ExtensionService(
+            state=app.bot.chats,
+            jobs=applier.jobs,
+            documents=applier.documents,
+            answers=applier.answers,
+            applications=applier.applications,
+            queue=app.queue,
+            load_profile=self.profile,
+            mark_applied=self.mark_applied,
+            data_dir=app.settings.data_dir,
+            clock=app.clock,
+        )
+
+    # ---- the browser extension (sarthi.extension) ----
+
+    def extension_code(self) -> str:
+        """A one-time pairing code."""
+        return self._extension.code()
+
+    def pair_extension(self, code: str) -> str | None:
+        """The extension's key for a right code."""
+        return self._extension.pair(code)
+
+    def extension_allowed(self, key: str) -> bool:
+        """Whether this is the paired extension's key."""
+        return self._extension.allowed(key)
+
+    def extension_jobs(self, url: str) -> ExtensionJobs:
+        """The job at ``url`` and the ones waiting for the user."""
+        return self._extension.jobs_for(url)
+
+    def extension_scan_config(self, url: str) -> dict[str, str]:
+        """The form scanner's selectors for ``url``."""
+        return self._extension.scan_config(url)
+
+    def extension_fill(self, job_id: str, fields: list[FormField]) -> AssistFill | None:
+        """What to fill into the form."""
+        return self._extension.fill(job_id, fields)
+
+    def extension_file(self, job_id: str, kind: str) -> Path | None:
+        """This job's tailored resume or letter."""
+        return self._extension.file(job_id, kind)
+
+    def extension_applied(self, job_id: str, given: list[tuple[str, str]]) -> bool:
+        """The user submitted it in their browser."""
+        return self._extension.applied(job_id, given)
+
+    def extension_package(self) -> bytes:
+        """The extension as a .zip."""
+        return self._extension.package()
 
     def profile(self) -> Profile | None:
         """The saved profile."""
@@ -302,9 +356,10 @@ class WebActions:
         return self._app.start_login(self._app.bot.chat(), site)
 
     def ai_ready(self) -> bool:
-        """Whether matching has a model: a cloud fast model with its key (matching never runs locally)."""
+        """Whether matching has a model: a cloud fast model with its key, or a local one when allowed."""
         settings = self._app.settings
-        return any(not endpoint.free for endpoint in resolve(settings.llm_fast_models, settings))
+        endpoints = resolve(settings.llm_fast_models, settings)
+        return any(settings.llm_local_matching or not endpoint.free for endpoint in endpoints)
 
     def screen_link(self) -> str | None:
         """The open screen's link (in Docker), while a login or a form is open there."""
@@ -862,17 +917,21 @@ class App:
         self.conn.close()
 
 
-def _ai(
+def _ai(  # noqa: PLR0913  (the client's settings, all keyword-only after the four it always needs)
     settings: Settings,
     models: list[str],
     conn: sqlite3.Connection,
     clock: Clock,
     *,
     background: bool = False,
+    local: bool = False,
 ) -> AiClient:
-    """A client for ``models``; a ``background`` one uses no local model and gives way to the user's calls."""
+    """A client for ``models``.
+
+    A ``background`` one gives way to the user's calls and, unless ``local``, uses no local model.
+    """
     endpoints = resolve(models, settings)
-    if background:
+    if background and not local:
         endpoints = [endpoint for endpoint in endpoints if not endpoint.free]
     return AiClient(
         endpoints,
@@ -963,7 +1022,10 @@ def build(settings: Settings, clock: Clock = utcnow) -> App:
     # Matching scores every new job, thousands a day: a local model doing that keeps a laptop CPU at full
     # load, and on a free cloud tier it would use up the limits the user's documents need. It gets only the
     # cloud fast models, behind the user's calls; with none answering, jobs get the free score instead.
-    matching_ai = _ai(settings, settings.llm_fast_models, conn, clock, background=True)
+    # SARTHI_LLM_LOCAL_MATCHING lets a computer with a GPU (or Apple Silicon) match on its own model, offline.
+    matching_ai = _ai(
+        settings, settings.llm_fast_models, conn, clock, background=True, local=settings.llm_local_matching
+    )
     path = profile_path(settings.data_dir)
     repair_saved_profile(path)
 

@@ -47,6 +47,7 @@ from sarthi.web.application_view import (
     summary,
 )
 from sarthi.web.apply_kit import apply_kit
+from sarthi.web.extension_api import add_extension_routes
 from sarthi.web.mail_form import PRESETS, mail_from_form, mail_values
 from sarthi.web.navigation import crumbs, sidebar
 from sarthi.web.sections import (
@@ -199,6 +200,7 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         return response
 
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+    add_extension_routes(app, actions)  # the browser extension's own API, with its own key
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.globals.update(asset=asset, version=__version__, notice_kind=notice_kind)
 
@@ -386,6 +388,7 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         mail_result: tuple[bool, str] | None = None,
         *,
         section: str = "profile",
+        extension_code: str = "",
     ) -> HTMLResponse:
         profile = actions.profile() if actions is not None else None
         mail = actions.mail() if actions is not None else None
@@ -406,6 +409,8 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
             mail_form=mail_form if mail_form is not None else mail_values(mail),
             mail_result=mail_result,
             mail_presets=PRESETS,
+            extension_code=extension_code,
+            dashboard_port=request.url.port or 80,
         )
 
     @app.get("/settings", response_model=None)
@@ -419,6 +424,11 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         return settings_page(request, section=section)
 
     # ---- changes ----
+
+    @app.post("/settings/extension", response_class=HTMLResponse)
+    async def extension_code(request: Request) -> HTMLResponse:
+        act, _ = await checked_form(request)  # a new code ends the older one: only from this page
+        return settings_page(request, section="extension", extension_code=act.extension_code())
 
     @app.post("/settings/profile", response_model=None)
     async def save_profile(request: Request) -> Response:

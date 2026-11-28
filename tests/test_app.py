@@ -122,6 +122,27 @@ async def test_build_wires_the_worker_and_schedules_one_digest(tmp_path: Path, c
         sarthi.conn.close()
 
 
+async def test_matching_on_a_local_model_when_the_user_turns_it_on(tmp_path: Path, clock: FakeClock) -> None:
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        telegram_bot_token=SecretStr("1:x"),
+        llm_fast_models=["ollama/qwen2.5:7b"],
+        llm_quality_models=[],
+        llm_local_matching=True,  # a computer with a GPU: matching fully offline
+    )
+    sarthi = build(settings, clock=clock)
+    try:
+        matching = sarthi.ai_clients[-1]
+        assert [e.label for e in matching.endpoints] == ["ollama/qwen2.5:7b"]
+        assert matching.available
+    finally:
+        await sarthi.bot.api.aclose()
+        for client in sarthi.ai_clients:
+            await client.aclose()
+        sarthi.conn.close()
+
+
 async def test_matching_never_uses_a_local_model(tmp_path: Path, clock: FakeClock) -> None:
     settings = Settings(
         _env_file=None,

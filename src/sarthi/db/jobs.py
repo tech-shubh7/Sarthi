@@ -8,10 +8,12 @@ JobRadar, which merges a role across all locations, Sarthi keeps one role in dif
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import zlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 from sarthi.clock import Clock, to_iso, utcnow
 from sarthi.db.connection import transaction
@@ -20,6 +22,8 @@ from sarthi.jobs.models import JobPosting
 
 FULL_TEXT_MAX_CHARS = 12_000
 """Full descriptions kept for the AI, compressed; longer ones are cut (benefits and legal text come last)."""
+_FORM_STEP = re.compile(r"/(?:apply|application)(?:/[^?#]*)?(?=$|\?)")  # Lever's /apply, Ashby's /application
+_MIN_PATH = 5
 REPOST_WINDOW = timedelta(days=30)
 """How long a company + role stays "the same job" when seen again on another board."""
 
@@ -157,6 +161,36 @@ class JobStore:
                 "ON CONFLICT (job_id) DO UPDATE SET text_zlib = excluded.text_zlib",
                 (job_id, zlib.compress(cut.encode("utf-8"))),
             )
+
+    def find_by_url(self, url: str) -> str | None:
+        """The job whose posting or apply page is at ``url`` (the browser extension's page), or None.
+
+        Any link the job was seen at counts, and so does the employer's own page it applies on. A form page
+        one step past the posting ("/apply", "/application") counts as the posting.
+        """
+        canonical = normalise_url(url)
+        if canonical is None:
+            return None
+        wanted = {canonical, _FORM_STEP.sub("", canonical)}
+        for link in wanted:
+            row = self._conn.execute(
+                "SELECT job_id FROM job_source WHERE canonical_url = ?", (link,)
+            ).fetchone()
+            if row is not None:
+                return str(row["job_id"])
+        path = urlsplit(canonical).path
+        if len(path) < _MIN_PATH:
+            return None  # a site's home page names no job
+        rows = self._conn.execute(
+            "SELECT id, json_extract(posting, '$.apply_url') AS apply FROM job "
+            "WHERE apply IS NOT NULL AND instr(apply, ?) > 0 ORDER BY last_seen_at DESC LIMIT 50",
+            (_FORM_STEP.sub("", path),),
+        )
+        for row in rows:
+            apply = normalise_url(str(row["apply"]))
+            if apply is not None and (apply in wanted or _FORM_STEP.sub("", apply) in wanted):
+                return str(row["id"])
+        return None
 
     def sources(self, job_id: str) -> list[str]:
         """Canonical links this job was seen at, first sighting first."""

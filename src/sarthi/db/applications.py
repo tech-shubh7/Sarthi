@@ -128,6 +128,15 @@ class ApplicationStore:
             row["submitted_at"],
         )
 
+    def waiting_for_user(self, limit: int = 30) -> list[ApplicationRecord]:
+        """Applications the user finishes themselves (handed over, or filled and waiting), newest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM application WHERE status IN ('needs_human', 'filled') "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [self._record(row) for row in rows]
+
     def sent(self) -> list[ApplicationRecord]:
         """Every application that went out (Sarthi submitted it or the user applied themselves)."""
         rows = self._conn.execute(

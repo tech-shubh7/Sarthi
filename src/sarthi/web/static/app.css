@@ -374,6 +374,10 @@ a.pill:hover { text-decoration: underline; }
 .field.check label { display: flex; gap: 10px; align-items: flex-start; font-weight: 550; }
 .field.check input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent); }
 .hint { margin: 6px 0 0; color: var(--faint); font-size: 13px; }
+/* Settings: browser extension */
+#extension h3 { margin: 18px 0 6px; font-size: 15px; }
+#extension ol { margin: 0; padding-left: 22px; display: grid; gap: 6px; line-height: 1.5; }
+.pair-code code { font-size: 26px; letter-spacing: 4px; padding: 6px 12px; border-radius: 8px; background: var(--card); border: 1px solid var(--line-strong); }
 /* Overview: the first-start checklist */
 .start-steps { margin: 4px 0 0; padding-left: 22px; display: grid; gap: 10px; line-height: 1.5; }
 .start-steps li.done { color: var(--good); }

@@ -1,0 +1,40 @@
+{% extends "settings/_layout.html" %}
+{% block lede %}Apply in your own browser in seconds where Sarthi cannot apply for you (Indeed, Naukri, Workday and others).{% endblock %}
+{% block page %}
+<section class="card card-pad section" id="extension">
+  <p>The Sarthi extension fills the application form you have open: your details, your saved answers and this
+  job's tailored resume and cover letter. You check the form and press the site's own <b>Submit</b>. The
+  extension never submits, and it talks only to your Sarthi on this computer.</p>
+
+  <h3>1. Add it to Chrome, Edge or Brave (once)</h3>
+  <ol>
+    <li><a class="button small" href="/extension.zip" download>Download the extension</a> and unzip it.</li>
+    <li>Open <code>chrome://extensions</code> (Edge: <code>edge://extensions</code>) and turn on <b>Developer mode</b>.</li>
+    <li>Press <b>Load unpacked</b> and pick the unzipped folder. Pin the Sarthi icon to the toolbar.</li>
+  </ol>
+
+  <h3>2. Connect it to Sarthi</h3>
+  {% if extension_code %}
+  <p>Type this code into the extension (it works once, for 10 minutes):</p>
+  <p class="pair-code"><code>{{ extension_code }}</code></p>
+  {% if dashboard_port != 8765 %}
+  <p class="hint">In the extension, open "Sarthi is not at 127.0.0.1:8765?" and enter
+  <code>http://127.0.0.1:{{ dashboard_port }}</code>.</p>
+  {% endif %}
+  {% else %}
+  <form method="post" action="/settings/extension">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="button small" type="submit" {% if not can_edit %}disabled{% endif %}>Show a pairing code</button>
+  </form>
+  <p class="hint">A new code disconnects an extension paired before.</p>
+  {% endif %}
+
+  <h3>3. Apply</h3>
+  <ol>
+    <li>Open a job from <a href="/applications/apply-yourself">Applications → Apply yourself</a> and go to its application form.</li>
+    <li>Click the Sarthi icon and press <b>Fill this form</b>. Filled fields get a green outline.</li>
+    <li>Answer what only you can, check everything, and press the site's <b>Submit</b>.</li>
+    <li>Press <b>I submitted it</b> in the extension: Sarthi records the application and keeps your new answers for the next forms.</li>
+  </ol>
+</section>
+{% endblock %}
