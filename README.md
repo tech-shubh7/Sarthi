@@ -351,7 +351,8 @@ change these:
 | `SARTHI_AUTO_APPLY_WAIT_MINUTES` | `5` | How long you have to cancel an auto-apply |
 | `SARTHI_TAILOR_RESUME` | `false` | Reword resume lines for each job (experimental) |
 | `SARTHI_LLM_DAILY_TOKEN_BUDGET` | `500000` | Daily limit for paid AI models (0: no limit) |
-| `SARTHI_DASHBOARD_PORT` | `8765` | The dashboard's port |
+| `SARTHI_DASHBOARD_PORT` | `8765` | The dashboard's port (without Docker) |
+| `SARTHI_HOST_DASHBOARD_PORT` | `8765` | The dashboard's port on your computer, with Docker |
 | `SARTHI_TELEGRAM_CONNECT_URL` | Sarthi's connector | Set it empty to turn Telegram off completely |
 
 Changes you make on the dashboard (profile, logins, email) work without a restart. A change to `.env`
@@ -377,7 +378,8 @@ Found a security problem? Please follow [SECURITY.md](SECURITY.md) instead of op
 - Check that Sarthi is still running: the `uv run sarthi run` terminal is still open, or
   `docker compose ps` shows it as *running*.
 - Wait a minute after starting.
-- If port 8765 is taken, set `SARTHI_DASHBOARD_PORT=8770` in `.env` and open that port instead.
+- If port 8765 is taken, pick another one in `.env` and open that port instead: with Docker,
+  `SARTHI_HOST_DASHBOARD_PORT=8770` (then `docker compose up -d`); without Docker, `SARTHI_DASHBOARD_PORT=8770`.
 
 **No matches after an hour.**
 - Open **Sources** to see whether jobs are being found.

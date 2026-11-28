@@ -111,6 +111,8 @@ def applicant(
         degree=school.degree if school else "",
         start_year=_year(school.start) if school else "",
         end_year=_year(school.end) if school else "",
+        years_experience=profile.preferences.years_experience,
+        skills=tuple(dict.fromkeys([*profile.skills, *master.all_skills()])),
         saved_answers=dict(saved),
     )
 

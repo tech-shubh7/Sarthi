@@ -25,6 +25,8 @@ from sarthi.jobs.forms import FormContext, FormField, suggest
 
 MAX_STEPS = 12
 STEP_PAUSE_S = 1.2
+LOADING_CHECKS = 6  # a step still loading: looked at again this many times...
+LOADING_WAIT_S = 2.0  # ...this far apart
 MODAL = '[data-testid="dialog-content"], .jobs-easy-apply-modal, div[role="dialog"]'
 LINKEDIN = Adapter(
     name="linkedin",
@@ -47,6 +49,7 @@ COMPANY_SITE = (
     'button:text-is("Apply"), a:text-is("Apply"), button:text-is("Apply now"), a:text-is("Apply now")'
 )
 _NEXT_WORDS = ("submit application", "review", "next", "continue to next step", "continue")
+_DIALOG_AROUND = "xpath=ancestor-or-self::*[@role='dialog' or contains(@class,'artdeco-modal')][1]"
 _ERRORS = ", ".join(
     (
         '[data-testid="text-input-helper-text"] > p:not([aria-live])',
@@ -94,8 +97,17 @@ async def _modal(page: Page) -> Locator | None:
 
 
 async def _step_button(modal: Locator) -> tuple[Locator | None, str]:
-    """The step's forward button and its label ("submit application", "review", "next", ...)."""
-    for button in await modal.locator("button").all():
+    """The step's forward button and its label ("submit application", "review", "next", ...).
+
+    LinkedIn's newer dialog ("1/5 pages") keeps its buttons in a footer outside ``dialog-content``: they are
+    looked for in the whole dialog around it, so Next is found there too (2026-11-28).
+    """
+    whole = modal.locator(_DIALOG_AROUND)
+    try:
+        scope = whole if await whole.count() else modal
+    except PlaywrightError:
+        scope = modal
+    for button in await scope.locator("button").all():
         try:
             if not await button.is_visible():
                 continue
@@ -170,7 +182,7 @@ async def _company_site_button(page: Page) -> Locator | None:
     return None
 
 
-async def walk(page: Page, ctx: FormContext, resume_file: str) -> StepResult:
+async def walk(page: Page, ctx: FormContext, resume_file: str) -> StepResult:  # noqa: PLR0911  (one end per stop)
     """Fill each step and move on, stopping at the "Submit application" step (never clicking it)."""
     result = StepResult()
     seen: set[str] = set()
@@ -183,7 +195,17 @@ async def walk(page: Page, ctx: FormContext, resume_file: str) -> StepResult:
         if result.blanks or result.failed:
             return result
         button, word = await _step_button(modal)
-        if button is None:
+        for _ in range(LOADING_CHECKS):  # the step may still be a spinner (2026-11-28): wait, then read again
+            if button is not None:
+                break
+            await asyncio.sleep(LOADING_WAIT_S)
+            if (modal := await _modal(page)) is None:
+                break
+            await _fill_step(page, ctx, resume_file, result, seen)
+            if result.blanks or result.failed:
+                return result
+            button, word = await _step_button(modal)
+        if modal is None or button is None:
             result.note = "no Next / Review / Submit button in the dialog"
             return result
         if word == "submit application":

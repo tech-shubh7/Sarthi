@@ -27,6 +27,7 @@ from sarthi.chat.questions import QuestionFlow
 from sarthi.chat.setup import WHY, SetupFlow
 from sarthi.chat.source_notice import source_notice_text
 from sarthi.chat.telegram.api import Markup, TelegramApi, buttons
+from sarthi.chat.telegram.brand import brand_bot
 from sarthi.chat.tracking import followup_text, reply_text
 from sarthi.chat.understand import Route, route, route_by_rules
 from sarthi.clock import Clock, to_iso, utcnow
@@ -757,6 +758,7 @@ class TelegramBot:
             await self.api.set_commands(COMMANDS)  # the menu that opens when the user types "/"
         except (RetryableError, PermanentError) as error:
             log.warning("telegram: could not set the command menu: %s", error)
+        await brand_bot(self.api, self.chats)  # the logo and description, once per bot
         offset_text = self.chats.get_state(OFFSET_KEY)
         offset = int(offset_text) if offset_text else None
         while not self._stopping.is_set():

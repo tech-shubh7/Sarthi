@@ -67,6 +67,23 @@ async def test_easy_apply_stops_for_questions_only_the_user_can_answer(page: Any
     assert [f.label for f in result.blanks] == ["How many years of experience do you have with Python?"]
 
 
+async def test_easy_apply_new_dialog_waits_for_the_step_and_finds_the_footer_button(
+    page: Any, resume: str
+) -> None:
+    # 2026-11-28: a loading spinner and a footer outside "dialog-content" stopped two applications;
+    # the profile now answers LinkedIn's "years with Python" from the resume's skills.
+    me = Applicant(phone="+91 98765 43210", years_experience=1.5, skills=("Python", "FastAPI"))
+    await linkedin.open_easy_apply(page, url("linkedin_new_dialog.html"))
+    result = await linkedin.walk(page, FormContext(me, resume_file=resume), resume)
+    assert result.ready, (result.note, result.blanks, result.failed)
+    assert (
+        dict(result.filled)[
+            "How many years of work experience do you have with Python (Programming Language)?"
+        ]
+        == "1"
+    )
+
+
 @pytest.mark.parametrize(
     ("name", "error", "message"),
     [

@@ -548,29 +548,30 @@ class ApplicationBrowser:
 
     async def _press(self, page: Page, button: Button) -> Page:
         """Press ``button``; the page it leads to (a new tab when it opened one)."""
-        before = list(page.context.pages)
         target = page.locator(button.selector).first
-        try:
-            await target.click(timeout=CLICK_TIMEOUT_MS)
-        except PlaywrightError:
-            # Covered by an overlay (a consent backdrop, a sticky bar): press the element itself.
+        with adapters.popups(page) as opened:  # this page's own tabs, never another application's
             try:
-                await target.evaluate("(el) => el.click()")
-            except PlaywrightError as error:
-                raise FillError(
-                    f"could not press {button.text!r}: {str(error).splitlines()[0][:150]}"
-                ) from error
-        end = asyncio.get_running_loop().time() + NEW_TAB_WAIT_S
-        while asyncio.get_running_loop().time() < end:
-            opened = [p for p in page.context.pages if p not in before]
-            if opened:
-                new = opened[-1]
-                await self._settle(new)
-                if not allowed_link(new.url, page.url, page.url):
-                    await new.close()
-                    raise FillError(f"the apply button opened another site ({urlparse(new.url).hostname})")
-                return new
-            await asyncio.sleep(0.2)
+                await target.click(timeout=CLICK_TIMEOUT_MS)
+            except PlaywrightError:
+                # Covered by an overlay (a consent backdrop, a sticky bar): press the element itself.
+                try:
+                    await target.evaluate("(el) => el.click()")
+                except PlaywrightError as error:
+                    raise FillError(
+                        f"could not press {button.text!r}: {str(error).splitlines()[0][:150]}"
+                    ) from error
+            end = asyncio.get_running_loop().time() + NEW_TAB_WAIT_S
+            while asyncio.get_running_loop().time() < end:
+                if opened:
+                    new = opened[-1]
+                    await self._settle(new)
+                    if not allowed_link(new.url, page.url, page.url):
+                        await new.close()
+                        raise FillError(
+                            f"the apply button opened another site ({urlparse(new.url).hostname})"
+                        )
+                    return new
+                await asyncio.sleep(0.2)
         return page
 
     @staticmethod

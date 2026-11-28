@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from importlib import resources
 from typing import Any
@@ -62,6 +62,26 @@ def _host(url: str) -> str:
 def host_of(url: str) -> str:
     """The URL's host in lower case ("" for anything unreadable)."""
     return _host(url)
+
+
+@contextlib.contextmanager
+def popups(page: Page) -> Iterator[list[Page]]:
+    """The tabs ``page`` itself opens while the block runs.
+
+    Several applications fill at once in one browser, so "every new tab" includes other jobs' forms: taking
+    one of those for this job's form (or closing them) broke both applications (2026-11-28). A page's own
+    "popup" event names only the tabs it opened, ``rel=noopener`` links included.
+    """
+    opened: list[Page] = []
+
+    def add(tab: Page) -> None:  # a plain function: Playwright cannot wrap a builtin like list.append
+        opened.append(tab)
+
+    page.on("popup", add)
+    try:
+        yield opened
+    finally:
+        page.remove_listener("popup", add)
 
 
 def is_greenhouse(url: str) -> bool:

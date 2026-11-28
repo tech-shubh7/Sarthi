@@ -60,8 +60,34 @@ class TelegramApi:
 
     async def username(self) -> str:
         """This bot's @username (getMe), for t.me links."""
-        me = await self._call("getMe", {})
-        return str((me or {}).get("username") or "")
+        return str((await self.me()).get("username") or "")
+
+    async def me(self) -> dict[str, Any]:
+        """getMe: the bot's id and @username (the shared relay answers with the username only)."""
+        result = await self._call("getMe", {})
+        return result if isinstance(result, dict) else {}
+
+    async def has_profile_photo(self, user_id: int) -> bool:
+        """Whether this user (here: the bot itself) already has a profile picture."""
+        result = await self._call("getUserProfilePhotos", {"user_id": user_id, "limit": 1})
+        return int((result or {}).get("total_count") or 0) > 0
+
+    async def set_profile_photo(self, jpeg: bytes) -> None:
+        """Make ``jpeg`` the bot's profile picture (setMyProfilePhoto, Bot API 9.4)."""
+        photo = json.dumps({"type": "static", "photo": "attach://avatar"})
+        await self._upload(
+            "setMyProfilePhoto", {"photo": photo}, {"avatar": ("sarthi.jpg", jpeg, "image/jpeg")}
+        )
+
+    async def description(self) -> str:
+        """The text an empty chat with the bot shows ("What can this bot do?")."""
+        result = await self._call("getMyDescription", {})
+        return str((result or {}).get("description") or "")
+
+    async def set_description(self, description: str, short: str) -> None:
+        """The empty-chat text (max 512) and the profile's short "about" line (max 120)."""
+        await self._call("setMyDescription", {"description": description[:512]})
+        await self._call("setMyShortDescription", {"short_description": short[:120]})
 
     async def _call(self, method: str, payload: dict[str, Any]) -> Any:
         url = f"{self._base}/bot{self._token.get_secret_value()}/{method}"

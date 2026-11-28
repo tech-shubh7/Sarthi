@@ -41,6 +41,9 @@ class FakeApi:
     async def get_updates(self, offset: int | None, timeout: int = 30) -> list[dict[str, Any]]:
         return self.updates.pop(0) if self.updates else []
 
+    async def me(self) -> dict[str, Any]:
+        return {"username": "shared_bot"}  # like the relay: no id, so no branding
+
     def texts(self) -> list[str]:
         return [text for _, text, _ in self.sent]
 

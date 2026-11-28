@@ -77,30 +77,30 @@ async def follow(page: Page, button: Locator, board: Callable[[str], bool]) -> s
         href = await button.get_attribute("href", timeout=2000)
         if href and (target := _away(urljoin(page.url, href), board)):
             return target
-    context = page.context
-    before = list(context.pages)
-    try:
-        await button.click(timeout=CLICK_TIMEOUT_MS)
-    except PlaywrightError:
-        return ""
-    loop = asyncio.get_running_loop()
-    start = loop.time()
-    pressed_continue = False
-    try:
-        while loop.time() - start < FOLLOW_WAIT_S:
-            opened = [p for p in context.pages if p not in before]
-            for tab in [*opened, page]:
-                if target := _away(tab.url, board):
-                    return target
-            if not opened and not pressed_continue and loop.time() - start > CONTINUE_AFTER_S:
-                pressed_continue = True
+    # Only the tabs this page opens: other applications fill in the same browser at the same time, and reading
+    # (or closing) their tabs sent this job to their site and broke their forms (2026-11-28).
+    with adapters.popups(page) as opened:
+        try:
+            await button.click(timeout=CLICK_TIMEOUT_MS)
+        except PlaywrightError:
+            return ""
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        pressed_continue = False
+        try:
+            while loop.time() - start < FOLLOW_WAIT_S:
+                for tab in [*opened, page]:
+                    if target := _away(tab.url, board):
+                        return target
+                if not opened and not pressed_continue and loop.time() - start > CONTINUE_AFTER_S:
+                    pressed_continue = True
+                    with contextlib.suppress(PlaywrightError):
+                        dialog = page.locator(CONTINUE)
+                        if await dialog.count():
+                            await dialog.first.click(timeout=3000)
+                await asyncio.sleep(0.25)
+            return ""
+        finally:
+            for tab in list(opened):
                 with contextlib.suppress(PlaywrightError):
-                    dialog = page.locator(CONTINUE)
-                    if await dialog.count():
-                        await dialog.first.click(timeout=3000)
-            await asyncio.sleep(0.25)
-        return ""
-    finally:
-        for tab in [p for p in context.pages if p not in before]:
-            with contextlib.suppress(PlaywrightError):
-                await tab.close()
+                    await tab.close()

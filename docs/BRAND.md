@@ -2,7 +2,7 @@
 
 <p align="center"><img src="brand/sarthi-wordmark-tagline-light.svg" alt="Sarthi, your AI job assistant" width="420"></p>
 
-Sarthi (सारथि) means *charioteer*: the one who guides. The brand is built on that idea.
+Sarthi means *charioteer*: the one who guides. The brand is built on that idea.
 
 ## The logo: "Guiding Reins"
 

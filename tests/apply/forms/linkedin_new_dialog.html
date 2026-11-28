@@ -1,0 +1,28 @@
+<!doctype html><html><body>
+<h1>Backend Engineer</h1>
+<button aria-label="Easy Apply to Backend Engineer at Acme" onclick="openDialog()">Easy Apply</button>
+<!-- LinkedIn's newer dialog (2026-11): a spinner first, then the step; the buttons sit in a footer outside
+     data-testid="dialog-content". -->
+<div role="dialog" id="dlg" style="display:none">
+  <div data-testid="dialog-content" id="content"><div id="spin">Loading…</div></div>
+  <footer id="foot" style="display:none"><button id="next" onclick="review()">Next</button></footer>
+</div>
+<script>
+function openDialog(){
+  document.getElementById('dlg').style.display='block';
+  setTimeout(function(){
+    document.getElementById('content').innerHTML =
+      '<p>1/2 pages</p><div class="fb-dash-form-element"><label for="phone">Mobile phone number *</label>' +
+      '<input id="phone" required></div>' +
+      '<div class="fb-dash-form-element"><label for="exp">How many years of work experience do you have with Python (Programming Language)? *</label>' +
+      '<input id="exp" required></div>';
+    document.getElementById('foot').style.display='block';
+  }, 2500);
+}
+function review(){
+  document.getElementById('content').innerHTML = '<p>Review your application</p>';
+  document.getElementById('foot').innerHTML =
+    '<button onclick="document.body.innerHTML=\'<h2>Your application was sent to Acme</h2>\'">Submit application</button>';
+}
+</script>
+</body></html>

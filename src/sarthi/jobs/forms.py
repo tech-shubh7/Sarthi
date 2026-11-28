@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Literal
 
+from sarthi.jobs.experience import experience_answer, norm, same_subject
 from sarthi.jobs.geo import location_codes
 
 FieldType = Literal[
@@ -59,6 +60,8 @@ class Applicant:
     discipline: str = ""
     start_year: str = ""
     end_year: str = ""
+    years_experience: float | None = None  # total years of work experience, from the profile
+    skills: tuple[str, ...] = ()  # the skills the resume shows
     saved_answers: dict[str, str] = field(default_factory=dict)  # question -> answer, from earlier forms
 
 
@@ -121,11 +124,6 @@ _STOP = frozenset(
 _MATCH_MIN = 0.6
 
 
-def norm(text: str) -> str:
-    """Lower case, apostrophes dropped, everything but letters and digits made a single space."""
-    return re.sub(r"[\W_]+", " ", re.sub(r"['’]", "", text.lower())).strip()
-
-
 def _tokens(text: str) -> set[str]:
     return {t for t in norm(text).split() if t and t not in _STOP}
 
@@ -180,7 +178,8 @@ def lookup(answers: dict[str, str], label: str, minimum: float = _MATCH_MIN) -> 
     score = minimum
     for question, answer in answers.items():
         s = similarity(question, label)
-        if s >= score and answer != "":
+        # "years with Python" and "years with Java" share every other word: never each other's answer
+        if s >= score and answer != "" and same_subject(question, label):
             best, score = (question, answer), s
     return best
 
@@ -600,6 +599,10 @@ def suggest(form_field: FormField, ctx: FormContext) -> Suggestion | None:  # no
     if _EEO.search(label) and "pronoun" not in label:
         declined = _decline(form_field.options)
         return Suggestion(declined, "default") if declined else None
+    a = ctx.applicant
+    experience = experience_answer(form_field.label, form_field.options, a.years_experience, a.skills)
+    if (value := _fit(form_field, experience, day_first=day_first)) is not None:
+        return Suggestion(value, "profile")
     place = commitment_place(form_field.label, ctx.job_location, ctx.job_remote)
     if (not place or names_place(ctx.applicant.location, place)) and (
         value := _fit(form_field, _from_profile(form_field, ctx), day_first=day_first)

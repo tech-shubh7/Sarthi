@@ -40,6 +40,9 @@ UrlCheck = Callable[[str], Awaitable[bool]]
 
 
 INTERRUPTED = "a browser window was opened for you during this fill: it is filled again in a minute"
+CLOSED_UNDER_FILL = "the browser closed during this fill: it is filled again in a minute"
+CLOSED_RETRIES = 2
+_BROWSER_GONE = "Target page, context or browser has been closed"
 
 
 class EnginePausedError(Exception):
@@ -146,6 +149,7 @@ class ApplyEngine:
         self._submitting = 0  # submits under way (a visible window waits for these, never for fills)
         self._generation = 0  # one more each time a visible window takes the browser: older fills are void
         self._held = 0  # visible windows holding the browser profile
+        self._closed_retries: dict[str, int] = {}  # fills of a job cut off by a closed browser, by job
         self._idle = asyncio.Condition()
 
     def _lock(self, job_id: str) -> asyncio.Lock:
@@ -167,7 +171,7 @@ class ApplyEngine:
                 self._idle.notify_all()
 
     @contextlib.asynccontextmanager
-    async def _interruptible(self) -> AsyncIterator[None]:
+    async def _interruptible(self, job_id: str = "") -> AsyncIterator[None]:
         """A fill that a visible window may cut short: it ends as ``EnginePausedError`` (filled again later).
 
         Whatever the cut-off fill raised or returned (a closed page, fields it could not enter) says nothing
@@ -181,6 +185,12 @@ class ApplyEngine:
         except Exception as error:
             if self._generation != generation:
                 raise EnginePausedError(INTERRUPTED) from error
+            if _BROWSER_GONE in str(error) and self._closed_retries.get(job_id, 0) < CLOSED_RETRIES:
+                # The browser (or this tab) went away under the fill: that says nothing about the form, so the
+                # job is filled again, not handed to the user (2026-11-28). Twice at most: a site that closes
+                # its own tab every time still reaches the user.
+                self._closed_retries[job_id] = self._closed_retries.get(job_id, 0) + 1
+                raise EnginePausedError(CLOSED_UNDER_FILL) from error
             raise
         if self._generation != generation:
             raise EnginePausedError(INTERRUPTED)
@@ -363,7 +373,7 @@ class ApplyEngine:
         ``one_click``: a job board with the user's login, where its "Apply" may send at once (it is held for
         approval).
         """
-        async with self._in_use(), self._lock(job_id), self._interruptible():
+        async with self._in_use(), self._lock(job_id), self._interruptible(job_id):
             await self.close_job(job_id)
             await self._check_link(url)
             page = await self._new_page()
