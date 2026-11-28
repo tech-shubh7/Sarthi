@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "applications/_parts.html" import applied with context %}
+{% block main %}
+<header class="page-head">
+  <h1>{{ kit.title }}</h1>
+  <p class="lede">{{ kit.company }}. Apply on the site in your own browser, with everything you need below.</p>
+</header>
+
+<section class="card kit-step">
+  <h2><span class="step-no">1</span> Open the job</h2>
+  <p class="hint">Opens in this browser, where you are signed in.</p>
+  <a class="button" href="{{ kit.url }}" target="_blank" rel="noopener noreferrer">Open the job on the site</a>
+</section>
+
+<section class="card kit-step">
+  <h2><span class="step-no">2</span> Attach</h2>
+  {% if kit.resume or kit.letter %}
+  <div class="row-actions">
+    {% if kit.resume %}<a class="button ghost" href="/applications/{{ kit.job_id }}/resume.pdf" download>Download resume (PDF)</a>{% endif %}
+    {% if kit.letter %}<a class="button ghost" href="/applications/{{ kit.job_id }}/cover-letter.pdf" download>Download cover letter (PDF)</a>{% endif %}
+  </div>
+  {% else %}
+  <p class="hint">No tailored resume was made for this job: attach the resume you uploaded.</p>
+  {% endif %}
+</section>
+
+<section class="card kit-step">
+  <h2><span class="step-no">3</span> Copy into the form</h2>
+  <p class="hint">Click a box and press Ctrl+A, Ctrl+C to copy it.</p>
+  {% if kit.details %}
+  <div class="kit-grid">
+    {% for f in kit.details %}
+    <label class="kit-field"><span>{{ f.label }}</span><input type="text" value="{{ f.value }}" readonly></label>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if kit.letter_text %}
+  <label class="kit-field wide"><span>Cover letter text</span><textarea rows="12" readonly>{{ kit.letter_text }}</textarea></label>
+  {% endif %}
+  {% if kit.answers %}
+  <h3 class="table-title">Your saved answers</h3>
+  <div class="kit-grid">
+    {% for f in kit.answers %}
+    <label class="kit-field"><span>{{ f.label }}</span><input type="text" value="{{ f.value }}" readonly></label>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="card kit-step">
+  <h2><span class="step-no">4</span> Sent it?</h2>
+  <p class="hint">Tell Sarthi, so it tracks the application and any reply.</p>
+  {% if can_edit %}{{ applied({'job_id': kit.job_id}) }}{% endif %}
+</section>
+{% endblock %}

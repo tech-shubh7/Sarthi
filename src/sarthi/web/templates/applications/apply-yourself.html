@@ -3,5 +3,5 @@
 {% from "applications/_parts.html" import open_job, applied with context %}
 {% block step %}
   {% if r.detail %}<p class="why">{{ reason(r.detail) }}</p>{% endif %}
-  <div class="row-actions">{{ open_job(r, 'Open & apply') }}{{ applied(r) }}</div>
+  <div class="row-actions"><a class="button small" href="/applications/{{ r.job_id }}/apply-kit">Quick apply kit</a>{{ open_job(r, 'Open & apply') }}{{ applied(r) }}</div>
 {% endblock %}

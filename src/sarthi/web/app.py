@@ -46,6 +46,7 @@ from sarthi.web.application_view import (
     page_for,
     summary,
 )
+from sarthi.web.apply_kit import apply_kit
 from sarthi.web.mail_form import PRESETS, mail_from_form, mail_values
 from sarthi.web.navigation import crumbs, sidebar
 from sarthi.web.sections import (
@@ -603,6 +604,17 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
         return FileResponse(
             path, media_type="application/pdf", filename=name, content_disposition_type="inline"
         )
+
+    @app.get("/applications/{job_id}/apply-kit", response_class=HTMLResponse, response_model=None)
+    async def quick_apply(request: Request, job_id: str) -> Response:
+        """Everything to apply by hand on a site Sarthi cannot fill: open, attach, copy, done."""
+        kit = apply_kit(conn, data_dir, job_id, actions.profile() if actions is not None else None)
+        if kit is None:
+            raise HTTPException(404, "No such job.")
+        return page(
+            request, "applications/apply-kit.html", "applications", "apply-yourself", crumb="Quick apply",
+            kit=kit,
+        )  # fmt: skip
 
     @app.get("/applications/{job_id}/resume.pdf", response_model=None)
     async def resume_pdf(job_id: str) -> Response:

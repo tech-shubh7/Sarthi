@@ -22,7 +22,7 @@ from sarthi.ai.providers import resolve
 from sarthi.ai.scoring import LlmMatchScorer
 from sarthi.answers.handler import FormChecker
 from sarthi.apply.agent import ApplicationBrowser
-from sarthi.apply.engine import LOGIN_PAGES, SITE_NAMES, ApplyEngine
+from sarthi.apply.engine import LOGIN_PAGES, SITE_NAMES, ApplyEngine, browser_executable
 from sarthi.apply.engine import login as login_to
 from sarthi.apply.handler import Applier, is_job_board
 from sarthi.apply.screen import ScreenError, login_screen
@@ -88,6 +88,7 @@ log = logging.getLogger(__name__)
 WORKER_CONCURRENCY = 3
 USER_CONCURRENCY = 2
 BROWSER_PROFILE = "browser-profile"  # the user's site logins (LinkedIn, Naukri), kept on their computer
+_SAYING: set[asyncio.Task[Any]] = set()  # messages sent beside a browser window (kept until they finish)
 BACKGROUND_TASKS = frozenset(
     {names.SOURCE_CHECK, names.FILL_TEXT, names.MATCH, names.CATCHUP, names.MAIL_CHECK, names.QUIET_CHECK}
 )
@@ -497,6 +498,9 @@ class App:
         worker, user = self.worker(), self.user_worker()
         self.bot.site_login = self.site_login
         self.bot.finish_by_hand = self.finish_by_hand
+        warm = asyncio.create_task(browser_executable())  # found now, so a login click does not wait for it
+        _SAYING.add(warm)
+        warm.add_done_callback(_SAYING.discard)
         tasks = [
             asyncio.create_task(self._telegram()),
             asyncio.create_task(worker.run()),
@@ -525,6 +529,12 @@ class App:
     def window_open(self) -> bool:
         """True while a browser window (a login, a form to finish) is open for the user."""
         return self._login is not None and not self._login.done()
+
+    def _say_soon(self, chat_id: int | None, text: str, job_id: str | None = None) -> None:
+        """``_say`` without waiting for it: the browser window must not wait for Telegram's answer."""
+        task = asyncio.create_task(self._say(chat_id, text, job_id))
+        _SAYING.add(task)
+        task.add_done_callback(_SAYING.discard)
 
     async def _say(self, chat_id: int | None, text: str, job_id: str | None = None) -> None:
         """Tell the user how a browser window went: the chat when there is one, the dashboard always.
@@ -572,7 +582,7 @@ class App:
                     if screen.url is None
                     else f"Open this on the computer running Sarthi (works for 10 minutes):\n{screen.url}"
                 )
-                await self._say(
+                self._say_soon(  # the window opens while the message goes out, not after it
                     chat_id,
                     f"🧩 {where}\nSarthi fills the form; you solve the CAPTCHA and press Submit.",
                     job_id,
@@ -632,13 +642,13 @@ class App:
             async with login_screen(self.settings.screen_port, self.settings.dashboard_host) as screen:
                 self.screen_url = screen.url
                 if screen.url is None:
-                    await self._say(
+                    self._say_soon(  # the window opens while the message goes out, not after it
                         chat_id,
                         f"A browser window opened on your computer. Log in to {name} there, then close "
                         "the window: Sarthi checks the login and tells you.",
                     )
                 else:
-                    await self._say(
+                    self._say_soon(
                         chat_id,
                         f"Open this on the computer running Sarthi and log in to {name} there, then close "
                         f"the window (the link works for 10 minutes):\n{screen.url}",

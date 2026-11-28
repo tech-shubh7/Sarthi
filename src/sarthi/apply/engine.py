@@ -665,8 +665,7 @@ async def login(
     screen (the virtual one of ``sarthi.apply.screen``).
     """
     profile_dir.mkdir(parents=True, exist_ok=True)
-    async with async_playwright() as playwright:
-        executable = playwright.chromium.executable_path
+    executable = await browser_executable()
     args = [executable, f"--user-data-dir={profile_dir}", "--no-first-run", "--no-default-browser-check"]
     if env:
         args += ["--window-position=0,0", "--window-size=1280,900"]
@@ -677,6 +676,17 @@ async def login(
         window.terminate()
         await window.wait()
     return await signed_in(site, profile_dir)
+
+
+_EXECUTABLE: list[str] = []  # Chromium's path, looked up once (starting Playwright for it took 1.2 s a click)
+
+
+async def browser_executable() -> str:
+    """The Chromium Playwright installed, found once and remembered (call it at start-up to warm it)."""
+    if not _EXECUTABLE:
+        async with async_playwright() as playwright:
+            _EXECUTABLE.append(playwright.chromium.executable_path)
+    return _EXECUTABLE[0]
 
 
 async def _open_window(args: list[str], env: dict[str, str]) -> asyncio.subprocess.Process:

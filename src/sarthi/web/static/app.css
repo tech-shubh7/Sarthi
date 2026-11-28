@@ -374,6 +374,16 @@ a.pill:hover { text-decoration: underline; }
 .field.check label { display: flex; gap: 10px; align-items: flex-start; font-weight: 550; }
 .field.check input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent); }
 .hint { margin: 6px 0 0; color: var(--faint); font-size: 13px; }
+/* Quick apply kit: four numbered steps; copyable read-only fields */
+.kit-step { padding: 22px 24px; margin: 0 0 16px; }
+.kit-step h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; font-size: 17px; }
+.kit-step .button { margin-top: 12px; }
+.step-no { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 700; }
+.kit-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 14px; }
+.kit-field { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.kit-field.wide { margin-top: 14px; }
+.kit-field input, .kit-field textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; font-weight: 500; }
+.kit-field textarea { resize: vertical; line-height: 1.5; }
 .error { margin: 6px 0 0; color: var(--bad); font-size: 13px; font-weight: 600; }
 .has-error input, .has-error select, .has-error textarea { border-color: var(--bad); }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--raise); border-radius: 0 0 var(--r-lg) var(--r-lg); }
