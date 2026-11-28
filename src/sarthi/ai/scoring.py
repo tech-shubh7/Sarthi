@@ -18,7 +18,7 @@ from sarthi.ai.documents import at_most
 from sarthi.ai.privacy import scrub
 from sarthi.ai.prompts import Prompt
 from sarthi.jobs.models import JobPosting
-from sarthi.jobs.requirements import too_experienced_for
+from sarthi.jobs.requirements import range_lost, restore_ranges, too_experienced_for
 from sarthi.profile.models import Profile
 
 log = logging.getLogger(__name__)
@@ -38,6 +38,12 @@ THIN_COVERAGE_BELOW = 0.5  # fewer than half the must-haves shown on the resume
 THIN_COVERAGE_CAP = 0.55
 VAGUE_CAP = 0.7  # the model is unsure (a vague posting): never shown as a near-perfect match
 TOP_MISSING_CAP = 0.7  # the first (most important) must-have is not on the resume: never an alert
+# An alert needs evidence. On a short posting the model listed one or two must-haves, marked them shown and
+# said it was 90% sure: 94-97 for walk-in drives, React-only roles and generic laundry lists (audit,
+# 2026-11-28). A posting that states fewer requirements, or says little, is a fair match at most.
+MIN_MUST_HAVES_FOR_ALERT = 3
+SHORT_POSTING_CHARS = 1200
+THIN_EVIDENCE_CAP = 0.72
 MAX_MUST_HAVES = 6
 
 MAX_LINES = 2
@@ -176,11 +182,12 @@ def coverage(answers: MatchAnswers) -> float:
     return sum(m.shown for m in answers.must_haves) / len(answers.must_haves)
 
 
-def combine(answers: MatchAnswers) -> int:
-    """The 0-100 score from the model's answers.
+def combine(answers: MatchAnswers, posting_chars: int | None = None) -> int:
+    """The 0-100 score from the model's answers (``posting_chars``: the length of the posting it read).
 
     Capped when the role is not the candidate's kind of work or most must-haves are missing, however well
-    the rest reads; a probably-ineligible job is scaled down hard.
+    the rest reads, and when the posting gives too little evidence for a strong match; a probably-ineligible
+    job is scaled down hard.
     """
     parts = {
         "role_fit": answers.role_fit,
@@ -197,6 +204,9 @@ def combine(answers: MatchAnswers) -> int:
         # The posting's most important requirement is not on the resume (a required BigCommerce, n8n): a fair
         # match at most, however many of the rest are (audit: such jobs were alerted at 77-89).
         raw = min(raw, TOP_MISSING_CAP)
+    short = posting_chars is not None and posting_chars < SHORT_POSTING_CHARS
+    if len(answers.must_haves) < MIN_MUST_HAVES_FOR_ALERT or short:
+        raw = min(raw, THIN_EVIDENCE_CAP)
     if answers.confidence < SURE_ENOUGH:
         raw = min(raw, VAGUE_CAP)
     if answers.eligible < NOT_ELIGIBLE_BELOW:
@@ -217,6 +227,8 @@ def blocker_for(answers: MatchAnswers, years: float | None) -> str | None:
     if years is None:
         return None
     needed = answers.min_years_required
+    if needed is not None:
+        needed = float(range_lost(round(needed))) if needed == round(needed) else needed  # "23" = "2-3"
     if needed is not None and too_experienced_for(needed, years):
         return f"Asks for {needed:g}+ years of experience; you have {years:g}"
     if answers.seniority_fit < LEVEL_MISMATCH_BELOW and answers.confidence >= SURE_ENOUGH:
@@ -240,7 +252,10 @@ class LlmMatchScorer:
         """The AI's verdict, or None when no model can answer right now."""
         if not self._client.available:
             return None
-        posting = f"Title: {job.title}\nCompany: {job.company}\n\n{job.description[:JOB_CHARS]}"
+        text = restore_ranges(
+            job.description[:JOB_CHARS]
+        )  # "23 years" read as twenty-three hid 2-3 year jobs
+        posting = f"Title: {restore_ranges(job.title)}\nCompany: {job.company}\n\n{text}"
         try:
             answers = await self._client.structured(
                 MATCH_PROMPT,
@@ -255,4 +270,4 @@ class LlmMatchScorer:
             return None
         blocker = blocker_for(answers, profile.preferences.years_experience)
         reasons = (*answers.strengths, *(GAP + gap for gap in gap_lines(answers)))
-        return AiScore(combine(answers), answers.confidence, reasons, blocker)
+        return AiScore(combine(answers, len(job.description)), answers.confidence, reasons, blocker)

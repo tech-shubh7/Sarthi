@@ -5,7 +5,7 @@ import pytest
 from sarthi.ai.scoring import AiScore, MatchAnswers, MustHave, combine
 from sarthi.jobs.geo import detect_terms
 from sarthi.jobs.models import JobPosting
-from sarthi.jobs.requirements import min_years_in_title, min_years_required
+from sarthi.jobs.requirements import min_years_in_title, min_years_required, restore_ranges
 from sarthi.matching.decide import Decision
 from sarthi.matching.funnel import UNREAD_SCORE, evaluate
 from sarthi.matching.rules import check_rules
@@ -84,6 +84,20 @@ def test_the_most_important_must_have_missing_is_never_an_alert() -> None:
 )
 def test_years_asked(text: str, years: int) -> None:
     assert min_years_required(text) == years
+
+
+@pytest.mark.parametrize(
+    ("text", "restored"),
+    [
+        ("Hiring with 23 years of experience", "Hiring with 2-3 years of experience"),
+        ("(24 Years Experience)", "(2-4 Years Experience)"),
+        ("15+ years of experience", "15+ years of experience"),
+        ("2-3 years", "2-3 years"),
+        ("a 23.5 years history", "a 23.5 years history"),
+    ],
+)
+def test_the_ai_reads_a_lost_range_as_a_range(text: str, restored: str) -> None:
+    assert restore_ranges(text) == restored
 
 
 def test_a_title_with_a_lost_dash() -> None:

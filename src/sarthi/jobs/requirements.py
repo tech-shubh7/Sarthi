@@ -80,7 +80,7 @@ _YEARS_IN_TITLE = re.compile(
 
 def min_years_in_title(title: str) -> int | None:
     """The years a job title itself asks for ("Data Scientist 5 To 12 Years" -> 5), or None."""
-    years = [_range_lost(int(m.group(1))) for m in _YEARS_IN_TITLE.finditer(title or "")]
+    years = [range_lost(int(m.group(1))) for m in _YEARS_IN_TITLE.finditer(title or "")]
     plausible = [n for n in years if 0 < n <= _MAX_PLAUSIBLE_YEARS]
     return min(plausible) if plausible else None
 
@@ -105,7 +105,7 @@ def min_years_required(text: str) -> int | None:
     years += [int(m.group(2)) for m in _SKILL_LINE.finditer(text) if not _NOT_EXPERIENCE.search(m.group(1))]
     years += [int(m.group(1)) for m in _BARE_RANGE.finditer(text)]
     years += [int(m.group(1)) for m in _OTHER_LANGUAGES.finditer(text)]
-    years = [_range_lost(n) for n in years]
+    years = [range_lost(n) for n in years]
     if 0 in years:
         return None  # "0-2 years": freshers are welcome, so there is no minimum to fall short of
     plausible = [n for n in years if 0 < n <= _MAX_PLAUSIBLE_YEARS]
@@ -125,7 +125,20 @@ _DECIMAL_YEARS = re.compile(r"\b(\d{1,2})\.\d\b(?=\s*\+?\s*(?:years?|yrs?)\b)", 
 _RANGE_LOST_FROM = 20  # "23 years of experience" in a junior posting is a "2-3" whose dash a feed dropped
 
 
-def _range_lost(n: int) -> int:
+_LOST_RANGE_TEXT = re.compile(r"(?<![\d.\-])([23])([3-9])(?=\s*\+?\s*(?:years?|yrs?)\b)", re.IGNORECASE)
+
+
+def restore_ranges(text: str) -> str:
+    """A lost range written back ("23 years" -> "2-3 years"), so the AI does not read twenty-three."""
+    return _LOST_RANGE_TEXT.sub(
+        lambda m: (
+            f"{m.group(1)}-{m.group(2)}" if range_lost(int(m.group(0))) != int(m.group(0)) else m.group(0)
+        ),
+        text,
+    )
+
+
+def range_lost(n: int) -> int:
     """23 -> 2 and 24 -> 2 ("2-3", "2-4" with the dash lost); real asks of 20+ years do not start lower.
 
     Only from 20: "12 years" or "15 years" are real senior asks, while no posting asks 23 or 24 years.

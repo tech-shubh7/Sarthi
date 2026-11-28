@@ -23,14 +23,24 @@ def answers(**overrides: Any) -> MatchAnswers:
         "seniority_fit": 1,
         "overall_fit": 1,
         "confidence": 0.9,
+        # A posting that states its requirements: three must-haves, all on the resume.
+        "must_haves": [need("Python", True), need("REST APIs", True), need("PostgreSQL", True)],
     }
     return MatchAnswers.model_validate(data | overrides)
+
+
+def test_a_posting_with_too_little_evidence_is_never_an_alert() -> None:
+    """Audit, 2026-11-28: one or two must-haves, all "shown", 90% sure, on a 900-character posting = 94-97."""
+    assert combine(answers(must_haves=[need("React JS", True)])) == 72
+    assert combine(answers(must_haves=[])) == 72
+    assert combine(answers(), posting_chars=900) == 72
+    assert combine(answers(), posting_chars=2500) == 100
 
 
 def test_combine_uses_fixed_weights() -> None:
     assert combine(answers()) == 100
     assert combine(answers(seniority_fit=0.5)) == 90
-    assert combine(answers(role_fit=0, skills_fit=0, seniority_fit=0, overall_fit=0)) == 0
+    assert combine(answers(role_fit=0, skills_fit=0, seniority_fit=0, overall_fit=0, must_haves=[])) == 0
 
 
 def need(name: str, shown: bool) -> dict[str, Any]:
@@ -90,15 +100,17 @@ async def test_scorer_sends_a_scrubbed_profile_and_returns_the_verdict(
 
     def handler(request: httpx.Request) -> httpx.Response:
         sent.append(json.loads(request.content)["messages"][1]["content"])
+        half = [need("Python", True), need("REST APIs", True), need("Kafka", False), need("Spark", False)]
         content = answers(
-            skills_fit=0.5, strengths=["Strong Python match"], gaps=["Kafka not on your resume"]
+            must_haves=half, strengths=["Strong Python match"], gaps=["Kafka not on your resume"]
         ).model_dump_json()
         return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
     profile = make_profile(looking_for="Fintech backend roles").model_copy(
         update={"resume_text": "me@example.com +91 98765 43210\nBuilt payment APIs in Python."}
     )
-    verdict = await scorer(conn, clock, handler).score(make_job(), profile)
+    job = make_job(description=make_job().description * 4)  # a full posting (a short one is capped)
+    verdict = await scorer(conn, clock, handler).score(job, profile)
     assert verdict is not None
     assert (verdict.score, verdict.confidence) == (82, 0.9)  # 82.5 rounds half to even
     assert verdict.reasons == ("Strong Python match", "✗ Kafka not on your resume")  # a gap is marked
