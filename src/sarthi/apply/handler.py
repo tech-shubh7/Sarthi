@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from sarthi.apply import adapters, linkedin, naukri
+from sarthi.apply import adapters, linkedin, naukri, redirects
 from sarthi.apply.adapters import FillError, PostingClosedError
 from sarthi.apply.agent import LoginWallError
 from sarthi.apply.engine import (
@@ -127,6 +127,7 @@ class Applier:
         clock: Clock = utcnow,
         auto_on_boards: Callable[[], bool] = lambda: False,
         allow_board_automation: bool = True,
+        resolve_link: Callable[[str], Awaitable[str | None]] = redirects.resolve,
     ) -> None:
         """Fill forms with ``engine``; record outcomes in ``applications``; tell the chat via ``queue``.
 
@@ -147,6 +148,27 @@ class Applier:
         self._submit_lock = asyncio.Lock()
         self.chats = chats
         self._clock = clock
+        self._resolve_link = resolve_link
+
+    async def resolve_target(self, job_id: str) -> None:
+        """Replace an apply link that only redirects (Freehire's) with the employer's page it leads to.
+
+        Done before documents are written and before any fill, so every guard (firewall, Workday, job board,
+        the site's daily limit) judges the employer's site, not the redirector that refuses browsers.
+        """
+        job = self.jobs.get(job_id)
+        if job is None:
+            return
+        url = str(job.apply_url or job.url)
+        if not redirects.is_redirect_link(url):
+            return
+        if (real := await self._resolve_link(url)) is not None:
+            try:
+                self.jobs.set_apply_url(job_id, real)
+            except ValueError:
+                log.warning("%s: %s redirects to an unusable address; kept as it was", job_id, site_of(url))
+                return
+            log.info("%s: %s leads to %s", job_id, site_of(url), site_of(real))
 
     def _result(self, job_id: str, outcome: str, detail: str, **extra: Any) -> None:
         self.queue.enqueue(
@@ -213,6 +235,7 @@ class Applier:
         profile = self._load_profile()
         if profile is None:
             raise DeferError(WAIT_FOR_PROFILE_S)
+        await self.resolve_target(task.key)
         job = self.jobs.get(task.key)
         ctx = form_context(
             task.key,
@@ -349,6 +372,7 @@ class Applier:
         recorded and sent to the chat, or None when the job or the profile is no longer stored.
         """
         profile = self._load_profile()
+        await self.resolve_target(job_id)
         job = self.jobs.get(job_id)
         ctx = (
             form_context(

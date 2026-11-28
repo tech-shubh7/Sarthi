@@ -134,6 +134,18 @@ class JobStore:
         row = self._conn.execute("SELECT text_zlib FROM job_text WHERE job_id = ?", (job_id,)).fetchone()
         return zlib.decompress(row["text_zlib"]).decode("utf-8") if row else ""
 
+    def set_apply_url(self, job_id: str, url: str) -> None:
+        """Keep ``url`` as where the job is applied for (a redirect link resolved to the employer's page)."""
+        if normalise_url(url) is None:  # a redirect to localhost or a private address is never followed
+            raise ValueError(f"apply URL is not a usable http(s) link: {url}")
+        posting = self.get(job_id)
+        if posting is None:
+            return
+        # Validated again (not model_copy): the new link goes through the posting's own checks.
+        updated = JobPosting.model_validate(posting.model_dump() | {"apply_url": url})
+        with transaction(self._conn) as c:
+            c.execute("UPDATE job SET posting = ? WHERE id = ?", (updated.model_dump_json(), job_id))
+
     def set_full_text(self, job_id: str, text: str) -> None:
         """Keep ``text`` as the job's complete description (read from its own page after it was saved)."""
         cut = text[:FULL_TEXT_MAX_CHARS]

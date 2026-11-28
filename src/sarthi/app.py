@@ -426,6 +426,8 @@ class App:
 
     async def prepare_documents(self, task: TaskRecord) -> None:
         """Run document preparation when applying is still possible or documents were requested directly."""
+        if task.payload.get("apply"):
+            await self.applier.resolve_target(task.key)  # a redirect link judged by the site it leads to
         if task.payload.get("apply") and self.applier.skip_application_documents(task.key):
             return
         await self.documents.handle(task)

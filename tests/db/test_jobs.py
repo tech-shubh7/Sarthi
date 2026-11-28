@@ -70,6 +70,15 @@ def test_unusable_link_is_refused(job_store: JobStore) -> None:
         job_store.save(make(url="https://localhost/jobs/1"))
 
 
+def test_a_resolved_apply_link_replaces_the_redirect(job_store: JobStore) -> None:
+    saved = job_store.save(make(apply_url="https://freehire.me/api/v1/go/backend-acme-x1"))
+    job_store.set_apply_url(saved.job_id, "https://jobs.lever.co/acme/1")
+    job = job_store.get(saved.job_id)
+    assert job is not None and str(job.apply_url) == "https://jobs.lever.co/acme/1"
+    with pytest.raises(ValueError, match="not a usable"):  # still validated: never a local address
+        job_store.set_apply_url(saved.job_id, "https://localhost/apply")
+
+
 def test_full_text_is_kept_compressed_and_capped(job_store: JobStore) -> None:
     long_text = "Build payment APIs. " * 2000
     result = job_store.save(make(description="Build payment APIs."), full_text=long_text)
