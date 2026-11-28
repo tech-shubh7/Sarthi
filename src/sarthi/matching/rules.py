@@ -17,7 +17,15 @@ from sarthi.jobs.eligibility import (
 )
 from sarthi.jobs.geo import country_name, seniority_of
 from sarthi.jobs.models import EmploymentType, JobPosting, RemoteType, Sponsorship
-from sarthi.jobs.requirements import LEVEL_MIN_YEARS, min_years_in_title, min_years_required, years_tolerance
+from sarthi.jobs.requirements import (
+    EARLY_CAREER_YEARS,
+    LEVEL_MIN_YEARS,
+    SENIOR_DUTIES_NEEDED,
+    min_years_in_title,
+    min_years_required,
+    senior_duties,
+    years_tolerance,
+)
 from sarthi.jobs.scam import check as scam_check
 from sarthi.jobs.stack import missing_stack
 from sarthi.profile.models import Profile, RemotePreference
@@ -163,6 +171,13 @@ def _check_job_terms(job: JobPosting, profile: Profile, verdict: _Verdict) -> No
             verdict.blockers.append(f"Asks for {needed}+ years of experience; you have {years:g}")
         elif needed > years:
             verdict.notes.append(f"Asks for {needed}+ years; you have {years:g}")
+        return
+    duties = senior_duties(f"{job.title}\n{job.description}")
+    if years < EARLY_CAREER_YEARS and len(duties) >= SENIOR_DUTIES_NEEDED:
+        # No level in the title and no years asked, but the duties are a senior's (roadmap, mentoring).
+        verdict.blockers.append(
+            f"Senior-level duties ({', '.join(duties[:2])}) for {years:g} year(s) of experience"
+        )
 
 
 def _check_pay(job: JobPosting, profile: Profile, verdict: _Verdict) -> None:

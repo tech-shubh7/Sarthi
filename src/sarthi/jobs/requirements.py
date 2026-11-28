@@ -138,3 +138,36 @@ def years_tolerance(years: float) -> int:
 def too_experienced_for(needed: float, years: float) -> bool:
     """True when a job asking for ``needed`` years is out of reach with ``years`` of experience."""
     return needed > years + years_tolerance(years)
+
+
+# Duties that only a senior, staff or lead person is given, whatever the title says. A plain "Backend
+# Engineer" posting asking to "align the engineering roadmap", "mentor" and "raise the bar through design
+# reviews" was scored 80 for someone with 1 year (2026-11-28): no title level and no years were stated.
+_SENIOR_DUTY = re.compile(
+    r"\bmentor(?:ing|s)?\b(?! from)(?!ed)"
+    r"|\bcoach(?:ing|es)? (?:engineers|developers|the team|others|junior)"
+    r"|\b(?:own|set|define|drive|align|shape)\w* (?:the |our |a )?"
+    r"(?:technical |engineering |architecture |product )?(?:roadmap|strategy|vision|direction)\b"
+    r"|\b(?:lead|run|chair)\w* (?:design|architecture|technical) reviews?\b|\bdesign reviews\b"
+    r"|\braise the bar\b|\btechnical leadership\b|\bbe a model others\b"
+    r"|\b(?:lead|manage|grow|build) (?:a |the )?(?:team|squad) of\b|\bhir(?:e|ing) (?:and|&) (?:mentor|grow)",
+    re.IGNORECASE,
+)
+_EARLY_CAREER_POSTING = re.compile(
+    r"\b(?:junior|entry[- ]level|fresher|graduate|new grad|intern(?:ship)?|trainee|associate engineer)\b"
+    rf"|\b0\s*{_DASH}\s*[12]\s*{_YEARS}",
+    re.IGNORECASE,
+)
+SENIOR_DUTIES_NEEDED = 2  # one "mentor" can be a mid-level nicety; two senior duties make the level
+
+
+def senior_duties(text: str) -> list[str]:
+    """The senior-level duties a posting gives (empty for an early-career posting): each phrase once."""
+    if _EARLY_CAREER_POSTING.search(text):
+        return []
+    found: list[str] = []
+    for match in _SENIOR_DUTY.finditer(text):
+        phrase = " ".join(match.group(0).lower().split())
+        if phrase not in found:
+            found.append(phrase)
+    return found
