@@ -73,7 +73,8 @@ def save_profile(path: Path, profile: Profile) -> None:
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".profile-", suffix=".tmp")
     tmp = Path(tmp_name)
     try:
-        os.fchmod(fd, _OWNER_ONLY)
+        if hasattr(os, "fchmod"):  # Windows has none: its user folder is already private to the user
+            os.fchmod(fd, _OWNER_ONLY)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(profile.model_dump_json(indent=2))
             handle.flush()

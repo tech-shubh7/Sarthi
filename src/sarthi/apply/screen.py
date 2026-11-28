@@ -17,6 +17,7 @@ import secrets
 import shutil
 import signal
 import socket
+import sys
 import tempfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -46,7 +47,13 @@ class Screen:
 
 
 def has_display() -> bool:
-    """True when a real window can open (a desktop, WSLg, an X or Wayland session)."""
+    """True when a real window can open (a desktop, WSLg, an X or Wayland session).
+
+    Windows and macOS always have one (they never set DISPLAY): looking for an X server there sent a login
+    to a virtual screen that cannot exist.
+    """
+    if sys.platform in ("win32", "darwin"):
+        return True
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 

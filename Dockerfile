@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Python 3.12, Chromium for filling application forms, app files read-only, only /app/data writable.
 # Slow, rarely changing layers first (system packages, Chromium, libraries), Sarthi's own code last, so a code
 # change rebuilds in about a minute instead of reinstalling Chromium.
@@ -21,7 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 xvfb
 
 # The libraries (cached while only the code changes).
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --no-install-project
+# uv's download cache stays out of the image (it was hundreds of MB in a layer, never used at run time) and is
+# kept between builds instead, so a rebuild downloads nothing again.
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-install-project
 
 # Chromium and its system libraries. They include fonts-liberation, which the resume template uses
 # (without it Typst falls back to a serif font).
@@ -36,7 +39,7 @@ RUN /app/.venv/bin/python -c "import duckdb; duckdb.connect(config={'extension_d
 COPY README.md LICENSE THIRD_PARTY_NOTICES.md ./
 COPY licenses ./licenses
 COPY src ./src
-RUN uv sync --locked --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev
 
 # A non-root user that can write only its data folder; the app files stay owned by root.
 RUN useradd --create-home --uid 1000 sarthi && mkdir -p /app/data && chown sarthi:sarthi /app/data
