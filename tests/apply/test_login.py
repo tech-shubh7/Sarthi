@@ -84,3 +84,69 @@ async def test_login_check_validates_the_host_and_final_path(
             return False  # no visible password field
 
     assert await engine._signed_in(Page(), site) is recognised  # type: ignore[arg-type]
+
+
+FLAGS = {"httpOnly": True, "secure": True, "sameSite": "Lax"}
+
+
+class Cookies:
+    """A browser context's cookie jar."""
+
+    def __init__(self, cookies: list[dict[str, Any]]) -> None:
+        self.jar = cookies
+        self.added: list[dict[str, Any]] = []
+
+    async def cookies(self) -> list[dict[str, Any]]:
+        return self.jar
+
+    async def add_cookies(self, cookies: list[dict[str, Any]]) -> None:
+        self.added += cookies
+
+
+async def test_a_session_only_login_cookie_is_kept_for_thirty_days() -> None:
+    """Shine signs in with a cookie that ends with the browser: the login was lost when its window closed."""
+    jar = Cookies(
+        [
+            {
+                "name": "sessionid",
+                "value": "x",
+                "domain": "www.shine.com",
+                "path": "/",
+                "expires": -1,
+                **FLAGS,
+            },
+            {
+                "name": "_ga",
+                "value": "y",
+                "domain": ".shine.com",
+                "path": "/",
+                "expires": 1900000000,
+                **FLAGS,
+            },
+            {"name": "other", "value": "z", "domain": ".example.com", "path": "/", "expires": -1, **FLAGS},
+        ]
+    )
+    await engine._keep_session(jar, "shine")  # type: ignore[arg-type]
+    assert [c["name"] for c in jar.added] == ["sessionid"]  # only the site's own session-only cookies
+    assert jar.added[0]["expires"] > 1_700_000_000
+
+
+@pytest.mark.parametrize(
+    ("title", "text", "bot_check"),
+    [
+        ("Just a moment...", "", True),  # LinkedIn's challenge to a hidden browser
+        ("Blocked - Indeed.com", "", True),
+        ("Indeed", "Request Blocked. Cloudflare Ray ID ...", True),
+        ("Feed | LinkedIn", "Start a post", False),
+        ("Sign in | LinkedIn", "Email or phone Password", False),
+    ],
+)
+async def test_a_bot_check_page_is_not_taken_as_signed_out(title: str, text: str, bot_check: bool) -> None:
+    class Page:
+        async def title(self) -> str:
+            return title
+
+        async def evaluate(self, expression: str) -> str:
+            return text
+
+    assert await engine._behind_bot_check(Page()) is bot_check  # type: ignore[arg-type]

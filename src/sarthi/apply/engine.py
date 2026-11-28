@@ -18,6 +18,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlparse
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, Request, Route, async_playwright
@@ -26,6 +27,9 @@ from playwright.async_api import Response as PlaywrightResponse
 
 from sarthi.apply import adapters, linkedin, naukri
 from sarthi.apply.adapters import Adapter, FillError, PostingClosedError
+
+if TYPE_CHECKING:
+    from playwright._impl._api_structures import SetCookieParam
 from sarthi.apply.agent import SIGN_IN_TO_APPLY, ApplicationBrowser, Walked
 from sarthi.jobs.forms import FormContext, FormField, suggest
 from sarthi.jobs.net import is_public_url
@@ -696,23 +700,70 @@ async def _open_window(args: list[str], env: dict[str, str]) -> asyncio.subproce
     )
 
 
+KEEP_SESSION_DAYS = 30
+_BOT_CHECK_TITLE = re.compile(r"just a moment|attention required|access denied|blocked", re.IGNORECASE)
+
+
 async def signed_in(site: str, profile_dir: Path) -> bool:
-    """True when the saved browser profile is signed in to ``site`` (checked out of sight)."""
+    """True when the saved browser profile is signed in to ``site`` (checked out of sight).
+
+    A signed-in session is kept for ``KEEP_SESSION_DAYS``: sites such as Shine sign in with a cookie that
+    lasts "until the browser closes", so the login was lost whenever its window closed (2026-11-28).
+    A bot-check page (LinkedIn's "Just a moment...", Indeed's "Blocked") is no proof of being signed out:
+    the check is then taken as signed in, and a real sign-out is found when Sarthi next opens a form there.
+    """
     async with async_playwright() as playwright:
         context = await playwright.chromium.launch_persistent_context(str(profile_dir), headless=True)
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             target = SIGNED_IN_CHECK.get(site, LOGIN_PAGES[site])
             response = await page.goto(target, wait_until="domcontentloaded", timeout=LOGIN_CHECK_S * 1000)
-            if response is None or not response.ok:
-                return False
             await page.wait_for_timeout(2000)  # a client-side redirect to the login page
-            return await _signed_in(page, site)
+            if await _behind_bot_check(page):
+                log.info("%s answered the login check with a bot check: taken as signed in", site)
+                await _keep_session(context, site)
+                return True
+            if response is None or not response.ok or not await _signed_in(page, site):
+                return False
+            await _keep_session(context, site)
         except PlaywrightError:
             return False
+        else:
+            return True
         finally:
             with contextlib.suppress(PlaywrightError):
                 await context.close()
+
+
+async def _behind_bot_check(page: Page) -> bool:
+    """True when the page is a firewall's or bot check's answer, not the site itself."""
+    try:
+        title = await page.title()
+        text = await page.evaluate("() => (document.body ? document.body.innerText : '').slice(0, 4000)")
+    except PlaywrightError:
+        return False
+    return bool(_BOT_CHECK_TITLE.search(title or "")) or bool(adapters.BLOCKED_PAGE.search(text or ""))
+
+
+async def _keep_session(context: BrowserContext, site: str) -> None:
+    """Give the site's "until the browser closes" cookies an expiry, so the login survives a restart."""
+    domain = ".".join((urlparse(LOGIN_PAGES[site]).hostname or "").split(".")[-2:])
+    try:
+        cookies = await context.cookies()
+        until = time.time() + KEEP_SESSION_DAYS * 86400
+        kept = cast(
+            "list[SetCookieParam]",
+            [
+                {**c, "expires": until}
+                for c in cookies
+                if c.get("expires", -1) in (-1, 0) and str(c.get("domain", "")).lstrip(".").endswith(domain)
+            ],
+        )
+        if kept:
+            await context.add_cookies(kept)
+            log.info("%s: kept %d session cookie(s) for %d days", site, len(kept), KEEP_SESSION_DAYS)
+    except PlaywrightError as error:
+        log.info("%s: session cookies could not be kept: %s", site, error)
 
 
 async def _signed_in(page: Page, site: str) -> bool:
