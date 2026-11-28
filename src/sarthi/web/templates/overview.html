@@ -9,6 +9,24 @@
   </div>
 </header>
 
+{% if start and not (start.profile and start.ai) %}
+<section class="card section needs-you blocked get-started" aria-labelledby="start-title">
+  <div class="needs-head">
+    <h2 id="start-title">Get started</h2>
+    <p class="muted">Sarthi is already collecting jobs. To match them to you it needs these:</p>
+  </div>
+  <ol class="start-steps">
+    <li class="{% if start.ai %}done{% endif %}">
+      {% if start.ai %}<b>AI key added.</b>{% else %}<b>Add an AI key.</b> Open the <code>.env</code> file in Sarthi's folder and paste one key after its <code>=</code>, for example <code>SARTHI_GEMINI_API_KEY=</code> (free at aistudio.google.com/apikey). Groq and OpenRouter keys work too. Then restart Sarthi.{% endif %}
+    </li>
+    <li class="{% if start.profile %}done{% endif %}">
+      {% if start.profile %}<b>Profile saved.</b>{% else %}<b>Add your profile.</b> <a href="/settings/profile">Settings → Profile</a>: upload your resume, the job titles you want and your country.{% endif %}
+    </li>
+    <li><b>Optional:</b> <a href="/settings/logins">log in to the job sites</a> you use, and <a href="/settings/telegram">connect Telegram</a> for alerts on your phone.</li>
+  </ol>
+</section>
+{% endif %}
+
 {% set waiting = blockers|selectattr('count')|list %}
 <section class="card section needs-you{% if waiting %} blocked{% endif %}" aria-labelledby="needs-title">
   <div class="needs-head">

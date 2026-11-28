@@ -129,6 +129,11 @@ class FakeActions:
     def screen_link(self) -> str | None:
         return self.screen
 
+    ai = True
+
+    def ai_ready(self) -> bool:
+        return self.ai
+
     # mail (reply tracking): see tests/web/test_mail_settings.py
     mail_settings = MailSettings("", 993, "", "INBOX", enabled=False)
     mail_saved: list[tuple[MailSettings, str]] = []  # noqa: RUF012  (replaced per test)

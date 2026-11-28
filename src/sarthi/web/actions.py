@@ -147,6 +147,10 @@ class DashboardActions(Protocol):
         """While a login or a form to finish is open on a screen in the browser (Docker): its link."""
         ...
 
+    def ai_ready(self) -> bool:
+        """Whether an AI model for matching has its key (none: no job can be matched yet)."""
+        ...
+
     # ---- mail (reply tracking) ----
 
     def mail(self) -> MailSettings:

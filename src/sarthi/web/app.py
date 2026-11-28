@@ -266,7 +266,13 @@ def create_app(  # noqa: PLR0915  (one route per page and action)
 
     @app.get("/", response_class=HTMLResponse)
     async def overview(request: Request) -> HTMLResponse:
-        return page(request, "overview.html", "overview")
+        # A first start: what is still missing before any job can be matched (shown until both are done).
+        start = (
+            {"profile": actions.profile() is not None, "ai": actions.ai_ready()}
+            if actions is not None
+            else None
+        )
+        return page(request, "overview.html", "overview", start=start)
 
     @app.get("/matches", response_class=HTMLResponse)
     async def matches(

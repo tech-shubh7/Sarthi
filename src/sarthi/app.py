@@ -301,6 +301,11 @@ class WebActions:
             return False
         return self._app.start_login(self._app.bot.chat(), site)
 
+    def ai_ready(self) -> bool:
+        """Whether matching has a model: a cloud fast model with its key (matching never runs locally)."""
+        settings = self._app.settings
+        return any(not endpoint.free for endpoint in resolve(settings.llm_fast_models, settings))
+
     def screen_link(self) -> str | None:
         """The open screen's link (in Docker), while a login or a form is open there."""
         return self._app.screen_url if self._app.window_open() else None
